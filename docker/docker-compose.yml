@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  pesapilot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pesapilot
+    ports:
+      - "8501:8501"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - APP_ENV=${APP_ENV:-production}
+    volumes:
+      - ../data:/app/data
+      - ../.env:/app/.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Postgres for local development
+  postgres:
+    image: postgres:15
+    container_name: pesapilot-db
+    environment:
+      - POSTGRES_USER=pesapilot
+      - POSTGRES_PASSWORD=pesapilot123
+      - POSTGRES_DB=pesapilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../docker/postgres_data:/var/lib/postgresql/data
+      - ../scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    profiles:
+      - local
+
+volumes:
+  postgres_data:

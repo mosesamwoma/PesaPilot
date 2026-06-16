@@ -21,11 +21,11 @@ class MpesaAnalyzer:
         - transaction_id: text (unique)
         - amount: decimal (10,2)
         - balance: decimal (10,2)
-        - type: text (credit, debit, payment, withdrawal, airtime)
+        - type: text (credit, debit, payment, withdrawal, airtime, failed, cancelled, balance_check)
         - recipient: text
-        - merchant_category: text (food, shopping, transport, bills, entertainment, other)
+        - merchant_category: text (food, transport, bills, entertainment, mobile, banking, shopping, withdrawal, salary, investment, other)
         - phone: text
-        - body: text (full SMS)
+        - body: text (full SMS - truncated)
         - timestamp: timestamp
         - readable_date: text
         - raw_date: text
@@ -39,29 +39,43 @@ class MpesaAnalyzer:
     def ask_question(self, question: str) -> Dict[str, Any]:
         """Process a natural language question"""
         try:
+            logger.info(f"🤔 Question: {question}")
+            
             # Generate SQL
             sql = self.groq.generate_sql(question, self._schema)
-            logger.info(f"Generated SQL: {sql}")
+            if not sql:
+                return {
+                    'question': question,
+                    'error': 'Failed to generate SQL query',
+                    'success': False
+                }
+            
+            logger.info(f"📝 Generated SQL: {sql}")
             
             # Execute query
             results = self.db.execute_query(sql)
+            
+            # Get result count
+            result_count = len(results) if not results.empty else 0
             
             # Analyze results
             analysis = self.groq.analyze_results(
                 question, 
                 sql, 
-                results.to_dict('records') if not results.empty else []
+                results.to_dict('records') if not results.empty else [],
+                result_count
             )
             
             return {
                 'question': question,
                 'sql': sql,
                 'results': results.to_dict('records') if not results.empty else [],
+                'result_count': result_count,
                 'analysis': analysis,
                 'success': True
             }
         except Exception as e:
-            logger.error(f"Error processing question: {e}")
+            logger.error(f"❌ Error processing question: {e}")
             return {
                 'question': question,
                 'error': str(e),
@@ -74,6 +88,7 @@ class MpesaAnalyzer:
             summary = self.db.get_summary()
             anomalies = self.db.detect_anomalies()
             trends = self.db.get_spending_trends()
+            transactions = self.db.get_transactions(days=30, limit=100)
             
             # Get insights from Groq
             insights = self.groq.generate_insights({
@@ -86,15 +101,22 @@ class MpesaAnalyzer:
                 'summary': summary,
                 'anomalies': anomalies.to_dict('records') if not anomalies.empty else [],
                 'trends': trends.to_dict('records') if not trends.empty else [],
+                'transactions': transactions.to_dict('records') if not transactions.empty else [],
                 'insights': insights,
                 'success': True
             }
         except Exception as e:
-            logger.error(f"Error getting dashboard data: {e}")
+            logger.error(f"❌ Error getting dashboard data: {e}")
             return {'error': str(e), 'success': False}
     
     def cache_dashboard_data(self) -> None:
         """Cache dashboard data for performance"""
         data = self.get_dashboard_data()
-        with open('data/processed/dashboard_cache.json', 'w') as f:
-            json.dump(data, f)
+        try:
+            import os
+            os.makedirs('data/processed', exist_ok=True)
+            with open('data/processed/dashboard_cache.json', 'w') as f:
+                json.dump(data, f, default=str)
+            logger.info("✅ Dashboard data cached")
+        except Exception as e:
+            logger.error(f"❌ Failed to cache dashboard data: {e}")

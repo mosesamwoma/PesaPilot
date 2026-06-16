@@ -6,10 +6,18 @@ from src.analyzer import MpesaAnalyzer
 import pandas as pd
 import json
 import os
+import logging
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 @click.group()
 def cli():
-    """PesaPilot CLI Tool"""
+    """PesaPilot CLI Tool - AI-Powered Financial Assistant"""
     pass
 
 @cli.command()
@@ -27,8 +35,12 @@ def setup(force):
         return
     
     # Initialize database
-    db = SupabaseDB()
-    click.echo("✅ Database initialized")
+    try:
+        db = SupabaseDB()
+        click.echo("✅ Database initialized")
+    except Exception as e:
+        click.echo(f"❌ Database initialization failed: {e}")
+        return
     
     # Create data directories
     os.makedirs('data/raw', exist_ok=True)
@@ -46,6 +58,11 @@ def load(xml_path):
     # Parse XML
     parser = MpesaParser()
     df = parser.parse_xml_to_csv(xml_path)
+    
+    if df.empty:
+        click.echo("❌ No transactions found in the XML file")
+        return
+    
     click.echo(f"✅ Parsed {len(df)} transactions")
     
     # Load into database
@@ -58,7 +75,7 @@ def load(xml_path):
 def dashboard():
     """Start the Streamlit dashboard"""
     click.echo("🚀 Starting PesaPilot dashboard...")
-    os.system("streamlit run src/streamlit_app.py")
+    os.system("streamlit run app.py")
 
 @cli.command()
 @click.option('--question', prompt='Ask a question', help='Question about your transactions')
@@ -73,7 +90,10 @@ def ask(question):
         click.echo("\n📊 Analysis:")
         click.echo(result['analysis'])
         
-        if click.confirm("Show SQL query?"):
+        if result.get('result_count', 0) > 0:
+            click.echo(f"\n📈 Found {result['result_count']} results")
+        
+        if click.confirm("\nShow SQL query?"):
             click.echo("\n🔍 SQL:")
             click.echo(result['sql'])
     else:
@@ -102,9 +122,43 @@ def backup(output):
     db = SupabaseDB()
     df = db.get_transactions(days=365)  # Get all transactions
     
+    if df.empty:
+        click.echo("❌ No data to backup")
+        return
+    
     # Save to JSON
+    os.makedirs(os.path.dirname(output), exist_ok=True)
     df.to_json(output, orient='records', date_format='iso')
     click.echo(f"✅ Backed up {len(df)} transactions")
+
+@cli.command()
+@click.option('--limit', default=10, help='Number of transactions to show')
+def recent(limit):
+    """Show recent transactions"""
+    db = SupabaseDB()
+    df = db.get_transactions(days=30, limit=limit)
+    
+    if df.empty:
+        click.echo("❌ No recent transactions found")
+        return
+    
+    click.echo(f"\n📋 Recent {len(df)} transactions:")
+    click.echo(df[['timestamp', 'type', 'amount', 'recipient', 'merchant_category']].to_string(index=False))
+
+@cli.command()
+def stats():
+    """Show transaction statistics"""
+    db = SupabaseDB()
+    summary = db.get_summary()
+    
+    click.echo("\n📊 Transaction Statistics:")
+    click.echo(f"Total Transactions: {summary.get('total_transactions', 0)}")
+    
+    categories = pd.DataFrame(summary.get('categories', []))
+    if not categories.empty:
+        click.echo("\n📈 Spending by Category:")
+        for _, row in categories.iterrows():
+            click.echo(f"  {row['merchant_category']}: Ksh {row['total_spent']:,.2f} ({row['transaction_count']} transactions)")
 
 if __name__ == '__main__':
     cli()

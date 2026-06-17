@@ -4,7 +4,7 @@ const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 
 // ⚙️ CONFIGURATION — Change this to YOUR main Safaricom number
-const MY_NUMBER = "254712345678@c.us";  // Format: country code + number + @c.us
+const MY_NUMBER = "254715755649@c.us";  // Format: country code + number + @c.us
 const API_URL = "http://localhost:8000";
 
 const client = new Client({

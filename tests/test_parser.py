@@ -69,8 +69,8 @@ def test_category_utilities():
     assert cat == 'utilities'
 
 def test_category_other():
-    body = "Ksh500 paid to RANDOM SHOP XYZ"
-    cat = parser._categorize(body, "Random Shop")
+    body = "Ksh500 paid to RANDOM UNKNOWN XYZ"
+    cat = parser._categorize(body, "Random Unknown")
     assert cat == 'other'
 
 def test_is_mpesa_true():

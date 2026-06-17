@@ -107,5 +107,3 @@ docker run -p 8501:8501 --env-file .env pesapilot
 2. Open → **Back Up** → select **SMS**
 3. Save XML file, transfer to computer
 4. Load via dashboard or CLI
-
-## Sync Flow

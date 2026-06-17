@@ -1,9 +1,8 @@
+# src/analyzer.py
+import logging
+from typing import Dict, List, Optional
 from src.database import SupabaseDB
 from src.groq_client import GroqClient
-from typing import Dict, Any
-import pandas as pd
-import json
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -11,112 +10,79 @@ class MpesaAnalyzer:
     def __init__(self):
         self.db = SupabaseDB()
         self.groq = GroqClient()
-        self._schema = self._get_schema()
-    
-    def _get_schema(self) -> str:
-        """Get database schema description"""
-        return """
-        Table: transactions
-        - id: integer (primary key)
-        - transaction_id: text (unique)
-        - amount: decimal (10,2)
-        - balance: decimal (10,2)
-        - type: text (credit, debit, payment, withdrawal, airtime, failed, cancelled, balance_check)
-        - recipient: text
-        - merchant_category: text (food, transport, bills, entertainment, mobile, banking, shopping, withdrawal, salary, investment, other)
-        - phone: text
-        - body: text (full SMS - truncated)
-        - timestamp: timestamp
-        - readable_date: text
-        - raw_date: text
-        - created_at: timestamp
-        
-        Views:
-        - daily_summary: date, total_transactions, total_spent, total_received, avg_spend, debit_count, credit_count
-        - category_summary: merchant_category, transaction_count, total_amount, avg_amount, total_spent, total_received
-        """
-    
-    def ask_question(self, question: str) -> Dict[str, Any]:
-        """Process a natural language question"""
+        self._cache: Dict = {}
+
+    def ask_question(self, question: str) -> Dict:
         try:
-            logger.info(f"🤔 Question: {question}")
-            
-            # Generate SQL
-            sql = self.groq.generate_sql(question, self._schema)
-            if not sql:
+            schema = self.db.get_schema()
+            sql = self.groq.generate_sql(question, schema)
+            logger.info(f"Generated SQL: {sql}")
+
+            if not sql or not sql.upper().startswith('SELECT'):
                 return {
                     'question': question,
-                    'error': 'Failed to generate SQL query',
-                    'success': False
+                    'sql': sql,
+                    'results': [],
+                    'analysis': self.groq.chat(question),
+                    'error': None,
                 }
-            
-            logger.info(f"📝 Generated SQL: {sql}")
-            
-            # Execute query
+
             results = self.db.execute_query(sql)
-            
-            # Get result count
-            result_count = len(results) if not results.empty else 0
-            
-            # Analyze results
-            analysis = self.groq.analyze_results(
-                question, 
-                sql, 
-                results.to_dict('records') if not results.empty else [],
-                result_count
-            )
-            
+            analysis = self.groq.analyze_results(question, sql, results)
+
             return {
                 'question': question,
                 'sql': sql,
-                'results': results.to_dict('records') if not results.empty else [],
-                'result_count': result_count,
+                'results': results,
                 'analysis': analysis,
-                'success': True
+                'error': None,
             }
         except Exception as e:
-            logger.error(f"❌ Error processing question: {e}")
+            logger.error(f"ask_question failed: {e}")
             return {
                 'question': question,
+                'sql': '',
+                'results': [],
+                'analysis': f"Sorry, I couldn't process that question. Error: {str(e)}",
                 'error': str(e),
-                'success': False
             }
-    
-    def get_dashboard_data(self) -> Dict[str, Any]:
-        """Get all data needed for dashboard"""
+
+    def get_dashboard_data(self, days: int = 30, force_refresh: bool = False) -> Dict:
+        cache_key = f'dashboard_{days}'
+        if not force_refresh and cache_key in self._cache:
+            return self._cache[cache_key]
+
         try:
             summary = self.db.get_summary()
-            anomalies = self.db.detect_anomalies()
-            trends = self.db.get_spending_trends()
-            transactions = self.db.get_transactions(days=30, limit=100)
-            
-            # Get insights from Groq
-            insights = self.groq.generate_insights({
+            category_spend = self.db.get_spending_by_category(days=days)
+            daily_trend = self.db.get_daily_trend(days=days)
+            anomalies = self.db.get_anomalies()
+            top_merchants = self.db.get_top_merchants(days=days)
+            recent_txs = self.db.get_transactions(days=days, limit=50)
+            insights = self.groq.generate_insights(summary) if summary else ""
+
+            data = {
                 'summary': summary,
-                'anomalies': anomalies.to_dict('records') if not anomalies.empty else [],
-                'trends': trends.to_dict('records') if not trends.empty else []
-            })
-            
-            return {
-                'summary': summary,
-                'anomalies': anomalies.to_dict('records') if not anomalies.empty else [],
-                'trends': trends.to_dict('records') if not trends.empty else [],
-                'transactions': transactions.to_dict('records') if not transactions.empty else [],
+                'spending_by_category': category_spend,
+                'daily_trend': daily_trend,
+                'anomalies': anomalies,
+                'top_merchants': top_merchants,
+                'recent_transactions': recent_txs,
                 'insights': insights,
-                'success': True
             }
+            self._cache[cache_key] = data
+            return data
         except Exception as e:
-            logger.error(f"❌ Error getting dashboard data: {e}")
-            return {'error': str(e), 'success': False}
-    
-    def cache_dashboard_data(self) -> None:
-        """Cache dashboard data for performance"""
-        data = self.get_dashboard_data()
-        try:
-            import os
-            os.makedirs('data/processed', exist_ok=True)
-            with open('data/processed/dashboard_cache.json', 'w') as f:
-                json.dump(data, f, default=str)
-            logger.info("✅ Dashboard data cached")
-        except Exception as e:
-            logger.error(f"❌ Failed to cache dashboard data: {e}")
+            logger.error(f"get_dashboard_data failed: {e}")
+            return {}
+
+    def load_transactions(self, xml_path: str, csv_output: str = None) -> int:
+        from src.parse_sms import MpesaParser
+        parser = MpesaParser()
+        df = parser.parse_xml_to_csv(xml_path, output_path=csv_output)
+        if df.empty:
+            logger.warning("No transactions to load")
+            return 0
+        count = self.db.insert_transactions(df)
+        self._cache.clear()
+        return count

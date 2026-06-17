@@ -1,433 +1,365 @@
+# app.py (root level - was src/streamlit_app.py)
 import streamlit as st
-import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from src.analyzer import MpesaAnalyzer
-import json
-from datetime import datetime
+import pandas as pd
 import logging
+from src.analyzer import MpesaAnalyzer
 
-# Page config
+logging.basicConfig(level=logging.INFO)
+
 st.set_page_config(
-    page_title="💰 PesaPilot - AI Financial Assistant",
-    page_icon="💰",
+    page_title="PesaPilot",
+    page_icon="💸",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Custom CSS
 st.markdown("""
-    <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .insight-box {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        margin: 1rem 0;
-        border-left: 4px solid #1f77b4;
-    }
+<style>
+    [data-testid="stAppViewContainer"] { background: #0f1117; }
+    [data-testid="stSidebar"] { background: #1a1d2e; }
     .metric-card {
-        background-color: white;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background: #1e2130;
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #2d3250;
         text-align: center;
     }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #1f77b4;
-    }
-    .metric-label {
-        font-size: 0.9rem;
-        color: #666;
-    }
-    .chat-message {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .user-message {
-        background-color: #e3f2fd;
+    .metric-value { font-size: 2rem; font-weight: 700; color: #00d4aa; }
+    .metric-label { font-size: 0.85rem; color: #8892a4; margin-top: 4px; }
+    .chat-msg-user {
+        background: #2d3250;
+        border-radius: 12px 12px 2px 12px;
+        padding: 12px 16px;
+        margin: 8px 0;
+        color: #e8eaf0;
         text-align: right;
     }
-    .assistant-message {
-        background-color: #f5f5f5;
-        text-align: left;
+    .chat-msg-bot {
+        background: #1e2130;
+        border-radius: 12px 12px 12px 2px;
+        padding: 12px 16px;
+        margin: 8px 0;
+        color: #e8eaf0;
+        border-left: 3px solid #00d4aa;
     }
-    .stButton > button {
-        width: 100%;
+    .sql-box {
+        background: #12141f;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-family: monospace;
+        font-size: 0.8rem;
+        color: #7ec8e3;
+        border: 1px solid #2d3250;
     }
-    </style>
+    .anomaly-badge {
+        background: #ff4b6e22;
+        border: 1px solid #ff4b6e;
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: #ff4b6e;
+        font-size: 0.85rem;
+    }
+    h1, h2, h3 { color: #e8eaf0 !important; }
+    .stPlotlyChart { border-radius: 12px; }
+</style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'analyzer' not in st.session_state:
-    st.session_state.analyzer = MpesaAnalyzer()
 
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
+@st.cache_resource
+def get_analyzer():
+    return MpesaAnalyzer()
 
-if 'dashboard_data' not in st.session_state:
-    with st.spinner("Loading data..."):
-        st.session_state.dashboard_data = st.session_state.analyzer.get_dashboard_data()
 
-# Header
-st.markdown('<div class="main-header">💰 PesaPilot</div>', unsafe_allow_html=True)
-st.caption("AI-Powered Financial Assistant for M-PESA Data")
+def fmt_ksh(amount) -> str:
+    if amount is None:
+        return "KES 0"
+    return f"KES {float(amount):,.0f}"
 
-# Sidebar
-with st.sidebar:
-    st.title("📊 Navigation")
-    
-    page = st.radio(
-        "Select Page",
-        ["📈 Dashboard", "💬 Chat", "📋 Transactions", "🔍 Anomalies", "📊 Insights"]
-    )
-    
-    st.divider()
-    
-    st.subheader("📅 Date Range")
-    days = st.slider("Days to show", 7, 90, 30)
-    
-    st.divider()
-    
-    st.subheader("ℹ️ About")
-    st.info(
-        "PesaPilot analyzes your M-PESA transactions using AI. "
-        "Ask questions about your spending, get insights, and track your finances."
-    )
-    
-    if st.button("🔄 Refresh Data"):
-        with st.spinner("Refreshing..."):
-            st.session_state.dashboard_data = st.session_state.analyzer.get_dashboard_data()
-            st.session_state.messages = []
-        st.rerun()
 
-# Main content
-if page == "📈 Dashboard":
-    st.header("📈 Financial Dashboard")
-    
-    data = st.session_state.dashboard_data
-    
-    if data.get('success'):
-        # Metrics
-        summary = data.get('summary', {})
-        daily_df = pd.DataFrame(summary.get('daily', []))
-        category_df = pd.DataFrame(summary.get('categories', []))
-        
-        # Calculate metrics
-        total_spent = daily_df['total_spent'].sum() if not daily_df.empty else 0
-        total_received = daily_df['total_received'].sum() if not daily_df.empty else 0
-        total_tx = daily_df['total_transactions'].sum() if not daily_df.empty else 0
-        avg_spend = daily_df['avg_spend'].mean() if not daily_df.empty else 0
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-value">Ksh {total_spent:,.2f}</div>
-                    <div class="metric-label">💰 Total Spent</div>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-value">Ksh {total_received:,.2f}</div>
-                    <div class="metric-label">📈 Total Received</div>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-value">Ksh {avg_spend:,.2f}</div>
-                    <div class="metric-label">📊 Avg Daily Spend</div>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-value">{int(total_tx):,}</div>
-                    <div class="metric-label">📝 Total Transactions</div>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        # Charts
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if not daily_df.empty:
-                fig = px.line(
-                    daily_df,
-                    x='date',
-                    y=['total_spent', 'total_received'],
-                    title='Daily Spending & Receiving Trend',
-                    labels={'value': 'Amount (Ksh)', 'variable': 'Type', 'date': 'Date'},
-                    color_discrete_map={'total_spent': '#ff6b6b', 'total_received': '#51cf66'}
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No daily data available")
-        
-        with col2:
-            if not category_df.empty:
-                fig = px.pie(
-                    category_df,
-                    values='total_spent',
-                    names='merchant_category',
-                    title='Spending by Category',
-                    hole=0.3,
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No category data available")
-        
-        # Recent transactions
-        st.subheader("📋 Recent Transactions")
-        transactions = pd.DataFrame(data.get('transactions', []))
-        if not transactions.empty:
-            display_cols = ['timestamp', 'type', 'amount', 'recipient', 'merchant_category']
-            st.dataframe(
-                transactions[display_cols].head(10),
-                use_container_width=True,
-                column_config={
-                    'timestamp': st.column_config.DatetimeColumn('Date'),
-                    'amount': st.column_config.NumberColumn('Amount (Ksh)', format="%.2f"),
-                    'type': st.column_config.TextColumn('Type'),
-                    'recipient': st.column_config.TextColumn('Recipient'),
-                    'merchant_category': st.column_config.TextColumn('Category')
-                }
-            )
-        else:
-            st.info("No recent transactions")
+def main():
+    analyzer = get_analyzer()
 
-elif page == "💬 Chat":
-    st.header("💬 Ask About Your Finances")
-    st.caption("Ask questions in plain English about your M-PESA transactions")
-    
-    # Display chat history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            if message["role"] == "assistant":
-                st.markdown(message["content"])
-            else:
-                st.markdown(message["content"])
-    
-    # Chat input
-    if prompt := st.chat_input("Ask about your spending..."):
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Get response
-        with st.chat_message("assistant"):
-            with st.spinner("🤔 Analyzing..."):
-                response = st.session_state.analyzer.ask_question(prompt)
-                
-                if response.get('success'):
-                    st.markdown(response['analysis'])
-                    
-                    # Show SQL in expander
-                    with st.expander("🔍 View SQL Query"):
-                        st.code(response['sql'], language='sql')
-                    
-                    # Show results if any
-                    if response.get('result_count', 0) > 0:
-                        with st.expander(f"📊 View Results ({response['result_count']} rows)"):
-                            results_df = pd.DataFrame(response['results'])
-                            st.dataframe(results_df, use_container_width=True)
-                            
-                            # Download button
-                            csv = results_df.to_csv(index=False)
-                            st.download_button(
-                                "📥 Download CSV",
-                                csv,
-                                "query_results.csv",
-                                "text/csv"
-                            )
-                else:
-                    st.error(f"❌ Error: {response.get('error', 'Unknown error')}")
-                
-                # Add assistant message to history
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": response.get('analysis', "I couldn't process your question.")
-                })
-
-elif page == "📋 Transactions":
-    st.header("📋 Transaction History")
-    
-    # Get transactions
-    data = st.session_state.dashboard_data
-    transactions = pd.DataFrame(data.get('transactions', []))
-    
-    if not transactions.empty:
-        # Filters
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            type_filter = st.selectbox("Filter by Type", ["All"] + sorted(transactions['type'].unique().tolist()))
-        with col2:
-            cat_filter = st.selectbox("Filter by Category", ["All"] + sorted(transactions['merchant_category'].unique().tolist()))
-        with col3:
-            min_amount = st.number_input("Min Amount (Ksh)", min_value=0, value=0, step=50)
-        
-        # Apply filters
-        filtered = transactions.copy()
-        if type_filter != "All":
-            filtered = filtered[filtered['type'] == type_filter]
-        if cat_filter != "All":
-            filtered = filtered[filtered['merchant_category'] == cat_filter]
-        if min_amount > 0:
-            filtered = filtered[filtered['amount'] >= min_amount]
-        
-        # Display count
-        st.caption(f"Showing {len(filtered)} transactions")
-        
-        # Display table
-        st.dataframe(
-            filtered[['timestamp', 'type', 'amount', 'recipient', 'merchant_category', 'balance']],
-            use_container_width=True,
-            column_config={
-                'timestamp': st.column_config.DatetimeColumn('Date'),
-                'amount': st.column_config.NumberColumn('Amount (Ksh)', format="%.2f"),
-                'balance': st.column_config.NumberColumn('Balance (Ksh)', format="%.2f"),
-                'type': st.column_config.TextColumn('Type'),
-                'recipient': st.column_config.TextColumn('Recipient'),
-                'merchant_category': st.column_config.TextColumn('Category')
-            }
-        )
-        
-        # Download
-        csv = filtered.to_csv(index=False)
-        st.download_button(
-            "📥 Download All Transactions CSV",
-            csv,
-            "transactions.csv",
-            "text/csv"
-        )
-    else:
-        st.info("No transactions found. Load data first using the CLI.")
-
-elif page == "🔍 Anomalies":
-    st.header("🔍 Anomaly Detection")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        threshold = st.slider("Anomaly Threshold (Z-score)", 1.0, 5.0, 3.0, 0.5)
-    with col2:
-        days_back = st.slider("Days to analyze", 7, 90, 30)
-    
-    if st.button("🔍 Scan for Anomalies", use_container_width=True):
-        with st.spinner("Analyzing transactions..."):
-            anomalies = st.session_state.analyzer.db.detect_anomalies(
-                threshold=threshold,
-                days_back=days_back
-            )
-            
-            if not anomalies.empty:
-                st.warning(f"⚠️ Found {len(anomalies)} anomalous transactions")
-                
-                # Display anomalies
-                st.dataframe(
-                    anomalies[['transaction_id', 'amount', 'recipient', 'timestamp', 'zscore']],
-                    use_container_width=True,
-                    column_config={
-                        'transaction_id': st.column_config.TextColumn('ID'),
-                        'amount': st.column_config.NumberColumn('Amount (Ksh)', format="%.2f"),
-                        'zscore': st.column_config.NumberColumn('Z-Score', format="%.2f"),
-                        'timestamp': st.column_config.DatetimeColumn('Date'),
-                        'recipient': st.column_config.TextColumn('Recipient')
-                    }
-                )
-                
-                # Visualization
-                fig = px.scatter(
-                    anomalies,
-                    x='timestamp',
-                    y='amount',
-                    color='zscore',
-                    title='Anomalous Transactions',
-                    labels={'zscore': 'Anomaly Score', 'amount': 'Amount (Ksh)'},
-                    color_continuous_scale='Viridis'
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Insights
-                with st.expander("💡 AI Analysis of Anomalies"):
-                    with st.spinner("Generating insights..."):
-                        analysis = st.session_state.analyzer.groq.analyze_results(
-                            "Analyze these anomalous transactions and explain what might be causing them",
-                            "SELECT * FROM anomalies",
-                            anomalies.to_dict('records'),
-                            len(anomalies)
-                        )
-                        st.markdown(analysis)
-            else:
-                st.success("✅ No anomalies detected!")
-
-elif page == "📊 Insights":
-    st.header("📊 AI-Generated Financial Insights")
-    
-    data = st.session_state.dashboard_data
-    
-    if data.get('success'):
-        # Show insights
-        st.markdown('<div class="insight-box">', unsafe_allow_html=True)
-        st.markdown(data.get('insights', 'No insights available'))
-        st.markdown('</div>', unsafe_allow_html=True)
-        
+    # Sidebar
+    with st.sidebar:
+        st.markdown("## 💸 PesaPilot")
+        st.markdown("*Your M-Pesa Financial Advisor*")
         st.divider()
-        
-        # Additional analysis
-        st.subheader("📈 Quick Stats")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            summary = data.get('summary', {})
-            categories = pd.DataFrame(summary.get('categories', []))
-            
-            if not categories.empty:
-                st.write("**Top Spending Categories**")
-                top_categories = categories.nlargest(5, 'total_spent')
-                st.dataframe(
-                    top_categories[['merchant_category', 'total_spent', 'transaction_count']],
-                    use_container_width=True,
-                    column_config={
-                        'merchant_category': 'Category',
-                        'total_spent': st.column_config.NumberColumn('Total Spent (Ksh)', format="%.2f"),
-                        'transaction_count': 'Count'
-                    }
-                )
-        
-        with col2:
-            trends = pd.DataFrame(data.get('trends', []))
-            if not trends.empty:
-                st.write("**Spending Trends**")
-                fig = px.line(
-                    trends,
-                    x='period',
-                    y='spending',
-                    title='Spending Over Time',
-                    labels={'spending': 'Amount (Ksh)', 'period': 'Period'}
+
+        page = st.radio("Navigate", ["📊 Dashboard", "💬 Ask AI", "📋 Transactions", "⚠️ Anomalies", "📤 Load Data"])
+        st.divider()
+
+        days = st.slider("Analysis period (days)", 7, 180, 30)
+
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+    # Load dashboard data
+    with st.spinner("Loading your financial data..."):
+        data = analyzer.get_dashboard_data(days=days)
+
+    summary = data.get('summary', {})
+    category_data = data.get('spending_by_category', [])
+    daily_trend = data.get('daily_trend', [])
+    anomalies = data.get('anomalies', [])
+    top_merchants = data.get('top_merchants', [])
+    recent_txs = data.get('recent_transactions', [])
+    insights = data.get('insights', '')
+
+    # ── DASHBOARD ──────────────────────────────────────────────────────────
+    if page == "📊 Dashboard":
+        st.title("📊 Financial Dashboard")
+        st.caption(f"Last {days} days · M-Pesa transaction analysis")
+
+        c1, c2, c3, c4 = st.columns(4)
+        metrics = [
+            (c1, "Total Transactions", summary.get('total_transactions', 0)),
+            (c2, "Total Spent", fmt_ksh(summary.get('total_spent', 0))),
+            (c3, "Total Received", fmt_ksh(summary.get('total_received', 0))),
+            (c4, "Avg Transaction", fmt_ksh(summary.get('avg_spend', 0))),
+        ]
+        for col, label, value in metrics:
+            with col:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{value}</div>
+                    <div class="metric-label">{label}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("")
+
+        col_left, col_right = st.columns([1.2, 0.8])
+
+        with col_left:
+            st.subheader("Daily Spending Trend")
+            if daily_trend:
+                df_trend = pd.DataFrame(daily_trend)
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_trend['date'], y=df_trend['total_spent'],
+                    name='Spent', fill='tozeroy',
+                    line=dict(color='#ff4b6e', width=2),
+                    fillcolor='rgba(255,75,110,0.1)'
+                ))
+                fig.add_trace(go.Scatter(
+                    x=df_trend['date'], y=df_trend['total_received'],
+                    name='Received', fill='tozeroy',
+                    line=dict(color='#00d4aa', width=2),
+                    fillcolor='rgba(0,212,170,0.1)'
+                ))
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color='#8892a4',
+                    legend=dict(bgcolor='rgba(0,0,0,0)'),
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    xaxis=dict(gridcolor='#2d3250'),
+                    yaxis=dict(gridcolor='#2d3250'),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.error(f"❌ Error loading insights: {data.get('error', 'Unknown error')}")
+            else:
+                st.info("No trend data available.")
 
-# Footer
-st.divider()
-st.caption(f"💰 PesaPilot v1.0 | Powered by Groq AI | Data updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        with col_right:
+            st.subheader("Spending by Category")
+            if category_data:
+                df_cat = pd.DataFrame(category_data)
+                fig = px.pie(
+                    df_cat.head(8),
+                    values='total_amount',
+                    names='merchant_category',
+                    hole=0.55,
+                    color_discrete_sequence=px.colors.qualitative.Bold,
+                )
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font_color='#8892a4',
+                    legend=dict(bgcolor='rgba(0,0,0,0)'),
+                    margin=dict(l=0, r=0, t=10, b=0),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No category data available.")
+
+        col_l2, col_r2 = st.columns(2)
+
+        with col_l2:
+            st.subheader("Top Merchants")
+            if top_merchants:
+                df_merch = pd.DataFrame(top_merchants)
+                fig = px.bar(
+                    df_merch,
+                    x='total_amount',
+                    y='recipient',
+                    orientation='h',
+                    color='total_amount',
+                    color_continuous_scale='teal',
+                    labels={'total_amount': 'Amount (KES)', 'recipient': ''},
+                )
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color='#8892a4',
+                    coloraxis_showscale=False,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    yaxis=dict(autorange='reversed'),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No merchant data available.")
+
+        with col_r2:
+            st.subheader("💡 AI Insights")
+            if insights:
+                st.markdown(f"""
+                <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
+                {insights.replace(chr(10), '<br>')}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("Load transactions to generate insights.")
+
+    # ── ASK AI ─────────────────────────────────────────────────────────────
+    elif page == "💬 Ask AI":
+        st.title("💬 Ask PesaPilot")
+        st.caption("Ask anything about your M-Pesa transactions in plain English")
+
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+
+        suggestions = [
+            "What did I spend most on this month?",
+            "How much did I send to Safaricom?",
+            "What are my top 5 expenses?",
+            "Compare my spending this week vs last week",
+            "Which day do I spend the most?",
+        ]
+        st.markdown("**Quick questions:**")
+        cols = st.columns(len(suggestions))
+        for i, (col, q) in enumerate(zip(cols, suggestions)):
+            if col.button(q, key=f"sugg_{i}", use_container_width=True):
+                st.session_state.pending_question = q
+
+        st.divider()
+
+        for msg in st.session_state.chat_history:
+            if msg['role'] == 'user':
+                st.markdown(f'<div class="chat-msg-user">🧑 {msg["content"]}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="chat-msg-bot">🤖 {msg["content"]}</div>', unsafe_allow_html=True)
+                if msg.get('sql'):
+                    with st.expander("View SQL", expanded=False):
+                        st.markdown(f'<div class="sql-box">{msg["sql"]}</div>', unsafe_allow_html=True)
+                if msg.get('results'):
+                    with st.expander(f"View results ({len(msg['results'])} rows)", expanded=False):
+                        st.dataframe(pd.DataFrame(msg['results']).head(20), use_container_width=True)
+
+        pending = st.session_state.pop('pending_question', None)
+        question = st.chat_input("Ask about your spending...") or pending
+
+        if question:
+            st.session_state.chat_history.append({'role': 'user', 'content': question})
+            with st.spinner("Thinking..."):
+                result = analyzer.ask_question(question)
+            bot_msg = {
+                'role': 'bot',
+                'content': result['analysis'],
+                'sql': result.get('sql', ''),
+                'results': result.get('results', []),
+            }
+            st.session_state.chat_history.append(bot_msg)
+            st.rerun()
+
+    # ── TRANSACTIONS ────────────────────────────────────────────────────────
+    elif page == "📋 Transactions":
+        st.title("📋 Recent Transactions")
+        if recent_txs:
+            df = pd.DataFrame(recent_txs)
+            cols_show = [c for c in ['timestamp', 'type', 'amount', 'recipient', 'merchant_category', 'balance'] if c in df.columns]
+            df_show = df[cols_show].copy()
+            if 'amount' in df_show.columns:
+                df_show['amount'] = df_show['amount'].apply(lambda x: f"KES {x:,.2f}" if x else '')
+            if 'balance' in df_show.columns:
+                df_show['balance'] = df_show['balance'].apply(lambda x: f"KES {x:,.2f}" if x else '')
+
+            fc1, fc2 = st.columns(2)
+            with fc1:
+                tx_types = ['All'] + sorted(df['type'].dropna().unique().tolist())
+                selected_type = st.selectbox("Transaction type", tx_types)
+            with fc2:
+                cats = ['All'] + sorted(df['merchant_category'].dropna().unique().tolist())
+                selected_cat = st.selectbox("Category", cats)
+
+            mask = pd.Series([True] * len(df))
+            if selected_type != 'All':
+                mask &= df['type'] == selected_type
+            if selected_cat != 'All':
+                mask &= df['merchant_category'] == selected_cat
+
+            st.dataframe(df_show[mask], use_container_width=True, height=500)
+            st.caption(f"Showing {mask.sum()} transactions")
+        else:
+            st.info("No transactions found. Load your M-Pesa XML backup to get started.")
+
+    # ── ANOMALIES ───────────────────────────────────────────────────────────
+    elif page == "⚠️ Anomalies":
+        st.title("⚠️ Unusual Transactions")
+        st.caption("Transactions significantly above your normal spending pattern")
+
+        if anomalies:
+            for a in anomalies[:20]:
+                score = float(a.get('zscore', 0))
+                st.markdown(f"""
+                <div class="anomaly-badge">
+                    ⚠️ <strong>{a.get('recipient', 'Unknown')}</strong> — KES {float(a.get('amount', 0)):,.2f}
+                    &nbsp;·&nbsp; {str(a.get('timestamp', ''))[:16]}
+                    &nbsp;·&nbsp; z-score: {score:.1f}x above normal
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown("")
+        else:
+            st.success("✅ No unusual transactions detected in your history.")
+
+    # ── LOAD DATA ───────────────────────────────────────────────────────────
+    elif page == "📤 Load Data":
+        st.title("📤 Load M-Pesa Data")
+        st.markdown("Upload your SMS backup XML file exported from **SMS Backup & Restore** app.")
+
+        uploaded = st.file_uploader("Upload SMS backup XML", type=['xml'])
+        if uploaded:
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(suffix='.xml', delete=False) as tmp:
+                tmp.write(uploaded.read())
+                tmp_path = tmp.name
+            try:
+                with st.spinner("Parsing and uploading transactions..."):
+                    count = analyzer.load_transactions(tmp_path, csv_output='data/processed/mpesa_transactions.csv')
+                if count > 0:
+                    st.success(f"✅ Successfully loaded {count} transactions!")
+                    st.balloons()
+                    st.cache_resource.clear()
+                else:
+                    st.warning("No M-Pesa transactions found in the file.")
+            except Exception as e:
+                st.error(f"Error loading data: {e}")
+            finally:
+                os.unlink(tmp_path)
+
+        st.divider()
+        st.subheader("Or load from local path")
+        local_path = st.text_input("XML file path", "data/raw/sms-20260616115048.xml")
+        if st.button("Load from path", use_container_width=True):
+            try:
+                with st.spinner("Loading..."):
+                    count = analyzer.load_transactions(local_path)
+                st.success(f"✅ Loaded {count} transactions!")
+                st.cache_resource.clear()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+
+if __name__ == "__main__":
+    main()

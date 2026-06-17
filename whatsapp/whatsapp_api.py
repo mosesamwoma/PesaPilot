@@ -5,6 +5,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from src.analyzer import MpesaAnalyzer
+from typing import Optional
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +24,7 @@ app = FastAPI(
 analyzer = MpesaAnalyzer()
 
 # ──────────────────────────────────────────────────────────────────────────
-# Models
+# Models - Fixed with Optional type
 # ──────────────────────────────────────────────────────────────────────────
 
 class QuestionRequest(BaseModel):
@@ -32,8 +33,8 @@ class QuestionRequest(BaseModel):
 class AnalysisResponse(BaseModel):
     question: str
     analysis: str
-    sql: str = None
-    error: str = None
+    sql: Optional[str] = None
+    error: Optional[str] = None
 
 # ──────────────────────────────────────────────────────────────────────────
 # Health Check
@@ -112,13 +113,14 @@ I analyze your M-Pesa history and give you insights powered by AI."""
         result = analyzer.ask_question(request.question)
 
         logger.info(f"✅ Response generated")
-        logger.info(f"SQL: {result.get('sql', 'N/A')[:100]}")
+        logger.info(f"SQL: {result.get('sql', 'N/A')[:100] if result.get('sql') else 'None'}")
 
+        # Ensure we have valid values
         return AnalysisResponse(
-            question=result['question'],
-            analysis=result['analysis'],
-            sql=result.get('sql'),
-            error=result.get('error')
+            question=result.get('question', request.question),
+            analysis=result.get('analysis', 'No analysis generated. Please try again.'),
+            sql=result.get('sql') if result.get('sql') else None,
+            error=result.get('error') if result.get('error') else None
         )
 
     except Exception as e:

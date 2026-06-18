@@ -1,4 +1,4 @@
-# docker-compose.yml (moved to root)
+# docker-compose.yml
 version: '3.8'
 
 services:
@@ -20,6 +20,7 @@ services:
       - APP_ENV=${APP_ENV:-production}
       - DEBUG=${DEBUG:-False}
       - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
+      - WHATSAPP_LID=${WHATSAPP_LID}
       - WHATSAPP_API_URL=${WHATSAPP_API_URL:-http://localhost:8000}
       - WHATSAPP_API_PORT=${WHATSAPP_API_PORT:-8000}
     volumes:

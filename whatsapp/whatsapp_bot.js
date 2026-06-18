@@ -1,19 +1,21 @@
-// whatsapp/whatsapp_bot.js - COMPLETE WORKING CODE (With LID)
+// whatsapp/whatsapp_bot.js
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 require('dotenv').config();
 
 // ⚙️ CONFIGURATION - Load from environment
-const MAIN_NUMBER = process.env.WHATSAPP_MAIN_NUMBER || '115831308570778';
-const API_URL = process.env.WHATSAPP_API_URL || 'http://localhost:8000';
-const API_PORT = process.env.WHATSAPP_API_PORT || 8000;
+const MAIN_NUMBER = process.env.WHATSAPP_MAIN_NUMBER || '';
+const MAIN_LID    = process.env.WHATSAPP_LID || '';
+const API_URL     = process.env.WHATSAPP_API_URL || 'http://localhost:8000';
+const API_PORT    = process.env.WHATSAPP_API_PORT || 8000;
 
 console.log('\n═══════════════════════════════════════════════════════');
 console.log('🤖 PesaPilot WhatsApp Bot');
 console.log('═══════════════════════════════════════════════════════');
-console.log(`📱 Main Number/LID: ${MAIN_NUMBER}`);
-console.log(`🔗 API URL: ${API_URL}`);
+console.log(`📱 Main Number : ${MAIN_NUMBER || 'not set'}`);
+console.log(`🔑 LID         : ${MAIN_LID    || 'not set'}`);
+console.log(`🔗 API URL     : ${API_URL}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
 const client = new Client({
@@ -50,13 +52,13 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
   console.log('\n╔═══════════════════════════════════════════════════════╗');
-  console.log('║              ✅ BOT IS ONLINE!                       ║');
+  console.log('║              ✅ BOT IS ONLINE!                        ║');
   console.log('╚═══════════════════════════════════════════════════════╝');
-  console.log(`🤖 Bot WhatsApp ID: ${client.info.wid._serialized}`);
-  console.log(`📞 Listening for messages from: ${MAIN_NUMBER}`);
-  console.log(`🔗 API: ${API_URL}`);
-  console.log('\n💡 Now send a message from your MAIN Safaricom number\n');
-  console.log('Example messages:');
+  console.log(`🤖 Bot WhatsApp ID : ${client.info.wid._serialized}`);
+  console.log(`📞 Authorized      : ${MAIN_NUMBER || MAIN_LID}`);
+  console.log(`🔗 API             : ${API_URL}`);
+  console.log('\n💡 Send a message from your main Safaricom number\n');
+  console.log('Examples:');
   console.log('  • "What did I spend on food?"');
   console.log('  • "How much did I send to Safaricom?"');
   console.log('  • "Summary"');
@@ -70,36 +72,42 @@ client.on('ready', () => {
 client.on('message', async (message) => {
   try {
     const senderNumber = message.from;
-    const userMessage = message.body.trim();
+    const userMessage  = message.body.trim();
 
-    console.log(`\n📨 Message received: "${userMessage.substring(0, 50)}..."`);
+    console.log(`\n📨 Message: "${userMessage.substring(0, 60)}"`);
 
-    // Extract numeric part (works with both @c.us and @lid)
+    // Strip @c.us / @lid suffix for clean comparison
     const senderNumeric = senderNumber.replace(/@.*$/, '');
-    const mainNumeric = MAIN_NUMBER.replace(/@.*$/, '');
+    const mainNumeric   = MAIN_NUMBER.replace(/@.*$/, '');
+    const lidNumeric    = MAIN_LID.replace(/@.*$/, '');
 
-    console.log(`📱 From: ${senderNumeric}`);
-    console.log(`📱 Allowed: ${mainNumeric}`);
+    console.log(`📱 From          : ${senderNumeric}`);
+    console.log(`📱 Allowed number: ${mainNumeric  || 'not set'}`);
+    console.log(`🔑 Allowed LID   : ${lidNumeric   || 'not set'}`);
 
-    // Check if sender is authorized
+    // Authorize if sender matches either the main number OR the LID
     let isAuthorized = false;
+    let matchedBy    = '';
 
-    // Direct match
-    if (senderNumeric === mainNumeric) {
+    if (mainNumeric && senderNumeric === mainNumeric) {
       isAuthorized = true;
-      console.log(`✅ Direct match!`);
+      matchedBy    = 'phone number';
+    } else if (lidNumeric && senderNumeric === lidNumeric) {
+      isAuthorized = true;
+      matchedBy    = 'LID';
     }
 
-    // Try getting contact info as backup
+    // Fallback — try contact info
     if (!isAuthorized) {
       try {
-        const contact = await message.getContact();
+        const contact    = await message.getContact();
         const contactNum = (contact.number || '').replace(/@.*$/, '');
         console.log(`👤 Contact: ${contact.name || 'Unknown'} (${contactNum})`);
-        
-        if (contactNum === mainNumeric) {
+
+        if ((mainNumeric && contactNum === mainNumeric) ||
+            (lidNumeric  && contactNum === lidNumeric)) {
           isAuthorized = true;
-          console.log(`✅ Contact match!`);
+          matchedBy    = 'contact lookup';
         }
       } catch (e) {
         console.log('⚠️  Could not get contact info');
@@ -113,12 +121,12 @@ client.on('message', async (message) => {
       return;
     }
 
-    // Show typing indicator
+    console.log(`✅ Authorized via ${matchedBy}`);
     await message.react('⏳');
 
     // Send to Python API
     console.log('🔄 Querying AI...');
-    
+
     const response = await axios.post(
       `${API_URL}/ask`,
       { question: userMessage },
@@ -127,7 +135,7 @@ client.on('message', async (message) => {
 
     const analysis = response.data.analysis;
 
-    // Split long messages
+    // Split long messages (WhatsApp limit ~3000 chars)
     const chunks = splitMessage(analysis, 3000);
 
     for (const chunk of chunks) {
@@ -136,12 +144,12 @@ client.on('message', async (message) => {
     }
 
     await message.react('✅');
-    console.log('✅ Complete\n');
+    console.log('✅ Done\n');
 
   } catch (error) {
     console.error(`❌ Error: ${error.message}`);
     try {
-      await message.reply('❌ Sorry, I encountered an error. Please try again.');
+      await message.reply('❌ Sorry, something went wrong. Please try again.');
       await message.react('❌');
     } catch (replyError) {
       console.error('Could not send error message');
@@ -154,22 +162,20 @@ client.on('message', async (message) => {
 // ──────────────────────────────────────────────────────────────────────────
 
 client.on('disconnected', (reason) => {
-  console.log(`\n⚠️  Bot disconnected: ${reason}`);
+  console.log(`\n⚠️  Disconnected: ${reason}`);
   console.log('🔄 Attempting to reconnect...\n');
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Helper Functions
+// Helper — split long replies into chunks
 // ──────────────────────────────────────────────────────────────────────────
 
 function splitMessage(text, maxLength) {
-  if (text.length <= maxLength) {
-    return [text];
-  }
+  if (text.length <= maxLength) return [text];
 
-  const chunks = [];
+  const chunks     = [];
   let currentChunk = '';
-  const sentences = text.split(/(?<=[.!?])\s+/);
+  const sentences  = text.split(/(?<=[.!?])\s+/);
 
   for (const sentence of sentences) {
     if ((currentChunk + sentence).length > maxLength) {
@@ -185,20 +191,10 @@ function splitMessage(text, maxLength) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Start Bot
+// Start
 // ──────────────────────────────────────────────────────────────────────────
 
 client.initialize();
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n\n👋 Shutting down bot...');
-  await client.destroy();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  console.log('\n\n👋 Shutting down bot...');
-  await client.destroy();
-  process.exit(0);
-});
+process.on('SIGINT',  async () => { await client.destroy(); process.exit(0); });
+process.on('SIGTERM', async () => { await client.destroy(); process.exit(0); });

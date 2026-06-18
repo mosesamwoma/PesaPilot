@@ -11,3 +11,4 @@ node_modules/
 .webjs_auth_cache/
 2.300
 *.html
+HOSTING.md

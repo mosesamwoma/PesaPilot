@@ -6,6 +6,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: pesapilot
+    env_file:
+      - .env
+    ports:
     ports:
       - "8501:8501"
       - "8000:8000"

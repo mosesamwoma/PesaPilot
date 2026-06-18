@@ -1,39 +1,28 @@
-# Environment
-.env
-.env.local
-.env.production
-# Python
 venv/
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
+*.so
+*.egg
 *.egg-info/
 dist/
 build/
-.pytest_cache/
-# Database
-*.db
-db.sqlite3
-# Data files
-data/raw/
-data/processed/
-*.xml
-*.csv
-# WhatsApp session
-.wwebjs_auth/
-.wwebjs_cache/
-.webjs_auth_cache/
-# Node
+.env
+data/
 node_modules/
-# Git
+.wwebjs_auth/
+whatsapp-sessions/
 .git/
 .gitignore
-# Docs
-*.md
-HOSTING.md
-WHATSAPP.md
-whatsapp/whatsapp.md 
-# Misc
-*.html
-2.300
+README.md
+*.log
 .DS_Store
+.pytest_cache/
+.coverage
+htmlcov/
+*.html
+*.xml
+*.csv
+*.xlsx

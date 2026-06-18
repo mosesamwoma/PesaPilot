@@ -1,42 +1,52 @@
-# docker-compose.yml
+# docker-compose.yml (root) - WITH VOLUMES
+version: '3.8'
 
 services:
-  pesapilot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: pesapilot
-    env_file:
-      - .env
+  pesapilot-api:
+    build: .
+    container_name: pesapilot-api
     ports:
-    ports:
-      - "8501:8501"
       - "8000:8000"
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-llama-3.3-70b-versatile}
-      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.3}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-1000}
-      - APP_ENV=${APP_ENV:-production}
-      - DEBUG=${DEBUG:-False}
       - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
       - WHATSAPP_LID=${WHATSAPP_LID}
+      - LLM_MODEL=${LLM_MODEL:-llama-3.3-70b-versatile}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.2}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-500}
+      - APP_ENV=${APP_ENV:-production}
+      - DEBUG=${DEBUG:-False}
       - WHATSAPP_API_URL=${WHATSAPP_API_URL:-http://localhost:8000}
       - WHATSAPP_API_PORT=${WHATSAPP_API_PORT:-8000}
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    env_file:
+      - .env
     volumes:
-      - ./data:/app/data
-      - ./.env:/app/.env:ro
+      - pesapilot_auth:/app/.wwebjs_auth
+      - pesapilot_data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - pesapilot
+
+volumes:
+  pesapilot_auth:
+    driver: local
+  pesapilot_data:
+    driver: local
+
+networks:
+  pesapilot:
+    driver: bridge

@@ -217,7 +217,6 @@ Expected: `39 passed`
 ### Local Development
 
 ```bash
-cd docker
 docker-compose build
 docker-compose up -d
 docker-compose logs -f

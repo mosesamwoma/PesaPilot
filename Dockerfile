@@ -1,41 +1,49 @@
+# Dockerfile (root) - PRODUCTION READY
 FROM python:3.10-slim
+
+# Install Node.js and Chromium correctly
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y \
+    nodejs \
+    chromium \
+    libglib2.0-0 \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    libxml2-dev \
-    libxslt1-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
+# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Node deps
+COPY package*.json ./
+RUN npm install --production
+
+# Copy code
 COPY src/ ./src/
-COPY app.py .
-COPY run.py .
 COPY whatsapp/ ./whatsapp/
+COPY run.py .
 
-# Create data directories
-RUN mkdir -p data/raw data/processed
+# Create persistent directories
+RUN mkdir -p data/raw data/processed data/sessions
+RUN mkdir -p .wwebjs_auth
 
-# Expose ports
-EXPOSE 8501 8000
+# No Streamlit - API only
+EXPOSE 8000
 
-# Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV STREAMLIT_SERVER_PORT=8501
-ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
-ENV WHATSAPP_API_PORT=8000
+ENV NODE_ENV=production
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV WHATSAPP_API_URL=http://localhost:8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
-
-# Default command - runs both Streamlit and API
-CMD streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+# Both processes
+CMD sh -c "uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 & node whatsapp/whatsapp_bot.js"

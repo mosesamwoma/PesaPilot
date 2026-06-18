@@ -1,14 +1,15 @@
-# docker/docker-compose.yml
+# docker-compose.yml (moved to root)
 version: '3.8'
 
 services:
   pesapilot:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: pesapilot
     ports:
-      - "8502:8501"
+      - "8501:8501"
+      - "8000:8000"
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
@@ -18,9 +19,12 @@ services:
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-1000}
       - APP_ENV=${APP_ENV:-production}
       - DEBUG=${DEBUG:-False}
+      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
+      - WHATSAPP_API_URL=${WHATSAPP_API_URL:-http://localhost:8000}
+      - WHATSAPP_API_PORT=${WHATSAPP_API_PORT:-8000}
     volumes:
-      - ../data:/app/data
-      - ../.env:/app/.env:ro
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
@@ -33,6 +37,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  pesapilot_data:

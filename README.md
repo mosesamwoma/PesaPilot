@@ -263,38 +263,6 @@ docker run -p 8501:8501 -p 8000:8000 --env-file .env pesapilot
 
 ---
 
-## Hosting the WhatsApp Bot
-
-The bot requires an always-on server with persistent processes and headless Chrome. These platforms work:
-
-| Platform | Free Forever | Setup |
-|----------|-------------|-------|
-| Fly.io | Yes | Easiest — deploy with CLI |
-| Oracle Cloud | Yes | Best resources — 1GB RAM VM |
-| Google Cloud | Yes | e2-micro VM in us-west1 |
-| Koyeb | Yes | Simplest UI |
-| AWS Free Tier | 12 months | t2.micro VM |
-| Azure Free Tier | 12 months | B1s VM |
-
-These do not work: Vercel, Netlify, Render free tier, Railway, Heroku, Replit.
-
-See [HOSTING.md](HOSTING.md) for full deployment instructions for each platform.
-
----
-
-## Tech Stack
-
-| Layer | Tech |
-|-------|------|
-| Frontend | Streamlit |
-| Backend | Python 3.10+, FastAPI |
-| WhatsApp Bot | Node.js 18+, whatsapp-web.js |
-| Database | Supabase (PostgreSQL) |
-| LLM | Groq (Llama 3.3-70b) |
-| Deployment | Docker, Fly.io, Oracle Cloud |
-
----
-
 ## Troubleshooting
 
 | Issue | Fix |
@@ -308,3 +276,5 @@ See [HOSTING.md](HOSTING.md) for full deployment instructions for each platform.
 | Groq rate limit | Wait 60 seconds, reduce request frequency |
 | `streamlit: command not found` | Run `source venv/bin/activate` first |
 | `balance` column all null | Normal — not all M-Pesa SMS include balance |
+
+---

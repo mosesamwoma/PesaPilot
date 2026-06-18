@@ -15,45 +15,6 @@ AI-powered M-Pesa financial assistant for Kenya. Analyzes your spending, provide
 
 ---
 
-## Getting Your M-Pesa Data
-
-Before running anything, you need to export your M-Pesa SMS messages from your Android phone.
-
-### Step 1 — Install SMS Backup & Restore
-
-Install [SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore) from the Play Store.
-
-### Step 2 — Export your SMS
-
-1. Open the app
-2. Tap **Back Up**
-3. Select **SMS** only
-4. Save to phone storage or Google Drive
-5. You will get a file named something like `sms-20260616.xml`
-
-### Step 3 — Transfer to your computer
-
-- USB cable → copy from phone storage
-- Or Google Drive → download to your computer
-- Place the file in `data/raw/` inside the project folder
-
-### Step 4 — Load into PesaPilot
-
-**Via dashboard:**
-1. Run `streamlit run app.py`
-2. Go to **Load Data** in the sidebar
-3. Upload the XML file or enter the file path
-4. Click **Load**
-
-**Via CLI:**
-```bash
-python run.py load data/raw/sms-20260616.xml
-```
-
-Re-loading is always safe — duplicates are ignored automatically.
-
----
-
 ## Quick Start
 
 ### 1. Prerequisites
@@ -112,13 +73,28 @@ Keys you must fill in:
 4. Click **Run**
 5. You should see: `PesaPilot DB ready`
 
-### 5. Load Your Data
+### 5. Get Your M-Pesa Data
+
+Export your M-Pesa SMS messages from your Android phone.
+
+Install [SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore) from the Play Store.
+
+1. Open the app
+2. Tap **Back Up**
+3. Select **SMS** only
+4. Save to phone storage or Google Drive
+5. Transfer the XML file to your computer
+6. Place the file in `data/raw/` inside the project folder
+
+### 6. Load Your Data
 
 ```bash
 python run.py load data/raw/your-sms-backup.xml
 ```
 
-### 6. Run
+Re-loading is always safe — duplicates are ignored automatically.
+
+### 7. Run
 
 **Dashboard only:**
 ```bash
@@ -260,6 +236,7 @@ docker-compose down
 docker build -t pesapilot .
 docker run -p 8501:8501 -p 8000:8000 --env-file .env pesapilot
 ```
+
 
 ---
 

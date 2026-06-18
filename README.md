@@ -63,7 +63,7 @@ Keys you must fill in:
 
 > Never commit `.env` to GitHub. It is already in `.gitignore`.
 
-**Note on `WHATSAPP_MAIN_NUMBER`:** WhatsApp sometimes returns an internal LID instead of your phone number (e.g. `115831308570778` instead of `254712...`). Run the bot once, send any message from your main number, and check the terminal — it prints the exact sender ID. Copy that value directly into `.env`.
+**Note on `WHATSAPP_MAIN_NUMBER`:** WhatsApp sometimes returns an internal LID instead of your phone number. Run the bot once, send any message from your main number, and check the terminal — it prints the exact sender ID. Copy that value into `.env` as `WHATSAPP_LID`.
 
 ### 4. Database Setup
 
@@ -75,16 +75,13 @@ Keys you must fill in:
 
 ### 5. Get Your M-Pesa Data
 
-Export your M-Pesa SMS messages from your Android phone.
-
 Install [SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore) from the Play Store.
 
 1. Open the app
-2. Tap **Back Up**
-3. Select **SMS** only
-4. Save to phone storage or Google Drive
-5. Transfer the XML file to your computer
-6. Place the file in `data/raw/` inside the project folder
+2. Tap **Back Up** → select **SMS** only
+3. Save to phone storage or Google Drive
+4. Transfer the XML file to your computer
+5. Place the file in `data/raw/` inside the project folder
 
 ### 6. Load Your Data
 
@@ -122,23 +119,21 @@ The bot runs on your Airtel spare number. You message it from your main Safarico
 
 ```env
 # Your main Safaricom number — the number you send questions FROM
-# Format: country code + number, no + sign
 WHATSAPP_MAIN_NUMBER=254712345678
 
 # Your WhatsApp LID — internal ID WhatsApp assigns to your number
-# Use this if WHATSAPP_MAIN_NUMBER does not authorize you
 WHATSAPP_LID=115831308570778
 ```
 
-**Finding your LID:** WhatsApp sometimes returns an internal LID instead of your phone number. Run the bot, send any message from your main number, and the terminal prints the exact sender ID:
+**Finding your LID:** Run the bot, send any message from your main number, and the terminal prints:
 
 ```
 📱 From: 115831308570778
-📱 Allowed: 115831308570778
-✅ Direct match!
+🔑 Allowed LID: 115831308570778
+✅ Authorized via LID
 ```
 
-Copy whatever appears next to `From:` and paste it into `.env` as `WHATSAPP_LID`. If your phone number works directly, the LID is just a fallback.
+Copy the value next to `From:` and paste it into `.env` as `WHATSAPP_LID`.
 
 ### Step 2 — Run locally
 
@@ -153,8 +148,6 @@ node whatsapp/whatsapp_bot.js
 
 ### Step 3 — Scan QR code
 
-When the bot starts it prints a QR code:
-
 ```
 ╔════════════════════════════════════════════════════════╗
 ║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║
@@ -162,11 +155,7 @@ When the bot starts it prints a QR code:
 ╚════════════════════════════════════════════════════════╝
 ```
 
-1. Open WhatsApp on your **Airtel phone**
-2. Settings → Linked Devices → Link a Device
-3. Scan the QR code
-
-Session is saved after the first scan — no QR needed on future runs.
+Session is saved after first scan — no QR needed on future runs.
 
 ### Send messages from your main number
 
@@ -188,10 +177,10 @@ Anyone else who texts the Airtel number gets: `This number is not authorized.`
 ### Python CLI
 
 ```bash
-python run.py setup                          # Test DB connection
-python run.py load data/raw/sms.xml         # Load SMS data
-python run.py ask "what did I spend?"       # Ask a question
-python run.py dashboard                      # Launch dashboard
+python run.py setup                        # Test DB connection
+python run.py load data/raw/sms.xml       # Load SMS data
+python run.py ask "what did I spend?"     # Ask a question
+python run.py dashboard                    # Launch dashboard
 ```
 
 ### WhatsApp
@@ -214,28 +203,109 @@ Expected: `39 passed`
 
 ## Docker
 
-### Local Development
+> Docker runs the **FastAPI backend only** — no Streamlit in production.
+> The WhatsApp bot runs locally or on a server where the session can persist.
+
+### Build and Run
 
 ```bash
+# Build the image
+docker-compose build
+
+# Start services
+docker-compose up -d
+
+# Watch logs and QR code
+docker-compose logs -f pesapilot
+```
+
+- API: [http://localhost:8000](http://localhost:8000)
+- Health check: [http://localhost:8000/health](http://localhost:8000/health)
+
+### Management Commands
+
+```bash
+# Check container status
+docker-compose ps
+
+# View logs
+docker-compose logs -f pesapilot
+
+# Stop
+docker-compose down
+
+# Restart (session persists)
+docker-compose restart
+
+# Rebuild from scratch
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+
+# Shell into container
+docker-compose exec pesapilot bash
+
+# View container health
+docker inspect pesapilot | grep -A 10 "Health"
+```
+
+### Test the API
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Send a test question
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What did I spend on food?"}'
+```
+
+### Persistent Volumes
+
+| Volume | Purpose |
+|--------|---------|
+| `pesapilot_auth` | WhatsApp session — no re-scan after first time |
+| `pesapilot_data` | Application data |
+
+### Backup and Restore
+
+```bash
+# Backup WhatsApp session
+docker run --rm -v pesapilot_auth:/source -v $(pwd):/backup alpine cp -r /source /backup/whatsapp_session_backup
+
+# Restore WhatsApp session
+docker run --rm -v pesapilot_auth:/dest -v $(pwd)/whatsapp_session_backup:/source alpine cp -r /source/* /dest/
+```
+
+### Production Deployment
+
+```bash
+# On your server
+git clone https://github.com/mosesamwoma/PesaPilot.git
+cd PesaPilot
+
+# Copy your .env
+scp user@local:/path/to/.env .env
+
+# Build and run
 docker-compose build
 docker-compose up -d
-docker-compose logs -f
+
+# Verify
+curl http://localhost:8000/health
 ```
 
-- Dashboard: [http://localhost:8501](http://localhost:8501)
-- API health: [http://localhost:8000/health](http://localhost:8000/health)
+### Docker Troubleshooting
 
-```bash
-docker-compose down
-```
-
-### Production
-
-```bash
-docker build -t pesapilot .
-docker run -p 8501:8501 -p 8000:8000 --env-file .env pesapilot
-```
-
+| Issue | Fix |
+|-------|-----|
+| Container won't start | `docker-compose logs --tail=50 pesapilot` |
+| QR code not showing | `docker-compose logs -f pesapilot` |
+| Session lost | `docker volume ls \| grep pesapilot` |
+| Port 8000 in use | Change port in `docker-compose.yml` |
+| Build takes too long | Use cache — avoid `--no-cache` unless needed |
+| Old container conflict | `docker rm -f pesapilot` then `docker-compose up -d` |
 
 ---
 

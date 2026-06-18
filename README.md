@@ -1,4 +1,4 @@
-# 💸 PesaPilot
+#  PesaPilot
 
 AI-powered M-Pesa financial assistant for Kenya. Analyzes your spending, provides insights, integrates with WhatsApp.
 
@@ -6,12 +6,12 @@ AI-powered M-Pesa financial assistant for Kenya. Analyzes your spending, provide
 
 ## Features
 
-✅ **Dashboard** — spending overview, trends, categories, merchants, AI insights  
-✅ **Ask AI** — natural language questions answered in seconds  
-✅ **Transactions** — filterable history, all M-Pesa types  
-✅ **Anomalies** — unusual spending detection  
-✅ **Load Data** — auto-parse SMS backups, dedup, categorize  
-✅ **WhatsApp Bot** — ask questions directly via WhatsApp  
+ **Dashboard** — spending overview, trends, categories, merchants, AI insights  
+ **Ask AI** — natural language questions answered in seconds  
+ **Transactions** — filterable history, all M-Pesa types  
+ **Anomalies** — unusual spending detection  
+ **Load Data** — auto-parse SMS backups, dedup, categorize  
+ **WhatsApp Bot** — ask questions directly via WhatsApp  
 
 ---
 
@@ -41,7 +41,7 @@ npm install whatsapp-web.js qrcode-terminal axios dotenv
 ```
 ### 4. Environment variables
 
-now  set you KEYS into .env.example ans set you own keys and rename the .env.example to .en
+now  set you KEYS into .env.example and set you own keys and rename the .env.example to .env
 
 ### 4. Database Setup
 
@@ -160,15 +160,6 @@ Help
 | Database | Supabase (PostgreSQL) |
 | LLM | Groq (Llama 3.3-70b) |
 | Deployment | Docker, Fly.io, Render, Oracle Cloud |
-
----
-
-## Free Tier Limits
-
-- **Supabase:** 500MB storage, 2GB bandwidth/month ✅
-- **Groq:** 30 req/min, 14,400 req/day ✅
-- **Fly.io:** 3 shared-cpu-1x 256MB VMs free ✅
-- **Streamlit Cloud:** 1 free app ✅
 
 ---
 

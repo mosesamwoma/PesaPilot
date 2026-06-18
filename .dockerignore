@@ -1,0 +1,39 @@
+# Environment
+.env
+.env.local
+.env.production
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+# Database
+*.db
+db.sqlite3
+# Data files
+data/raw/
+data/processed/
+*.xml
+*.csv
+# WhatsApp session
+.wwebjs_auth/
+.wwebjs_cache/
+.webjs_auth_cache/
+# Node
+node_modules/
+# Git
+.git/
+.gitignore
+# Docs
+*.md
+HOSTING.md
+WHATSAPP.md
+whatsapp/whatsapp.md 
+# Misc
+*.html
+2.300
+.DS_Store

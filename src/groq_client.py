@@ -1,4 +1,3 @@
-# src/groq_client.py
 import os
 import logging
 from groq import Groq
@@ -13,11 +12,11 @@ class GroqClient:
         if not api_key:
             raise ValueError("GROQ_API_KEY must be set")
         self.client = Groq(api_key=api_key)
-        self.model = os.getenv('LLM_MODEL', 'llama3-70b-8192')
-        self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.3))
-        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 1000))
+        self.model = os.getenv('LLM_MODEL', 'llama-3.3-70b-versatile')
+        self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.2))  # Lower = faster
+        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 500))  # Reduced from 1000
 
-    def _chat(self, system: str, user: str) -> str:
+    def _chat(self, system: str, user: str, timeout: int = 20) -> str:
         try:
             resp = self.client.chat.completions.create(
                 model=self.model,
@@ -34,49 +33,37 @@ class GroqClient:
             return ""
 
     def generate_sql(self, question: str, schema: str) -> str:
-        system = f"""You are a PostgreSQL expert. Generate a single SQL SELECT query to answer the user's question about M-Pesa transactions.
+        system = f"""You are a PostgreSQL expert. Generate ONE SQL SELECT query.
 
 Schema:
 {schema}
 
 Rules:
-- Return ONLY the SQL query, no explanation, no markdown, no backticks
-- Use proper PostgreSQL syntax
-- Always filter to recent data (last 90 days) unless specified
-- For spending questions, exclude type = 'credit'
-- For income questions, use type = 'credit'
-- Limit results to 100 rows unless aggregating
-- Use ILIKE for text searches"""
+- Return ONLY SQL, no markdown
+- Filter to last 90 days
+- Exclude type='credit' for spending
+- Limit 100 rows"""
 
         sql = self._chat(system, question)
-        # Strip any accidental markdown
-        sql = sql.replace('```sql', '').replace('```', '').strip()
-        return sql
+        return sql.replace('```sql', '').replace('```', '').strip()
 
     def analyze_results(self, question: str, sql: str, results: list) -> str:
-        system = """You are PesaPilot, a friendly M-Pesa financial advisor for Kenyans.
-Analyze the query results and give clear, actionable insights.
-Use KES currency. Be concise (max 200 words). Give specific numbers. End with one actionable tip."""
+        system = """You are PesaPilot, M-Pesa financial advisor for Kenya.
+Give clear insights. Use KES. Be concise (max 150 words). End with 1 actionable tip."""
 
-        user = f"""Question: {question}
-SQL: {sql}
-Results: {results[:50]}"""
-
+        user = f"Question: {question}\nResults: {results[:20]}"
         return self._chat(system, user)
 
     def generate_insights(self, summary: dict) -> str:
-        system = """You are PesaPilot, a friendly M-Pesa financial advisor for Kenyans.
-Generate 3-5 key financial insights from the user's transaction summary.
-Use KES currency. Be specific with numbers. Give actionable recommendations.
-Format as bullet points."""
+        system = """You are PesaPilot. Generate 3-4 key financial insights.
+Use KES. Be specific. Give actionable recommendations."""
 
-        user = f"Transaction summary: {summary}"
+        user = f"Summary: {summary}"
         return self._chat(system, user)
 
     def chat(self, question: str, context: str = "") -> str:
-        system = """You are PesaPilot, an AI financial assistant for M-Pesa users in Kenya.
-You help users understand their spending habits and improve their finances.
-Be friendly, concise, and specific. Use KES currency."""
+        system = """You are PesaPilot, M-Pesa financial assistant for Kenya.
+Help users understand spending. Be friendly, concise, specific. Use KES."""
 
-        user = f"{context}\n\nUser question: {question}" if context else question
+        user = f"{context}\n\nQuestion: {question}" if context else question
         return self._chat(system, user)

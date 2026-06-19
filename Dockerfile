@@ -1,4 +1,4 @@
-# Dockerfile (root) - PRODUCTION READY
+# Dockerfile (root) - PRODUCTION READY WITH LOCK FIX
 FROM python:3.10-slim
 
 # Install Node.js and Chromium correctly
@@ -33,9 +33,10 @@ COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
 COPY run.py .
 
-# Create persistent directories
+# Create persistent directories with proper permissions
 RUN mkdir -p data/raw data/processed data/sessions
 RUN mkdir -p .wwebjs_auth
+RUN chmod -R 777 .wwebjs_auth
 
 # No Streamlit - API only
 EXPOSE 8000
@@ -45,5 +46,6 @@ ENV NODE_ENV=production
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV WHATSAPP_API_URL=http://localhost:8000
 
+# Clean up lock files before starting
 # Both processes
-CMD sh -c "uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 & node whatsapp/whatsapp_bot.js"
+CMD sh -c "rm -f /app/.wwebjs_auth/SingletonLock /app/.wwebjs_auth/SingletonSocket /app/.wwebjs_auth/SingletonCookie 2>/dev/null || true && uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 & node whatsapp/whatsapp_bot.js"

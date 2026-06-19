@@ -12,7 +12,6 @@ const MAIN_NUMBER  = process.env.WHATSAPP_MAIN_NUMBER;
 const WHATSAPP_LID = process.env.WHATSAPP_LID;
 const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
 const API_URL      = process.env.WHATSAPP_API_URL || 'http://localhost:8000';
-const API_PORT     = process.env.WHATSAPP_API_PORT || 8000;
 
 if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
   console.error('\n❌ ERROR: Missing required .env variables:');

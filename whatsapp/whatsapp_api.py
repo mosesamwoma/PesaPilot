@@ -29,8 +29,11 @@ sns.set_palette("husl")
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────
 
-WHATSAPP_PIN = os.getenv('WHATSAPP_PIN', '1234')
+WHATSAPP_PIN = os.getenv('WHATSAPP_PIN')
 WHATSAPP_API_PORT = int(os.getenv('WHATSAPP_API_PORT', 8000))
+
+if not WHATSAPP_PIN:
+    raise ValueError("WHATSAPP_PIN must be set in .env")
 
 DANGEROUS_KEYWORDS = [
     'DELETE', 'DROP', 'TRUNCATE', 'UPDATE',
@@ -140,8 +143,8 @@ def generate_pie_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
             return _empty_chart(title)
 
         if len(chart_data) > 8:
-            other_sum = chart_data[8:].sum()
-            chart_data = chart_data.head(8)
+            other_sum = chart_data.iloc[8:].sum()
+            chart_data = chart_data.iloc[:8].copy()
             if other_sum > 0:
                 chart_data['Other'] = other_sum
 
@@ -171,6 +174,7 @@ def generate_line_chart(df: pd.DataFrame, date_col: str, value_col: str, title: 
         if df is None or df.empty or date_col not in df.columns or value_col not in df.columns:
             return _empty_chart(title)
 
+        df = df.copy()
         df[date_col] = pd.to_datetime(df[date_col])
         daily = df.groupby(df[date_col].dt.date)[value_col].sum().sort_index()
 
@@ -250,27 +254,33 @@ async def ask_question(request: QuestionRequest):
 
             data = analyzer.get_dashboard_data(days=30)
             category_data = data.get('spending_by_category', [])
-            daily_trend = data.get('daily_trend', [])
+            daily_trend   = data.get('daily_trend', [])
 
-            df_cat = pd.DataFrame(category_data) if category_data else pd.DataFrame()
-            df_trend = pd.DataFrame(daily_trend) if daily_trend else pd.DataFrame()
+            df_cat   = pd.DataFrame(category_data) if category_data else pd.DataFrame()
+            df_trend = pd.DataFrame(daily_trend)   if daily_trend   else pd.DataFrame()
 
             chart_img = None
-            analysis = ""
+            analysis  = ""
 
             if 'pie' in question_lower or 'distribution' in question_lower:
-                chart_img = generate_pie_chart(df_cat, 'merchant_category', 'total_amount',
-                                               'Spending Distribution by Category')
+                chart_img = generate_pie_chart(
+                    df_cat, 'merchant_category', 'total_amount',
+                    'Spending Distribution by Category'
+                )
                 analysis = "📊 Here is your spending distribution by category:"
 
             elif 'trend' in question_lower or 'line' in question_lower or 'over time' in question_lower:
-                chart_img = generate_line_chart(df_trend, 'date', 'total_spent',
-                                                'Daily Spending Trend')
+                chart_img = generate_line_chart(
+                    df_trend, 'date', 'total_spent',
+                    'Daily Spending Trend'
+                )
                 analysis = "📈 Here is your spending trend over time:"
 
             else:
-                chart_img = generate_bar_chart(df_cat, 'merchant_category', 'total_amount',
-                                               'Spending by Category')
+                chart_img = generate_bar_chart(
+                    df_cat, 'merchant_category', 'total_amount',
+                    'Spending by Category'
+                )
                 analysis = "📊 Here is your spending by category:"
 
             if not chart_img:

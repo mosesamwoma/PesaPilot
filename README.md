@@ -58,6 +58,7 @@ Keys you must fill in:
 | `SUPABASE_URL` | supabase.com/dashboard → Settings → API |
 | `SUPABASE_KEY` | supabase.com/dashboard → Settings → API |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
+| `WHATSAPP_PIN` | Your password to be used to parse messages to database | 
 | `WHATSAPP_MAIN_NUMBER` | Your main Safaricom number e.g. `254712345678` |
 | `WHATSAPP_LID` | Run the bot, send a message, copy the ID printed next to `From:` in the terminal |
 

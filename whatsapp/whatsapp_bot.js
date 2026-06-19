@@ -82,7 +82,7 @@ client.on('ready', () => {
   console.log('  • "Pie chart"');
   console.log('  • "Trend"');
   console.log('  • "Help"');
-  console.log(`  • PIN|PASTE_SMS_HERE — manual SMS entry\n`);
+  console.log(`  • PIN-PASTE_SMS_HERE — manual SMS entry\n`);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ client.on('message', async (message) => {
     const userMessage  = message.body.trim();
 
     console.log(`\n📨 Raw message: "${userMessage}"`);
-    console.log(`📨 Starts with PIN|: ${userMessage.startsWith(WHATSAPP_PIN + '|')}`);
+    console.log(`📨 Starts with PIN-: ${userMessage.startsWith(WHATSAPP_PIN + '-')}`);
 
     // ─ AUTHORIZE ────────────────────────────────────────────────────────────
     const senderNumeric = senderNumber.replace(/@.*$/, '');
@@ -141,13 +141,13 @@ client.on('message', async (message) => {
     await message.react('⏳');
 
     // ─ MANUAL SMS ENTRY ─────────────────────────────────────────────────────
-    if (userMessage.startsWith(WHATSAPP_PIN + '|')) {
+    if (userMessage.startsWith(WHATSAPP_PIN + '-')) {
       console.log('📝 Manual SMS entry detected');
 
       const smsContent = userMessage.substring(WHATSAPP_PIN.length + 1).trim();
 
       if (!smsContent) {
-        await message.reply('❌ Empty SMS.\n\nFormat: PIN|SMS_CONTENT');
+        await message.reply('❌ Empty SMS.\n\nFormat: PIN-SMS_CONTENT');
         await message.react('❌');
         return;
       }

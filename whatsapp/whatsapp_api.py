@@ -314,7 +314,7 @@ async def ask_question(request: QuestionRequest):
   • "Summary all time"
 
 📝 Manual SMS entry:
-  • PIN|PASTE_YOUR_SMS_HERE
+  • PIN-PASTE_YOUR_SMS_HERE
 
 Just ask naturally! 💬"""
             return AnalysisResponse(question=request.question, analysis=help_text)

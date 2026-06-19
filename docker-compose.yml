@@ -1,6 +1,3 @@
-# docker-compose.yml (root) - WITH VOLUMES
-version: '3.8'
-
 services:
   pesapilot-api:
     build: .

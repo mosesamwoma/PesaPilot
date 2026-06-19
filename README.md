@@ -58,6 +58,7 @@ Keys you must fill in:
 | `SUPABASE_URL` | supabase.com/dashboard → Settings → API |
 | `SUPABASE_KEY` | supabase.com/dashboard → Settings → API |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
+| `WHATSAPP_PIN` | Choose any 4-digit number e.g. `1234` (used for manual SMS entry) | |
 | `WHATSAPP_MAIN_NUMBER` | Your main Safaricom number e.g. `254712345678` |
 | `WHATSAPP_LID` | Run the bot, send a message, copy the ID printed next to `From:` in the terminal |
 
@@ -123,6 +124,9 @@ WHATSAPP_MAIN_NUMBER=254712345678
 
 # Your WhatsApp LID — internal ID WhatsApp assigns to your number
 WHATSAPP_LID=115831308570778
+
+# Your chosen 4-digit PIN — used for manual SMS entry (format: PIN|SMS)
+WHATSAPP_PIN=1234
 ```
 
 **Finding your LID:** Run the bot, send any message from your main number, and the terminal prints:

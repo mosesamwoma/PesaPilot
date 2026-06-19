@@ -1,4 +1,4 @@
-# src/parse_sms.py
+# src/parse_sms.py - COMPLETE FINAL VERSION
 import re
 import pandas as pd
 from lxml import etree
@@ -54,6 +54,7 @@ class MpesaParser:
         return bool(re.search(r'M-PESA|MPESA|Ksh|KSh', body, re.IGNORECASE))
 
     def _parse_sms(self, elem) -> dict:
+        """Parse SMS from XML element"""
         body = elem.get('body', '')
         raw_date = elem.get('date', '')
         readable_date = elem.get('readable_date', '')
@@ -87,6 +88,38 @@ class MpesaParser:
             }
         except Exception as e:
             logger.debug(f"Failed to parse SMS: {e}")
+            return None
+
+    def _parse_sms_text(self, body: str) -> dict:
+        """Parse SMS from plain text (WhatsApp manual entry)"""
+        try:
+            amount = self._extract_amount(body)
+            if amount is None:
+                return None
+
+            tx_type = self._determine_type(body)
+            recipient = self._extract_recipient(body)
+            balance = self._extract_balance(body)
+            tx_id = self._extract_transaction_id(body)
+            phone = self._extract_phone(body)
+            category = self._categorize(body, recipient)
+            timestamp = datetime.now()
+
+            return {
+                'transaction_id': tx_id or f"MANUAL_{int(datetime.now().timestamp())}",
+                'amount': amount,
+                'balance': balance,
+                'type': tx_type,
+                'recipient': recipient,
+                'merchant_category': category,
+                'phone': phone,
+                'body': body,
+                'timestamp': timestamp.isoformat(),
+                'readable_date': timestamp.strftime('%d/%m/%Y %H:%M:%S'),
+                'raw_date': str(int(timestamp.timestamp() * 1000)),
+            }
+        except Exception as e:
+            logger.error(f"Parse error: {e}")
             return None
 
     def _extract_amount(self, body: str):

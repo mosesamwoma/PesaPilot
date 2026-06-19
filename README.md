@@ -58,7 +58,6 @@ Keys you must fill in:
 | `SUPABASE_URL` | supabase.com/dashboard → Settings → API |
 | `SUPABASE_KEY` | supabase.com/dashboard → Settings → API |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
-| `WHATSAPP_PIN` | Your password to be used to parse messages to database | 
 | `WHATSAPP_MAIN_NUMBER` | Your main Safaricom number e.g. `254712345678` |
 | `WHATSAPP_LID` | Run the bot, send a message, copy the ID printed next to `From:` in the terminal |
 
@@ -166,7 +165,11 @@ Who did I send the most money to?
 What is my biggest transaction?
 Summary
 Summary 180 days
+Chart categories
+Pie chart
+Trend
 Help
+PIN-PASTE_SMS_HERE
 ```
 
 Anyone else who texts the Airtel number gets: `This number is not authorized.`
@@ -320,8 +323,9 @@ curl http://localhost:8000/health
 | `No M-Pesa transactions found` | Confirm XML is from SMS Backup & Restore app |
 | Port 8000 in use | Set `WHATSAPP_API_PORT=8001` in `.env` |
 | WhatsApp QR timeout | Increase `protocolTimeout` in `whatsapp_bot.js` |
+| WhatsApp session expired | Delete `.wwebjs_auth/` and rescan QR |
+| `WHATSAPP_PIN not set` | Add `WHATSAPP_PIN` to `.env` |
+| Chart not sending | Run `pip install matplotlib seaborn` |
 | Groq rate limit | Wait 60 seconds, reduce request frequency |
 | `streamlit: command not found` | Run `source venv/bin/activate` first |
 | `balance` column all null | Normal — not all M-Pesa SMS include balance |
-
----

@@ -1,180 +1,202 @@
-# whatsapp/whatsapp_api.py - OPTIMIZED
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
-import os
-import logging
+# src/parse_sms.py - COMPLETE FINAL VERSION
 import re
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from src.analyzer import MpesaAnalyzer
-from typing import Optional
-from functools import lru_cache
+import pandas as pd
+from lxml import etree
+from datetime import datetime
+import logging
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────────────────
-# Security: Dangerous SQL Keywords
-# ──────────────────────────────────────────────────────────────────────────
+class MpesaParser:
+    MERCHANT_CATEGORIES = {
+        'food': ['java', 'kfc', 'naivas', 'quickmart', 'carrefour', 'food', 'restaurant', 'cafe', 'pizza', 'burger', 'chicken', 'bakery', 'grocery'],
+        'transport': ['uber', 'bolt', 'little', 'taxi', 'matatu', 'bus', 'fuel', 'petrol', 'shell', 'total', 'kenol', 'rubis'],
+        'utilities': ['kplc', 'kenya power', 'water', 'safaricom', 'airtel', 'telkom', 'internet', 'dstv', 'gotv', 'zuku'],
+        'banking': ['equity', 'kcb', 'cooperative', 'absa', 'ncba', 'dtb', 'stanbic', 'bank', 'atm', 'loan', 'fuliza', 'mshwari', 'kcb mpesa'],
+        'shopping': ['jumia', 'kilimall', 'supermarket', 'mall', 'shop', 'store', 'market'],
+        'health': ['pharmacy', 'hospital', 'clinic', 'chemist', 'doctor', 'medical', 'health'],
+        'education': ['school', 'university', 'college', 'fees', 'unilink', 'smep'],
+        'entertainment': ['cinema', 'netflix', 'spotify', 'showmax', 'game', 'bar', 'club'],
+        'savings': ['sacco', 'chama', 'savings', 'investment', 'shares'],
+        'business': ['till', 'lipa na mpesa', 'paybill', 'buy goods'],
+    }
 
-DANGEROUS_KEYWORDS = [
-    'DELETE', 'DROP', 'TRUNCATE', 'INSERT', 'UPDATE',
-    'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC',
-    'EXECUTE', '--', ';', 'UNION', 'SCRIPT', 'IFRAME'
-]
+    def parse_xml_to_csv(self, xml_path: str, output_path: str = None) -> pd.DataFrame:
+        logger.info(f"Parsing XML: {xml_path}")
+        transactions = []
 
-def is_safe_question(question: str) -> bool:
-    """Validate question for SQL injection"""
-    question_upper = question.upper()
-    for keyword in DANGEROUS_KEYWORDS:
-        if keyword in question_upper:
-            return False
-    if '--' in question or '/*' in question:
-        return False
-    return True
+        context = etree.iterparse(xml_path, events=('end',), tag='sms')
+        for _, elem in context:
+            body = elem.get('body', '')
+            if not self._is_mpesa(body):
+                elem.clear()
+                continue
+            tx = self._parse_sms(elem)
+            if tx:
+                transactions.append(tx)
+            elem.clear()
 
-# ──────────────────────────────────────────────────────────────────────────
-# FastAPI Setup
-# ──────────────────────────────────────────────────────────────────────────
+        df = pd.DataFrame(transactions)
+        if df.empty:
+            logger.warning("No M-Pesa transactions found.")
+            return df
 
-app = FastAPI(
-    title="PesaPilot WhatsApp API",
-    version="1.0",
-    description="M-Pesa financial assistant via WhatsApp - Kenya"
-)
+        df = df.drop_duplicates(subset=['transaction_id'], keep='first')
+        df = df.sort_values('timestamp', ascending=False).reset_index(drop=True)
 
-analyzer = MpesaAnalyzer()
-API_TIMEOUT = int(os.getenv('API_TIMEOUT', 20))
+        if output_path:
+            df.to_csv(output_path, index=False)
+            logger.info(f"Saved {len(df)} transactions to {output_path}")
 
-# ──────────────────────────────────────────────────────────────────────────
-# Models
-# ──────────────────────────────────────────────────────────────────────────
+        return df
 
-class QuestionRequest(BaseModel):
-    question: str
+    def _is_mpesa(self, body: str) -> bool:
+        return bool(re.search(r'M-PESA|MPESA|Ksh|KSh', body, re.IGNORECASE))
 
-class AnalysisResponse(BaseModel):
-    question: str
-    analysis: str
-    error: Optional[str] = None
+    def _parse_sms(self, elem) -> dict:
+        """Parse SMS from XML element"""
+        body = elem.get('body', '')
+        raw_date = elem.get('date', '')
+        readable_date = elem.get('readable_date', '')
+        address = elem.get('address', '')
 
-# ──────────────────────────────────────────────────────────────────────────
-# Health Check
-# ──────────────────────────────────────────────────────────────────────────
+        try:
+            amount = self._extract_amount(body)
+            if amount is None:
+                return None
 
-@app.get("/health")
-async def health():
-    """Health check - fast response"""
-    return {"status": "healthy", "service": "PesaPilot", "timestamp": datetime.now().isoformat()}
+            tx_type = self._determine_type(body)
+            recipient = self._extract_recipient(body)
+            balance = self._extract_balance(body)
+            tx_id = self._extract_transaction_id(body)
+            phone = self._extract_phone(body) or address
+            category = self._categorize(body, recipient)
+            timestamp = self._parse_timestamp(raw_date, readable_date)
 
-# ──────────────────────────────────────────────────────────────────────────
-# Ask Question Endpoint - OPTIMIZED
-# ──────────────────────────────────────────────────────────────────────────
+            return {
+                'transaction_id': tx_id,
+                'amount': amount,
+                'balance': balance,
+                'type': tx_type,
+                'recipient': recipient,
+                'merchant_category': category,
+                'phone': phone,
+                'body': body,
+                'timestamp': timestamp,
+                'readable_date': readable_date,
+                'raw_date': raw_date,
+            }
+        except Exception as e:
+            logger.debug(f"Failed to parse SMS: {e}")
+            return None
 
-@app.post("/ask", response_model=AnalysisResponse)
-async def ask_question(request: QuestionRequest):
-    """Fast response with caching and optimization"""
-    try:
-        question = request.question.strip()
+    def _parse_sms_text(self, body: str) -> dict:
+        """Parse SMS from plain text (WhatsApp manual entry)"""
+        try:
+            amount = self._extract_amount(body)
+            if amount is None:
+                return None
 
-        if not question or len(question) < 2:
-            raise HTTPException(status_code=400, detail="Question too short")
+            tx_type = self._determine_type(body)
+            recipient = self._extract_recipient(body)
+            balance = self._extract_balance(body)
+            tx_id = self._extract_transaction_id(body)
+            phone = self._extract_phone(body)
+            category = self._categorize(body, recipient)
+            timestamp = datetime.now()
 
-        if len(question) > 500:
-            raise HTTPException(status_code=400, detail="Question too long")
+            return {
+                'transaction_id': tx_id or f"MANUAL_{int(datetime.now().timestamp())}",
+                'amount': amount,
+                'balance': balance,
+                'type': tx_type,
+                'recipient': recipient,
+                'merchant_category': category,
+                'phone': phone,
+                'body': body,
+                'timestamp': timestamp.isoformat(),
+                'readable_date': timestamp.strftime('%d/%m/%Y %H:%M:%S'),
+                'raw_date': str(int(timestamp.timestamp() * 1000)),
+            }
+        except Exception as e:
+            logger.error(f"Parse error: {e}")
+            return None
 
-        if not is_safe_question(question):
-            logger.warning(f"🚨 BLOCKED: {question}")
-            raise HTTPException(status_code=403, detail="Invalid question")
+    def _extract_amount(self, body: str):
+        patterns = [
+            r'Ksh\s?([\d,]+\.?\d*)',
+            r'KSh\s?([\d,]+\.?\d*)',
+            r'KES\s?([\d,]+\.?\d*)',
+        ]
+        for p in patterns:
+            m = re.search(p, body, re.IGNORECASE)
+            if m:
+                return float(m.group(1).replace(',', ''))
+        return None
 
-        logger.info(f"📨 Q: {question}")
+    def _extract_balance(self, body: str):
+        patterns = [
+            r'balance[:\s]+(?:is\s+)?Ksh\s?([\d,]+\.?\d*)',
+            r'new\s+balance[:\s]+Ksh\s?([\d,]+\.?\d*)',
+            r'balance\s+is\s+Ksh\s?([\d,]+\.?\d*)',
+        ]
+        for p in patterns:
+            m = re.search(p, body, re.IGNORECASE)
+            if m:
+                return float(m.group(1).replace(',', ''))
+        return None
 
-        question_lower = question.lower().strip()
+    def _determine_type(self, body: str) -> str:
+        body_lower = body.lower()
+        if any(k in body_lower for k in ['you have received', 'received ksh', 'money in']):
+            return 'credit'
+        if any(k in body_lower for k in ['paid to', 'pay bill', 'paybill', 'buy goods', 'sent to', 'lipa na mpesa']):
+            return 'payment'
+        if any(k in body_lower for k in ['withdrew', 'withdrawal', 'cash out']):
+            return 'withdrawal'
+        if any(k in body_lower for k in ['airtime', 'data bundle', 'bundle']):
+            return 'airtime'
+        if any(k in body_lower for k in ['transferred', 'sent ksh', 'transfer']):
+            return 'transfer'
+        return 'debit'
 
-        # Help command
-        if question_lower == 'help':
-            return AnalysisResponse(
-                question=request.question,
-                analysis="""🤖 PesaPilot WhatsApp
+    def _extract_recipient(self, body: str) -> str:
+        patterns = [
+            r'(?:paid to|sent to|pay to)\s+([A-Z][A-Z\s]+?)(?:\s+for|\s+on|\s+Ksh|\.|$)',
+            r'to\s+([A-Z][A-Z\s]+?)\s+(?:account|for|on)',
+            r'(?:to|for)\s+([A-Z][A-Z\s]{2,30})',
+        ]
+        for p in patterns:
+            m = re.search(p, body, re.IGNORECASE)
+            if m:
+                return m.group(1).strip().title()
+        return 'Unknown'
 
-Ask about your M-Pesa:
-- "What did I spend on food this month?"
-- "How much to Safaricom?"
-- "Top 5 expenses?"
-- "This week vs last week?"
-- "Most spending day?"
-- "Unusual spending?"
-- "Summary all time"
-- "Summary 180 days"
+    def _extract_phone(self, body: str) -> str:
+        m = re.search(r'(07\d{8}|2547\d{8}|\+2547\d{8})', body)
+        return m.group(1) if m else None
 
-Just ask! 💬"""
-            )
+    def _extract_transaction_id(self, body: str) -> str:
+        m = re.search(r'\b([A-Z0-9]{10})\b', body)
+        return m.group(1) if m else None
 
-        # Summary with date range
-        if 'summary' in question_lower:
-            days = 30
-            
-            if 'all time' in question_lower or 'everything' in question_lower or 'year' in question_lower:
-                days = 365
-            elif '180' in question_lower or '6 month' in question_lower:
-                days = 180
-            elif '90' in question_lower or '3 month' in question_lower:
-                days = 90
-            elif '60' in question_lower or '2 month' in question_lower:
-                days = 60
-            elif 'week' in question_lower:
-                days = 7
-            elif 'month' in question_lower or '30' in question_lower:
-                days = 30
-            
-            logger.info(f"📊 Summary for {days} days")
-            summary = analyzer.db.get_summary()
-            
-            if summary:
-                analysis = f"""📊 Summary ({days} days)
+    def _categorize(self, body: str, recipient: str) -> str:
+        text = (body + ' ' + (recipient or '')).lower()
+        for category, keywords in self.MERCHANT_CATEGORIES.items():
+            if any(k in text for k in keywords):
+                return category
+        return 'other'
 
-💰 Transactions: {summary.get('total_transactions', 0)}
-💸 Spent: KES {summary.get('total_spent', 0):,.0f}
-💵 Received: KES {summary.get('total_received', 0):,.0f}
-📈 Avg/day: KES {summary.get('total_spent', 0) / max(days, 1):,.0f}"""
-            else:
-                analysis = "No data found."
-            
-            return AnalysisResponse(question=request.question, analysis=analysis)
-
-        # AI question - FAST
-        result = analyzer.ask_question(question)
-        analysis = clean_response(result.get('analysis', 'Error'))
-
-        logger.info(f"✅ Done")
-        return AnalysisResponse(
-            question=result.get('question', request.question),
-            analysis=analysis,
-            error=result.get('error')
-        )
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"❌ {str(e)}")
-        raise HTTPException(status_code=500, detail="Error")
-
-# ──────────────────────────────────────────────────────────────────────────
-# Clean Response
-# ──────────────────────────────────────────────────────────────────────────
-
-def clean_response(text: str) -> str:
-    """Remove database jargon"""
-    text = re.sub(r'(?i)postgresql|postgres|schema|database|query|sql|rpc', '', text)
-    text = re.sub(r' +', ' ', text)
-    return text.strip()
-
-# ──────────────────────────────────────────────────────────────────────────
-# Run Server
-# ──────────────────────────────────────────────────────────────────────────
-
-if __name__ == '__main__':
-    import uvicorn
-    port = int(os.getenv('WHATSAPP_API_PORT', 8000))
-    uvicorn.run(app, host='0.0.0.0', port=port, log_level='warning')
+    def _parse_timestamp(self, raw_date: str, readable_date: str):
+        if raw_date and raw_date.isdigit():
+            try:
+                return datetime.fromtimestamp(int(raw_date) / 1000)
+            except Exception:
+                pass
+        formats = ['%d/%m/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%d-%m-%Y %H:%M:%S', '%b %d, %Y %I:%M:%S %p']
+        for fmt in formats:
+            try:
+                return datetime.strptime(readable_date, fmt)
+            except Exception:
+                continue
+        return datetime.now()

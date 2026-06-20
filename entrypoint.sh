@@ -8,18 +8,15 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
 echo -e "${BLUE}🚀 PesaPilot Startup Sequence${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
 
-# ============================================================
-# STEP 1: DETECT ENVIRONMENT
-# ============================================================
+# STEP 1: Detect environment
 echo -e "${YELLOW}📋 Step 1: Detecting environment...${NC}"
 
-# Detect if running on Railway
 if [ -n "$RAILWAY_ENVIRONMENT" ] || [ -n "$RAILWAY_SERVICE_NAME" ]; then
     ENVIRONMENT="railway"
     echo -e "${BLUE}   Environment: Railway${NC}"
@@ -28,13 +25,10 @@ else
     echo -e "${BLUE}   Environment: Docker/Local${NC}"
 fi
 
-# Get internal IP (prefer 127.0.0.1 over localhost)
 INTERNAL_IP=$(hostname -i 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
 echo -e "${BLUE}   Internal IP: $INTERNAL_IP${NC}"
 
-# ============================================================
-# STEP 2: VALIDATE ENVIRONMENT VARIABLES
-# ============================================================
+# STEP 2: Validate environment variables
 echo -e "${YELLOW}📋 Step 2: Validating environment variables...${NC}"
 
 REQUIRED_VARS=(
@@ -63,18 +57,13 @@ fi
 
 echo -e "${GREEN}✅ All required variables configured${NC}\n"
 
-# ============================================================
-# STEP 3: SET API URL (ENVIRONMENT SPECIFIC)
-# ============================================================
+# STEP 3: Configure API URL
 echo -e "${YELLOW}🔗 Step 3: Configuring API URL...${NC}"
 
-# Use environment variable if set, otherwise auto-detect
 if [ -n "$API_URL" ]; then
-    # Use user-provided API_URL
     export API_URL=$API_URL
     echo -e "${BLUE}   Using API_URL: $API_URL${NC}"
 elif [ "$ENVIRONMENT" = "railway" ]; then
-    # Railway: Use internal networking
     if [ -n "$RAILWAY_PRIVATE_DOMAIN" ]; then
         export API_URL="http://$RAILWAY_PRIVATE_DOMAIN:8000"
     elif [ -n "$RAILWAY_SERVICE_NAME" ]; then
@@ -84,31 +73,21 @@ elif [ "$ENVIRONMENT" = "railway" ]; then
     fi
     echo -e "${BLUE}   Railway API_URL: $API_URL${NC}"
 else
-    # Docker/Local: Use 127.0.0.1 instead of localhost
     export API_URL="http://127.0.0.1:8000"
     echo -e "${BLUE}   Local API_URL: $API_URL${NC}"
 fi
 
 echo -e "${GREEN}✅ API_URL configured${NC}\n"
 
-# ============================================================
-# STEP 4: CLEANUP CHROME LOCK FILES
-# ============================================================
+# STEP 4: Clean Chrome locks
 echo -e "${YELLOW}🧹 Step 4: Cleaning Chrome lock files...${NC}"
 
 AUTH_PATH="/app/.wwebjs_auth"
-
 if [ ! -d "$AUTH_PATH" ]; then
     mkdir -p "$AUTH_PATH"
 fi
 
-LOCK_FILES=(
-    "SingletonLock"
-    "SingletonSocket"
-    "SingletonCookie"
-    "SingletonTab"
-)
-
+LOCK_FILES=("SingletonLock" "SingletonSocket" "SingletonCookie" "SingletonTab")
 CLEANED_COUNT=0
 
 for lockfile in "${LOCK_FILES[@]}"; do
@@ -135,9 +114,7 @@ else
     echo -e "${GREEN}✅ No lock files found (clean state)${NC}\n"
 fi
 
-# ============================================================
-# STEP 5: SET PROPER PERMISSIONS
-# ============================================================
+# STEP 5: Set permissions
 echo -e "${YELLOW}🔐 Step 5: Setting directory permissions...${NC}"
 
 chmod -R 755 "$AUTH_PATH" 2>/dev/null || true
@@ -146,37 +123,26 @@ chmod -R 755 /app/data 2>/dev/null || true
 echo -e "${GREEN}✅ Permissions set${NC}\n"
 
 # ============================================================
-# STEP 6: START PYTHON API (Background)
+# STEP 6: START FASTAPI SERVER (FIXED)
 # ============================================================
 echo -e "${YELLOW}🐍 Step 6: Starting FastAPI server...${NC}"
 
 cd /app
 
-# Start API on 0.0.0.0 to accept all connections
-if [ -f "/app/run.py" ]; then
-    python /app/run.py &
-else
-    python -m uvicorn src.main:app \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --log-level warning &
-fi
+# Run the API directly - it has uvicorn runner built in
+# The API will listen on 0.0.0.0:8000
+python /app/whatsapp/whatsapp_api.py &
 
 API_PID=$!
 echo -e "${GREEN}✅ FastAPI started (PID: $API_PID)${NC}"
 echo -e "${BLUE}   Listening on: http://0.0.0.0:8000${NC}\n"
 
-# ============================================================
-# STEP 7: WAIT FOR API TO BE READY
-# ============================================================
+# STEP 7: Wait for API
 echo -e "${BLUE}⏳ Waiting for API to initialize...${NC}"
 
 API_READY=false
 for i in {1..20}; do
-    # Try multiple addresses
-    if curl -f http://127.0.0.1:8000/health 2>/dev/null || \
-       curl -f http://localhost:8000/health 2>/dev/null || \
-       curl -f http://$INTERNAL_IP:8000/health 2>/dev/null; then
+    if curl -f http://127.0.0.1:8000/health 2>/dev/null; then
         API_READY=true
         echo -e "${GREEN}✅ API is healthy${NC}\n"
         break
@@ -189,18 +155,14 @@ for i in {1..20}; do
     fi
 done
 
-# ============================================================
-# STEP 8: START NODE BOT
-# ============================================================
+# STEP 8: Start WhatsApp Bot
 echo -e "${YELLOW}📱 Step 8: Starting WhatsApp Bot...${NC}\n"
 
-# Set environment for bot
 export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 export API_URL=${API_URL}
 
 echo -e "${BLUE}   Bot will use API: $API_URL${NC}\n"
 
-# Try different possible bot paths
 if [ -f "/app/whatsapp/whatsapp_bot.js" ]; then
     node /app/whatsapp/whatsapp_bot.js &
 elif [ -f "/app/src/bot.js" ]; then
@@ -215,9 +177,7 @@ fi
 BOT_PID=$!
 echo -e "${GREEN}✅ WhatsApp Bot started (PID: $BOT_PID)${NC}\n"
 
-# ============================================================
-# STEP 9: WAIT AND MONITOR PROCESSES
-# ============================================================
+# STEP 9: Show status
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}🚀 PesaPilot is ONLINE and READY${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
@@ -227,7 +187,7 @@ echo -e "${BLUE}   API:  http://0.0.0.0:8000${NC}"
 echo -e "${BLUE}   Bot:  WhatsApp Web (Headless)${NC}"
 echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 
-# Function to handle shutdown gracefully
+# Cleanup function
 cleanup() {
     echo -e "\n${YELLOW}🛑 Shutting down gracefully...${NC}"
     
@@ -247,13 +207,11 @@ cleanup() {
     exit 0
 }
 
-# Set trap for SIGTERM and SIGINT
 trap cleanup SIGTERM SIGINT
 
-# Wait for both processes
+# Wait for processes
 wait -n
 
-# If one dies, kill the other and exit
 echo -e "${RED}❌ A process exited unexpectedly${NC}"
 kill -TERM $API_PID 2>/dev/null || true
 kill -TERM $BOT_PID 2>/dev/null || true

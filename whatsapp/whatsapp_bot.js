@@ -8,10 +8,9 @@ require('dotenv').config();
 const MAIN_NUMBER = process.env.WHATSAPP_MAIN_NUMBER;
 const WHATSAPP_LID = process.env.WHATSAPP_LID;
 const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
-const API_URL = process.env.API_URL || 'http://127.0.0.1:8000'; 
+const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
 const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
-const CHROME_FLAGS = process.env.CHROME_FLAGS || '--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox';
 
 if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     console.error('\n❌ ERROR: Missing required .env variables:');
@@ -21,9 +20,6 @@ if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     process.exit(1);
 }
 
-// Parse Chrome flags from environment variable
-const chromeArgs = CHROME_FLAGS.split(' ').filter(flag => flag.trim());
-
 console.log('\n═══════════════════════════════════════════════════════');
 console.log('🤖 PesaPilot WhatsApp Bot v2.1');
 console.log('═══════════════════════════════════════════════════════');
@@ -32,7 +28,6 @@ console.log(`✅ LID          : configured`);
 console.log(`✅ PIN          : configured`);
 console.log(`🔗 API URL      : ${API_URL}`);
 console.log(`🌐 Chromium     : ${CHROMIUM_PATH}`);
-console.log(`🚀 Chrome Args  : ${chromeArgs.join(' ')}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
 // ──────────────────────────────────────────────────────────────
@@ -71,7 +66,7 @@ try {
 }
 
 // ──────────────────────────────────────────────────────────────
-// WHATSAPP CLIENT
+// WHATSAPP CLIENT - FIXED PUPPETEER ARGS
 // ──────────────────────────────────────────────────────────────
 const client = new Client({
     authStrategy: new LocalAuth({
@@ -87,26 +82,41 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
             '--disable-accelerated-2d-canvas',
             '--disable-accelerated-video-decode',
             '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
             '--disable-breakpad',
             '--disable-client-side-phishing-detection',
+            '--disable-crash-reporter',
             '--disable-default-apps',
-            '--disable-device-discovery-notifications',
             '--disable-extensions',
-            '--disable-features=InterestFeedContentSuggestions',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-gpu',
+            '--disable-hang-monitor',
+            '--disable-infobars',
+            '--disable-ipc-flooding-protection',
+            '--disable-notifications',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-renderer-backgrounding',
+            '--disable-software-rasterizer',
             '--disable-sync',
             '--disable-translate',
-            '--metrics-recording-only',
+            '--disable-web-security',
+            '--disk-cache-size=0',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--hide-scrollbars',
+            '--ignore-certificate-errors',
+            '--ignore-ssl-errors',
             '--mute-audio',
+            '--no-cache',
             '--no-default-browser-check',
             '--no-first-run',
-            '--disable-blink-features=AutomationControlled',
-            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            '--password-store=basic',
+            '--single-process',
+            '--use-mock-keychain',
+            '--window-size=1280,720'
         ]
     }
 });
@@ -114,7 +124,7 @@ const client = new Client({
 // ──────────────────────────────────────────────────────────────
 // STARTUP TIMEOUT WATCHDOG
 // ──────────────────────────────────────────────────────────────
-const STARTUP_TIMEOUT_MS = 90 * 1000;
+const STARTUP_TIMEOUT_MS = 120 * 1000;
 let startupResolved = false;
 const startupWatchdog = setTimeout(() => {
     if (!startupResolved) {
@@ -134,19 +144,17 @@ client.on('qr', (qr) => {
     console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
     console.log('║  Settings → Linked Devices → Link a Device             ║');
     console.log('╚════════════════════════════════════════════════════════╝\n');
-    
-    // Primary: Render minimal QR code with scale:1 for production logs
+
     try {
-        qrcode.generate(qr, { small: true, scale: 1 });
+        qrcode.generate(qr, { small: true });
     } catch (e) {
         console.warn(`⚠️  QR rendering error: ${e.message}`);
     }
-    
-    // Fallback: QR Server URL for cloud deployments where ASCII fails
+
     const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
     console.log('\n📱 Or open this link on your phone if QR code above is unclear:');
     console.log(`🔗 ${qrServerUrl}\n`);
-    
+
     console.log('⏳ Waiting for scan...\n');
 });
 
@@ -210,9 +218,6 @@ client.on('message', async (message) => {
         console.log('✅ Authorized');
         try { await message.react('⏳'); } catch (e) {}
 
-        // ──────────────────────────────────────────────────────────────
-        // MANUAL SMS ENTRY (PIN-SMS_CONTENT)
-        // ──────────────────────────────────────────────────────────────
         if (userMessage.startsWith(WHATSAPP_PIN + '-')) {
             console.log('📝 Manual SMS entry');
             const smsContent = userMessage.substring(WHATSAPP_PIN.length + 1).trim();
@@ -236,13 +241,9 @@ client.on('message', async (message) => {
             return;
         }
 
-        // ──────────────────────────────────────────────────────────────
-        // AI QUERY
-        // ──────────────────────────────────────────────────────────────
         try {
             const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 30000 });
 
-            // Handle chart response
             if (response.data.chart) {
                 try {
                     const media = new MessageMedia('image/png', response.data.chart, 'chart.png');
@@ -255,7 +256,6 @@ client.on('message', async (message) => {
                 return;
             }
 
-            // Handle text response
             let analysis = response.data.analysis || 'No response';
             if (analysis.length > 4000) {
                 analysis = analysis.substring(0, 4000) + '\n\n...(truncated)';
@@ -284,9 +284,6 @@ client.on('disconnected', (reason) => {
     console.log('🔄 Attempting to reconnect...\n');
 });
 
-// ──────────────────────────────────────────────────────────────
-// HELPER FUNCTIONS
-// ──────────────────────────────────────────────────────────────
 function splitMessage(text, maxLength) {
     if (text.length <= maxLength) return [text];
     const chunks = [];
@@ -304,9 +301,6 @@ function splitMessage(text, maxLength) {
     return chunks;
 }
 
-// ──────────────────────────────────────────────────────────────
-// SHUTDOWN HANDLING
-// ──────────────────────────────────────────────────────────────
 let shuttingDown = false;
 async function shutdown(signal) {
     if (shuttingDown) return;
@@ -340,11 +334,27 @@ process.on('uncaughtException', (err) => {
     shutdown('uncaughtException');
 });
 
-// ──────────────────────────────────────────────────────────────
-// START THE CLIENT
-// ──────────────────────────────────────────────────────────────
 console.log('Initializing WhatsApp client...\n');
-client.initialize().catch((err) => {
-    console.error(`❌ client.initialize() failed: ${err.message}`);
-    process.exit(1);
-});
+
+let retryCount = 0;
+const maxRetries = 3;
+
+function startClient() {
+    client.initialize().catch(async (err) => {
+        console.error(`❌ client.initialize() failed: ${err.message}`);
+
+        if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`🔄 Retry ${retryCount}/${maxRetries} in 5 seconds...`);
+            setTimeout(() => {
+                console.log('🔄 Re-initializing WhatsApp client...');
+                startClient();
+            }, 5000);
+        } else {
+            console.error(`❌ Failed after ${maxRetries} retries. Exiting.`);
+            process.exit(1);
+        }
+    });
+}
+
+startClient();

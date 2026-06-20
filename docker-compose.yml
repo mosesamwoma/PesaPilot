@@ -10,8 +10,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # API URL - This can be overridden by user
+      # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}
+      - WHATSAPP_API_PORT=8000
       
       # Supabase
       - SUPABASE_URL=${SUPABASE_URL}
@@ -31,9 +32,13 @@ services:
       
       # Node
       - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=2048
       
       # Python
       - PYTHONUNBUFFERED=1
+      
+      # Timezone
+      - TZ=Africa/Nairobi
     volumes:
       - ./data:/app/data
       - ./sessions:/app/.wwebjs_auth

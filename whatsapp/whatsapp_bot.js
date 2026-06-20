@@ -117,7 +117,7 @@ client.on('qr', (qr) => {
     console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
     console.log('║  Settings → Linked Devices → Link a Device             ║');
     console.log('╚════════════════════════════════════════════════════════╝\n');
-    qrcode.generate(qr, { small: true, width: 5 });
+    qrcode.generate(qr, { small: true, width: 3 });
     console.log('\n⏳ Waiting for scan...\n');
 });
 

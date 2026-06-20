@@ -1,4 +1,3 @@
-# docker-compose.yml - PesaPilot Production Setup
 services:
   pesapilot-api:
     build:
@@ -16,6 +15,11 @@ services:
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
       CHROME_PATH: /usr/bin/chromium
+      WWEBJS_AUTH_PATH: /app/.wwebjs_auth
+      # ════════════════════════════════════════════════
+      # CRITICAL: Chromium flags
+      # ════════════════════════════════════════════════
+      CHROME_FLAGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox"
       DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
       DB_CONNECTION_TIMEOUT: ${DB_CONNECTION_TIMEOUT:-30}
       DB_QUERY_LIMIT: ${DB_QUERY_LIMIT:-100}
@@ -40,6 +44,12 @@ services:
       - pesapilot_auth:/app/.wwebjs_auth
       - pesapilot_data:/app/data
     restart: unless-stopped
+    # ════════════════════════════════════════════════
+    # CRITICAL: These fix Chromium issues
+    # ════════════════════════════════════════════════
+    security_opt:
+      - seccomp=unconfined
+    shm_size: 2gb
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

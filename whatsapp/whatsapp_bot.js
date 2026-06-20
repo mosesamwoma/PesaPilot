@@ -11,6 +11,7 @@ const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
 const API_URL = process.env.WHATSAPP_API_URL || 'http://localhost:8000';
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
 const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
+const CHROME_FLAGS = process.env.CHROME_FLAGS || '--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox';
 
 if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     console.error('\n❌ ERROR: Missing required .env variables:');
@@ -20,6 +21,9 @@ if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     process.exit(1);
 }
 
+// Parse Chrome flags from environment variable
+const chromeArgs = CHROME_FLAGS.split(' ').filter(flag => flag.trim());
+
 console.log('\n═══════════════════════════════════════════════════════');
 console.log('🤖 PesaPilot WhatsApp Bot v2.1');
 console.log('═══════════════════════════════════════════════════════');
@@ -28,8 +32,12 @@ console.log(`✅ LID          : configured`);
 console.log(`✅ PIN          : configured`);
 console.log(`🔗 API URL      : ${API_URL}`);
 console.log(`🌐 Chromium     : ${CHROMIUM_PATH}`);
+console.log(`🚀 Chrome Args  : ${chromeArgs.join(' ')}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
+// ──────────────────────────────────────────────────────────────
+// LOCK FILE CLEANUP
+// ──────────────────────────────────────────────────────────────
 const LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'SingletonTab']);
 
 function cleanupChromeLocks(dir) {
@@ -62,6 +70,9 @@ try {
     console.warn(`⚠️  Pre-launch lock cleanup skipped: ${e.message}\n`);
 }
 
+// ──────────────────────────────────────────────────────────────
+// WHATSAPP CLIENT
+// ──────────────────────────────────────────────────────────────
 const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: AUTH_PATH,
@@ -100,6 +111,9 @@ const client = new Client({
     }
 });
 
+// ──────────────────────────────────────────────────────────────
+// STARTUP TIMEOUT WATCHDOG
+// ──────────────────────────────────────────────────────────────
 const STARTUP_TIMEOUT_MS = 90 * 1000;
 let startupResolved = false;
 const startupWatchdog = setTimeout(() => {
@@ -111,6 +125,9 @@ const startupWatchdog = setTimeout(() => {
 }, STARTUP_TIMEOUT_MS);
 startupWatchdog.unref();
 
+// ──────────────────────────────────────────────────────────────
+// EVENT HANDLERS
+// ──────────────────────────────────────────────────────────────
 client.on('qr', (qr) => {
     startupResolved = true;
     console.log('\n╔════════════════════════════════════════════════════════╗');
@@ -193,6 +210,9 @@ client.on('message', async (message) => {
         console.log('✅ Authorized');
         try { await message.react('⏳'); } catch (e) {}
 
+        // ──────────────────────────────────────────────────────────────
+        // MANUAL SMS ENTRY (PIN-SMS_CONTENT)
+        // ──────────────────────────────────────────────────────────────
         if (userMessage.startsWith(WHATSAPP_PIN + '-')) {
             console.log('📝 Manual SMS entry');
             const smsContent = userMessage.substring(WHATSAPP_PIN.length + 1).trim();
@@ -216,9 +236,13 @@ client.on('message', async (message) => {
             return;
         }
 
+        // ──────────────────────────────────────────────────────────────
+        // AI QUERY
+        // ──────────────────────────────────────────────────────────────
         try {
             const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 30000 });
 
+            // Handle chart response
             if (response.data.chart) {
                 try {
                     const media = new MessageMedia('image/png', response.data.chart, 'chart.png');
@@ -231,6 +255,7 @@ client.on('message', async (message) => {
                 return;
             }
 
+            // Handle text response
             let analysis = response.data.analysis || 'No response';
             if (analysis.length > 4000) {
                 analysis = analysis.substring(0, 4000) + '\n\n...(truncated)';
@@ -259,6 +284,9 @@ client.on('disconnected', (reason) => {
     console.log('🔄 Attempting to reconnect...\n');
 });
 
+// ──────────────────────────────────────────────────────────────
+// HELPER FUNCTIONS
+// ──────────────────────────────────────────────────────────────
 function splitMessage(text, maxLength) {
     if (text.length <= maxLength) return [text];
     const chunks = [];
@@ -276,6 +304,9 @@ function splitMessage(text, maxLength) {
     return chunks;
 }
 
+// ──────────────────────────────────────────────────────────────
+// SHUTDOWN HANDLING
+// ──────────────────────────────────────────────────────────────
 let shuttingDown = false;
 async function shutdown(signal) {
     if (shuttingDown) return;
@@ -309,6 +340,9 @@ process.on('uncaughtException', (err) => {
     shutdown('uncaughtException');
 });
 
+// ──────────────────────────────────────────────────────────────
+// START THE CLIENT
+// ──────────────────────────────────────────────────────────────
 console.log('Initializing WhatsApp client...\n');
 client.initialize().catch((err) => {
     console.error(`❌ client.initialize() failed: ${err.message}`);

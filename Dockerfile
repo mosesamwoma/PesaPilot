@@ -1,7 +1,7 @@
 FROM python:3.10-slim
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# INSTALL SYSTEM DEPENDENCIES
+# INSTALL SYSTEM DEPENDENCIES (Complete Chromium dependencies)
 # ═══════════════════════════════════════════════════════════════════════════════
 RUN apt-get update && apt-get install -y \
     curl \
@@ -9,6 +9,24 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     ca-certificates \
     chromium \
+    chromium-driver \
+    # X11 and display dependencies
+    libx11-xcb1 \
+    libxcb1 \
+    libxcb-dri3-0 \
+    libxcb-present0 \
+    libxcb-randr0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-keysyms1 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-shape0 \
+    libxcb-util1 \
+    libxcb-xkb1 \
+    libxkbcommon-x11-0 \
+    # GTK and UI dependencies
     libglib2.0-0 \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -26,6 +44,15 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxdamage1 \
     libxfixes3 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libxcomposite1 \
+    libxshmfence1 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    # Fonts
+    fonts-liberation \
+    fonts-noto-color-emoji \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean \
@@ -80,7 +107,8 @@ ENV PYTHONUNBUFFERED=1 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     CHROME_PATH=/usr/bin/chromium \
     WHATSAPP_API_URL=http://localhost:8000 \
-    WHATSAPP_API_PORT=8000
+    WHATSAPP_API_PORT=8000 \
+    WWEBJS_AUTH_PATH=/app/.wwebjs_auth
 
 EXPOSE 8000
 

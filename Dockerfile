@@ -1,51 +1,90 @@
-# Dockerfile (root) - PRODUCTION READY WITH LOCK FIX
 FROM python:3.10-slim
 
-# Install Node.js and Chromium correctly
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSTALL SYSTEM DEPENDENCIES
+# ═══════════════════════════════════════════════════════════════════════════════
 RUN apt-get update && apt-get install -y \
     curl \
+    wget \
     gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y \
-    nodejs \
+    ca-certificates \
     chromium \
     libglib2.0-0 \
     libnss3 \
     libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
     libdrm2 \
     libxkbcommon0 \
+    libxss1 \
     libgbm1 \
     libasound2 \
-    && rm -rf /var/lib/apt/lists/*
+    libxrandr2 \
+    libxinerama1 \
+    libxi6 \
+    libxcursor1 \
+    libxext6 \
+    libxdamage1 \
+    libxfixes3 \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Verify installations
+RUN chromium --version && node --version && npm --version
 
 WORKDIR /app
 
-# Python deps
+# ═══════════════════════════════════════════════════════════════════════════════
+# COPY ENTRYPOINT SCRIPT
+# ═══════════════════════════════════════════════════════════════════════════════
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSTALL PYTHON DEPENDENCIES
+# ═══════════════════════════════════════════════════════════════════════════════
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Node deps
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSTALL NODE DEPENDENCIES
+# ═══════════════════════════════════════════════════════════════════════════════
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --production && npm cache clean --force
 
-# Copy code
+# ═══════════════════════════════════════════════════════════════════════════════
+# COPY APPLICATION CODE
+# ═══════════════════════════════════════════════════════════════════════════════
 COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
 COPY run.py .
 
-# Create persistent directories with proper permissions
-RUN mkdir -p data/raw data/processed data/sessions
-RUN mkdir -p .wwebjs_auth
-RUN chmod -R 777 .wwebjs_auth
+# ═══════════════════════════════════════════════════════════════════════════════
+# CREATE DIRECTORIES WITH PROPER PERMISSIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+RUN mkdir -p data/raw data/processed data/sessions \
+    && mkdir -p .wwebjs_auth \
+    && chmod -R 777 .wwebjs_auth \
+    && chmod -R 777 data
 
-# No Streamlit - API only
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT SETUP
+# ═══════════════════════════════════════════════════════════════════════════════
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NODE_ENV=production \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    CHROME_PATH=/usr/bin/chromium \
+    WHATSAPP_API_URL=http://localhost:8000 \
+    WHATSAPP_API_PORT=8000
+
 EXPOSE 8000
 
-ENV PYTHONUNBUFFERED=1
-ENV NODE_ENV=production
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV WHATSAPP_API_URL=http://localhost:8000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Clean up lock files before starting
-# Both processes
-CMD sh -c "rm -f /app/.wwebjs_auth/SingletonLock /app/.wwebjs_auth/SingletonSocket /app/.wwebjs_auth/SingletonCookie 2>/dev/null || true && uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 & node whatsapp/whatsapp_bot.js"
+ENTRYPOINT ["/app/entrypoint.sh"]

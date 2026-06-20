@@ -117,8 +117,20 @@ client.on('qr', (qr) => {
     console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
     console.log('║  Settings → Linked Devices → Link a Device             ║');
     console.log('╚════════════════════════════════════════════════════════╝\n');
-    qrcode.generate(qr, { small: true });
-    console.log('\n⏳ Waiting for scan...\n');
+    
+    // Primary: Render minimal QR code with scale:1 for production logs
+    try {
+        qrcode.generate(qr, { small: true, scale: 1 });
+    } catch (e) {
+        console.warn(`⚠️  QR rendering error: ${e.message}`);
+    }
+    
+    // Fallback: QR Server URL for cloud deployments where ASCII fails
+    const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
+    console.log('\n📱 Or open this link on your phone if QR code above is unclear:');
+    console.log(`🔗 ${qrServerUrl}\n`);
+    
+    console.log('⏳ Waiting for scan...\n');
 });
 
 client.on('ready', () => {

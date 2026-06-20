@@ -5,13 +5,12 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════════
 const MAIN_NUMBER = process.env.WHATSAPP_MAIN_NUMBER;
 const WHATSAPP_LID = process.env.WHATSAPP_LID;
 const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
 const API_URL = process.env.WHATSAPP_API_URL || 'http://localhost:8000';
+const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
+const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
 
 if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     console.error('\n❌ ERROR: Missing required .env variables:');
@@ -22,31 +21,63 @@ if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
 }
 
 console.log('\n═══════════════════════════════════════════════════════');
-console.log('🤖 PesaPilot WhatsApp Bot v2.0');
+console.log('🤖 PesaPilot WhatsApp Bot v2.1');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`✅ Phone Number : configured`);
 console.log(`✅ LID          : configured`);
 console.log(`✅ PIN          : configured`);
 console.log(`🔗 API URL      : ${API_URL}`);
+console.log(`🌐 Chromium     : ${CHROMIUM_PATH}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// FIX: Use Simple Auth Strategy (prevents "browser already running" error)
-// ═══════════════════════════════════════════════════════════════════════════════
+const LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'SingletonTab']);
+
+function cleanupChromeLocks(dir) {
+    let removed = 0;
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+        return removed;
+    }
+    for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (LOCK_NAMES.has(entry.name) || entry.name.endsWith('.lock')) {
+            try {
+                fs.rmSync(fullPath, { force: true });
+                removed++;
+            } catch (e) {}
+        } else if (entry.isDirectory()) {
+            removed += cleanupChromeLocks(fullPath);
+        }
+    }
+    return removed;
+}
+
+try {
+    fs.mkdirSync(AUTH_PATH, { recursive: true });
+    const removed = cleanupChromeLocks(AUTH_PATH);
+    console.log(`🧹 Pre-launch lock check: removed ${removed} stale lock file(s)\n`);
+} catch (e) {
+    console.warn(`⚠️  Pre-launch lock cleanup skipped: ${e.message}\n`);
+}
+
 const client = new Client({
     authStrategy: new LocalAuth({
-        dataPath: '/app/.wwebjs_auth',
+        dataPath: AUTH_PATH,
         clientId: 'pesapilot-session'
     }),
     puppeteer: {
         headless: true,
-        protocolTimeout: 180000,  // Increased to 3 minutes
+        executablePath: CHROMIUM_PATH,
+        protocolTimeout: 180000,
         timeout: 180000,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
+            '--disable-software-rasterizer',
             '--disable-accelerated-2d-canvas',
             '--disable-accelerated-video-decode',
             '--disable-background-timer-throttling',
@@ -69,10 +100,19 @@ const client = new Client({
     }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// QR CODE EVENT
-// ═══════════════════════════════════════════════════════════════════════════════
+const STARTUP_TIMEOUT_MS = 90 * 1000;
+let startupResolved = false;
+const startupWatchdog = setTimeout(() => {
+    if (!startupResolved) {
+        console.error(`\n❌ No QR code or ready event after ${STARTUP_TIMEOUT_MS / 1000}s — Chrome likely failed to launch.`);
+        console.error('   Exiting so the container restarts and re-runs lock cleanup.\n');
+        process.exit(1);
+    }
+}, STARTUP_TIMEOUT_MS);
+startupWatchdog.unref();
+
 client.on('qr', (qr) => {
+    startupResolved = true;
     console.log('\n╔════════════════════════════════════════════════════════╗');
     console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
     console.log('║  Settings → Linked Devices → Link a Device             ║');
@@ -81,10 +121,8 @@ client.on('qr', (qr) => {
     console.log('\n⏳ Waiting for scan...\n');
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// READY EVENT
-// ═══════════════════════════════════════════════════════════════════════════════
 client.on('ready', () => {
+    startupResolved = true;
     console.log('\n╔═══════════════════════════════════════════════════════╗');
     console.log('║              ✅ BOT IS ONLINE!                        ║');
     console.log('╚═══════════════════════════════════════════════════════╝');
@@ -95,9 +133,22 @@ client.on('ready', () => {
     console.log(`📝 Manual entry: PIN-SMS_CONTENT\n`);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MESSAGE HANDLER
-// ═══════════════════════════════════════════════════════════════════════════════
+client.on('loading_screen', (percent, message) => {
+    console.log(`⏳ Loading WhatsApp Web: ${percent}% — ${message}`);
+});
+
+client.on('auth_failure', (msg) => {
+    console.error(`\n❌ Authentication failure: ${msg}`);
+    console.error('   The saved session is likely corrupted. Exiting so the');
+    console.error('   container restarts; if this repeats, delete the');
+    console.error('   .wwebjs_auth volume once and re-scan the QR code.\n');
+    process.exit(1);
+});
+
+client.on('change_state', (state) => {
+    console.log(`🔄 Connection state: ${state}`);
+});
+
 client.on('message', async (message) => {
     try {
         const senderNumber = message.from;
@@ -131,7 +182,6 @@ client.on('message', async (message) => {
         console.log('✅ Authorized');
         try { await message.react('⏳'); } catch (e) {}
 
-        // ─── MANUAL SMS ENTRY ──────────────────────────────────────────────
         if (userMessage.startsWith(WHATSAPP_PIN + '-')) {
             console.log('📝 Manual SMS entry');
             const smsContent = userMessage.substring(WHATSAPP_PIN.length + 1).trim();
@@ -155,7 +205,6 @@ client.on('message', async (message) => {
             return;
         }
 
-        // ─── QUESTIONS & CHARTS ────────────────────────────────────────────
         try {
             const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 30000 });
 
@@ -194,17 +243,11 @@ client.on('message', async (message) => {
     }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// DISCONNECTED
-// ═══════════════════════════════════════════════════════════════════════════════
 client.on('disconnected', (reason) => {
     console.log(`\n⚠️ Disconnected: ${reason}`);
     console.log('🔄 Attempting to reconnect...\n');
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPER
-// ═══════════════════════════════════════════════════════════════════════════════
 function splitMessage(text, maxLength) {
     if (text.length <= maxLength) return [text];
     const chunks = [];
@@ -222,19 +265,41 @@ function splitMessage(text, maxLength) {
     return chunks;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// START
-// ═══════════════════════════════════════════════════════════════════════════════
-console.log('Initializing WhatsApp client...\n');
-client.initialize();
+let shuttingDown = false;
+async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n👋 Received ${signal}, shutting down...`);
 
-process.on('SIGINT', async () => {
-    console.log('\n👋 Shutting down...');
-    await client.destroy();
+    const forceExit = setTimeout(() => {
+        console.warn('⚠️  client.destroy() did not finish in time — forcing exit.');
+        process.exit(0);
+    }, 10000);
+    forceExit.unref();
+
+    try {
+        await client.destroy();
+    } catch (e) {
+        console.warn(`⚠️  Error during client.destroy(): ${e.message}`);
+    }
+    clearTimeout(forceExit);
     process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled promise rejection:', reason);
 });
-process.on('SIGTERM', async () => {
-    console.log('\n👋 Shutting down...');
-    await client.destroy();
-    process.exit(0);
+
+process.on('uncaughtException', (err) => {
+    console.error('❌ Uncaught exception:', err);
+    shutdown('uncaughtException');
+});
+
+console.log('Initializing WhatsApp client...\n');
+client.initialize().catch((err) => {
+    console.error(`❌ client.initialize() failed: ${err.message}`);
+    process.exit(1);
 });

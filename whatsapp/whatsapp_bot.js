@@ -129,7 +129,6 @@ client.on('ready', () => {
     console.log(`🤖 Bot WhatsApp ID : ${client.info.wid._serialized}`);
     console.log(`🔗 API             : ${API_URL}`);
     console.log('\n💬 Commands: Summary, Help, Bar chart, Pie chart, Trend');
-    console.log('👋 Greetings: Good morning, Hello, Hi\n');
     console.log(`📝 Manual entry: PIN-SMS_CONTENT\n`);
 });
 

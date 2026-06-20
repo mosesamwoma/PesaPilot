@@ -1,83 +1,51 @@
+version: '3.8'
+
 services:
-  pesapilot-api:
+  pesapilot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: pesapilot-bot
+    restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
-      PYTHONUNBUFFERED: "1"
-      PYTHONDONTWRITEBYTECODE: "1"
-      NODE_ENV: production
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
-      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
-      CHROME_PATH: /usr/bin/chromium
-      WWEBJS_AUTH_PATH: /app/.wwebjs_auth
-      # ════════════════════════════════════════════════
-      # CRITICAL: Chromium flags
-      # ════════════════════════════════════════════════
-      CHROME_FLAGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-setuid-sandbox"
-      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
-      DB_CONNECTION_TIMEOUT: ${DB_CONNECTION_TIMEOUT:-30}
-      DB_QUERY_LIMIT: ${DB_QUERY_LIMIT:-100}
-      BATCH_SIZE: ${BATCH_SIZE:-100}
-      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
-      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1000}
-      CACHE_TTL: ${CACHE_TTL:-300}
-      API_TIMEOUT: ${API_TIMEOUT:-20}
-      WHATSAPP_MAIN_NUMBER: ${WHATSAPP_MAIN_NUMBER}
-      WHATSAPP_LID: ${WHATSAPP_LID}
-      WHATSAPP_PIN: ${WHATSAPP_PIN}
-      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-http://localhost:8000}
-      WHATSAPP_API_PORT: ${WHATSAPP_API_PORT:-8000}
-      SUPABASE_URL: ${SUPABASE_URL}
-      SUPABASE_KEY: ${SUPABASE_KEY}
-      GROQ_API_KEY: ${GROQ_API_KEY}
-      APP_ENV: ${APP_ENV:-production}
-      DEBUG: ${DEBUG:-False}
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      # API URL - This can be overridden by user
+      - API_URL=${API_URL:-http://127.0.0.1:8000}
+      
+      # Supabase
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      
+      # Groq
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      
+      # WhatsApp
+      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
+      - WHATSAPP_LID=${WHATSAPP_LID}
+      - WHATSAPP_PIN=${WHATSAPP_PIN}
+      
+      # Puppeteer
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      
+      # Node
+      - NODE_ENV=production
+      
+      # Python
+      - PYTHONUNBUFFERED=1
     volumes:
-      - pesapilot_auth:/app/.wwebjs_auth
-      - pesapilot_data:/app/data
-    restart: unless-stopped
-    # ════════════════════════════════════════════════
-    # CRITICAL: These fix Chromium issues
-    # ════════════════════════════════════════════════
-    security_opt:
-      - seccomp=unconfined
-    shm_size: 2gb
+      - ./data:/app/data
+      - ./sessions:/app/.wwebjs_auth
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2G
-        reservations:
-          cpus: "1"
-          memory: 1G
+      retries: 5
+      start_period: 40s
     networks:
-      - pesapilot_net
-
-volumes:
-  pesapilot_auth:
-    driver: local
-  pesapilot_data:
-    driver: local
+      - pesapilot-network
 
 networks:
-  pesapilot_net:
+  pesapilot-network:
     driver: bridge

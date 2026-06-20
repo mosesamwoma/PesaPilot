@@ -26,3 +26,17 @@ htmlcov/
 *.xml
 *.csv
 *.xlsx
+node_modules
+npm-debug.log
+*.log
+.git
+.env
+data/
+sessions/
+*.pyc
+__pycache__
+.DS_Store
+*.swp
+*.swo
+.vscode
+.idea

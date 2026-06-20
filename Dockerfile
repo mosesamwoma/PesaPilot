@@ -1,8 +1,16 @@
 FROM python:3.10-slim
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INSTALL SYSTEM DEPENDENCIES (Complete Chromium dependencies)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ============================================================
+# CRITICAL: Set environment variables BEFORE npm install
+# This prevents puppeteer from downloading Chromium (~280MB)
+# ============================================================
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    DEBIAN_FRONTEND=noninteractive
+
+# ============================================================
+# Install system dependencies (including Chromium)
+# ============================================================
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
@@ -10,7 +18,6 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     chromium \
     chromium-driver \
-    # X11 and display dependencies
     libx11-xcb1 \
     libxcb1 \
     libxcb-dri3-0 \
@@ -26,7 +33,6 @@ RUN apt-get update && apt-get install -y \
     libxcb-util1 \
     libxcb-xkb1 \
     libxkbcommon-x11-0 \
-    # GTK and UI dependencies
     libglib2.0-0 \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -50,69 +56,66 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     libgtk-3-0 \
     libgdk-pixbuf-2.0-0 \
-    # Fonts
     fonts-liberation \
     fonts-noto-color-emoji \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && rm -rf /var/lib/apt/lists/*
 
+# ============================================================
+# Install Node.js 20 (LTS) - NOT 18
+# ============================================================
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean
+
+# ============================================================
 # Verify installations
+# ============================================================
 RUN chromium --version && node --version && npm --version
 
+# ============================================================
+# Set working directory
+# ============================================================
 WORKDIR /app
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# COPY ENTRYPOINT SCRIPT
-# ═══════════════════════════════════════════════════════════════════════════════
+# ============================================================
+# Copy entrypoint first and set permissions
+# ============================================================
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INSTALL PYTHON DEPENDENCIES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ============================================================
+# Install Python dependencies
+# ============================================================
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INSTALL NODE DEPENDENCIES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ============================================================
+# Install Node dependencies
+# IMPORTANT: package.json MUST be copied BEFORE npm install
+# and PUPPETEER_SKIP_CHROMIUM_DOWNLOAD must be set
+# ============================================================
 COPY package*.json ./
-RUN npm install --production && npm cache clean --force
+RUN npm install --production \
+    && npm cache clean --force
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# COPY APPLICATION CODE
-# ═══════════════════════════════════════════════════════════════════════════════
+# ============================================================
+# Copy application code
+# ============================================================
 COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
 COPY run.py .
+COPY tests/ ./tests/
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CREATE DIRECTORIES WITH PROPER PERMISSIONS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ============================================================
+# Create necessary directories with proper permissions
+# ============================================================
 RUN mkdir -p data/raw data/processed data/sessions \
     && mkdir -p .wwebjs_auth \
     && chmod -R 777 .wwebjs_auth \
     && chmod -R 777 data
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ENVIRONMENT SETUP
-# ═══════════════════════════════════════════════════════════════════════════════
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    NODE_ENV=production \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    CHROME_PATH=/usr/bin/chromium \
-    WHATSAPP_API_URL=http://localhost:8000 \
-    WHATSAPP_API_PORT=8000 \
-    WWEBJS_AUTH_PATH=/app/.wwebjs_auth
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+# ============================================================
+# Entrypoint
+# ============================================================
+ENTRYPOINT ["./entrypoint.sh"]

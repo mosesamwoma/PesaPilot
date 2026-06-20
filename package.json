@@ -1,20 +1,32 @@
 {
   "name": "pesapilot",
-  "version": "1.0.0",
-  "description": "> AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in the cloud, and gives you real-time spending insights powered by Groq AI.",
-  "main": "index.js",
+  "version": "2.1.0",
+  "description": "AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in the cloud, and gives you real-time spending insights powered by Groq AI.",
+  "main": "whatsapp/whatsapp_bot.js",
   "directories": {
     "test": "tests"
   },
   "scripts": {
+    "start": "node whatsapp/whatsapp_bot.js",
+    "dev": "nodemon whatsapp/whatsapp_bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mosesamwoma/PesaPilot.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "mpesa",
+    "ai",
+    "groq",
+    "financial"
+  ],
+  "author": "Moses Amwoma",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/mosesamwoma/PesaPilot/issues"
@@ -24,7 +36,10 @@
     "axios": "^1.18.0",
     "dotenv": "^17.4.2",
     "qrcode-terminal": "^0.12.0",
-    "puppeteer": "^21.0.0",
+    "puppeteer": "^21.11.0",
     "whatsapp-web.js": "^1.23.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }

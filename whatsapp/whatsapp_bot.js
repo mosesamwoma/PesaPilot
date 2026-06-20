@@ -117,8 +117,24 @@ client.on('qr', (qr) => {
     console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
     console.log('║  Settings → Linked Devices → Link a Device             ║');
     console.log('╚════════════════════════════════════════════════════════╝\n');
-    qrcode.generate(qr, { small: true, width: 3 });
-    console.log('\n⏳ Waiting for scan...\n');
+    
+    const QRCode = require('qrcode');
+    QRCode.toString(qr, {
+        type: 'terminal',
+        width: 10,
+        margin: 1,
+        color: {
+            dark: '\x1b[40m██\x1b[0m',
+            light: '\x1b[47m  \x1b[0m'
+        }
+    }, (err, string) => {
+        if (!err) {
+            console.log(string);
+        } else {
+            console.log('Error generating QR code');
+        }
+        console.log('\n⏳ Waiting for scan...\n');
+    });
 });
 
 client.on('ready', () => {

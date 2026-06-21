@@ -173,6 +173,62 @@ class SupabaseDB:
             logger.error(f"get_anomalies failed: {e}")
             return []
 
+    def get_insights(self, days: int = 30) -> Dict:
+        """Generate insights for today or specified period"""
+        try:
+            since = (datetime.now() - timedelta(days=days)).isoformat()
+            result = (self.client.table('transactions')
+                      .select('*')
+                      .gte('timestamp', since)
+                      .execute())
+            data = result.data or []
+            
+            if not data:
+                return {
+                    'total_spent': 0,
+                    'total_received': 0,
+                    'transaction_count': 0,
+                    'top_merchant': 'N/A',
+                    'top_category': 'N/A',
+                    'avg_transaction': 0
+                }
+            
+            df = pd.DataFrame(data)
+            debits = df[df['type'].isin(['debit', 'payment', 'withdrawal', 'transfer', 'airtime'])]
+            credits = df[df['type'] == 'credit']
+            
+            total_spent = float(debits['amount'].sum()) if not debits.empty else 0
+            total_received = float(credits['amount'].sum()) if not credits.empty else 0
+            
+            top_merchant = 'N/A'
+            if not debits.empty and 'recipient' in debits.columns:
+                top_merchant = debits.groupby('recipient')['amount'].sum().idxmax()
+            
+            top_category = 'N/A'
+            if not debits.empty and 'merchant_category' in debits.columns:
+                top_category = debits.groupby('merchant_category')['amount'].sum().idxmax()
+            
+            avg_transaction = float(debits['amount'].mean()) if not debits.empty else 0
+            
+            return {
+                'total_spent': total_spent,
+                'total_received': total_received,
+                'transaction_count': len(df),
+                'top_merchant': str(top_merchant),
+                'top_category': str(top_category),
+                'avg_transaction': avg_transaction
+            }
+        except Exception as e:
+            logger.error(f"get_insights failed: {e}")
+            return {
+                'total_spent': 0,
+                'total_received': 0,
+                'transaction_count': 0,
+                'top_merchant': 'N/A',
+                'top_category': 'N/A',
+                'avg_transaction': 0
+            }
+
     def get_schema(self) -> str:
         return """
 Table: transactions

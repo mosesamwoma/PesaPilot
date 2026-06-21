@@ -145,17 +145,19 @@ client.on('qr', (qr) => {
     console.log('║  Settings → Linked Devices → Link a Device             ║');
     console.log('╚════════════════════════════════════════════════════════╝\n');
 
+    // PRIMARY: Render minimal QR code with scale:1 for production logs
     try {
-        qrcode.generate(qr, { small: true });
+        qrcode.generate(qr, { small: true, scale: 1 });
     } catch (e) {
         console.warn(`⚠️  QR rendering error: ${e.message}`);
     }
 
+    // FALLBACK: QR Server URL for cloud deployments where ASCII fails
     const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
     console.log('\n📱 Or open this link on your phone if QR code above is unclear:');
     console.log(`🔗 ${qrServerUrl}\n`);
 
-    console.log('⏳ Waiting for scan...\n');
+    console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
 });
 
 client.on('ready', () => {

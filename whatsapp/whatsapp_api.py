@@ -102,7 +102,7 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
 
         fig, ax = plt.subplots(figsize=(12, 7), facecolor='white')
         bars = ax.barh(chart_data.index, chart_data.values, color=sns.color_palette("husl", len(chart_data)), edgecolor='black', linewidth=0.5)
-        
+
         ax.set_xlabel('Amount (KES)', fontsize=11, fontweight='bold')
         ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
         ax.grid(axis='x', alpha=0.3)
@@ -172,9 +172,8 @@ def generate_line_chart(df: pd.DataFrame, date_col: str, value_col: str, title: 
 
         fig, ax = plt.subplots(figsize=(14, 7), facecolor='white')
         ax.plot(daily.index, daily.values, marker='o', linewidth=3, markersize=8, color='#2E86AB', markerfacecolor='#A23B72', markeredgewidth=2, markeredgecolor='#2E86AB')
-        
         ax.fill_between(range(len(daily)), daily.values, alpha=0.3, color='#2E86AB')
-        
+
         ax.set_xlabel('Date', fontsize=11, fontweight='bold')
         ax.set_ylabel('Amount (KES)', fontsize=11, fontweight='bold')
         ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
@@ -190,32 +189,83 @@ def generate_line_chart(df: pd.DataFrame, date_col: str, value_col: str, title: 
         logger.error(f"Line chart error: {e}")
         return None
 
+# FIX: completely rewritten — old version merged two incompatible DataFrames
+# (daily_trend has date/total_spent, spending_by_category has merchant_category/total_amount)
+# After pivot_table no row had BOTH a valid date AND a valid merchant_category,
+# producing an empty pivot and triggering numpy's zero-size fmin error in seaborn.
+# Now uses raw transactions (timestamp + merchant_category + amount) directly.
 def generate_heatmap_chart(df: pd.DataFrame, date_col: str, category_col: str, value_col: str, title: str = "Spending Heatmap") -> Optional[str]:
     try:
         if df is None or df.empty:
             return _empty_chart(title)
 
         df = df.copy()
-        df[date_col] = pd.to_datetime(df[date_col])
-        df['week'] = df[date_col].dt.isocalendar().week
+
+        # Drop credit transactions — only spending makes sense in a heatmap
+        if 'type' in df.columns:
+            df = df[df['type'] != 'credit']
+
+        if df.empty:
+            return _empty_chart(title)
+
+        # Validate required columns exist
+        if date_col not in df.columns or category_col not in df.columns or value_col not in df.columns:
+            return _empty_chart(title)
+
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        # Drop only rows with no timestamp — we need it for day_name().
+        # Fill missing category/amount instead of dropping so those rows still appear.
+        df = df.dropna(subset=[date_col])
+        df[category_col] = df[category_col].fillna('other')
+        df[value_col] = pd.to_numeric(df[value_col], errors='coerce').fillna(0)
+
+        if df.empty:
+            return _empty_chart(title)
+
         df['day_name'] = df[date_col].dt.day_name()
 
-        pivot = df.pivot_table(values=value_col, index=category_col, columns='day_name', aggfunc='sum', fill_value=0)
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        pivot = pivot[[d for d in day_order if d in pivot.columns]]
+        pivot = df.pivot_table(
+            values=value_col,
+            index=category_col,
+            columns='day_name',
+            aggfunc='sum',
+            fill_value=0
+        )
 
-        fig, ax = plt.subplots(figsize=(14, 8), facecolor='white')
-        sns.heatmap(pivot, annot=True, fmt='.0f', cmap='YlOrRd', cbar_kws={'label': 'Amount (KES)'}, ax=ax, linewidths=0.5, linecolor='gray')
-        
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        available_days = [d for d in day_order if d in pivot.columns]
+
+        if not available_days or pivot.empty:
+            return _empty_chart(title)
+
+        pivot = pivot[available_days]
+
+        fig_height = max(6, len(pivot) * 0.8 + 2)
+        fig, ax = plt.subplots(figsize=(14, fig_height), facecolor='white')
+
+        sns.heatmap(
+            pivot,
+            annot=True,
+            fmt='.0f',
+            cmap='YlOrRd',
+            cbar_kws={'label': 'Amount (KES)'},
+            ax=ax,
+            linewidths=0.5,
+            linecolor='gray',
+            vmin=0,          # FIX: explicit vmin prevents zero-size array fmin error
+        )
+
         ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
         ax.set_xlabel('Day of Week', fontsize=11, fontweight='bold')
         ax.set_ylabel('Category', fontsize=11, fontweight='bold')
-        
+        plt.xticks(rotation=45, ha='right')
+        plt.yticks(rotation=0)
+
         plt.tight_layout()
         return _encode_figure()
     except Exception as e:
         logger.error(f"Heatmap error: {e}")
-        return None
+        return _empty_chart(title)   # return an image rather than None so bot always sends something
 
 def generate_top_merchants_chart(df: pd.DataFrame, recipient_col: str, value_col: str, title: str = "Top Merchants") -> Optional[str]:
     try:
@@ -223,13 +273,13 @@ def generate_top_merchants_chart(df: pd.DataFrame, recipient_col: str, value_col
             return _empty_chart(title)
 
         top_merchants = df.groupby(recipient_col)[value_col].agg(['sum', 'count']).sort_values('sum', ascending=False).head(10)
-        
+
         if top_merchants.empty:
             return _empty_chart(title)
 
         fig, ax = plt.subplots(figsize=(12, 7), facecolor='white')
         bars = ax.barh(range(len(top_merchants)), top_merchants['sum'].values, color=sns.color_palette("coolwarm", len(top_merchants)), edgecolor='black', linewidth=0.5)
-        
+
         ax.set_yticks(range(len(top_merchants)))
         ax.set_yticklabels([name[:20] for name in top_merchants.index], fontsize=10)
         ax.set_xlabel('Total Amount (KES)', fontsize=11, fontweight='bold')
@@ -256,7 +306,7 @@ def generate_histogram_chart(df: pd.DataFrame, value_col: str, title: str = "Spe
 
         fig, ax = plt.subplots(figsize=(12, 7), facecolor='white')
         n, bins, patches = ax.hist(data, bins=20, color='#2E86AB', edgecolor='black', linewidth=0.7, alpha=0.8)
-        
+
         for patch in patches:
             patch.set_facecolor(plt.cm.viridis(patch.get_height() / max(n)))
 
@@ -308,7 +358,7 @@ def generate_daily_summary() -> str:
 💡 Tip: Review your spending patterns to identify savings opportunities.
 
 Use 'Help' for more options."""
-        
+
         logger.info("✅ Daily summary generated")
         return msg
     except Exception as e:
@@ -383,10 +433,14 @@ async def ask_question(request: QuestionRequest):
                 chart_img = generate_line_chart(df, 'date', 'total_spent', '📈 Daily Spending Trend')
                 analysis = "📈 Here's your spending trend over time:"
 
+            # FIX: was merging daily_trend + spending_by_category which have different schemas.
+            # Both had NaN in each other's key columns, so pivot_table returned empty, crashing seaborn.
+            # Now fetches raw transactions which have timestamp + merchant_category + amount together.
             elif chart_type == 'heatmap':
-                df = pd.DataFrame(data.get('daily_trend', []) + data.get('spending_by_category', []))
+                raw_data = analyzer.db.get_transactions(days=90, limit=1000)
+                df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
                 if not df.empty:
-                    chart_img = generate_heatmap_chart(df, 'date', 'merchant_category', 'total_amount', '🔥 Weekly Spending Heatmap')
+                    chart_img = generate_heatmap_chart(df, 'timestamp', 'merchant_category', 'amount', '🔥 Weekly Spending Heatmap')
                     analysis = "🔥 Here's your spending heatmap by day and category:"
 
             elif chart_type == 'merchants':

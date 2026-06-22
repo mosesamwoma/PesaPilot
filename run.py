@@ -11,7 +11,7 @@ def cli():
 
 @cli.command()
 def setup():
-    """Initialize database schema"""
+    """Test the Supabase connection"""
     from src.database import SupabaseDB
     db = SupabaseDB()
     click.echo("✅ Database connection OK")
@@ -32,7 +32,8 @@ def load(xml_path, csv):
 def dashboard(port):
     """Launch Streamlit dashboard"""
     import subprocess
-    subprocess.run(['streamlit', 'run', 'src/streamlit_app.py', f'--server.port={port}'])
+    # FIX: was src/streamlit_app.py — dashboard lives at app.py (project root)
+    subprocess.run(['streamlit', 'run', 'app.py', f'--server.port={port}'])
 
 @cli.command()
 @click.argument('question')

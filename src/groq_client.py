@@ -13,7 +13,7 @@ class GroqClient:
             raise ValueError("GROQ_API_KEY must be set")
         self.client = Groq(api_key=api_key)
         self.model = os.getenv('LLM_MODEL', 'llama-3.3-70b-versatile')
-        self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.2))  # Lower = faster
+        self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))  # Lower = faster
         self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 500))  # Reduced from 1000
 
     def _chat(self, system: str, user: str, timeout: int = 20) -> str:

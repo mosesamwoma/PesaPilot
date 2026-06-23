@@ -148,6 +148,7 @@ class MpesaAnalyzer:
         df = pd.DataFrame([tx])
         inserted = self.db.insert_transactions(df)
         self._cache.clear()
+        self.groq.invalidate_cache()  # new transactions → stale Groq responses
 
         if inserted == 0:
             # upsert succeeded but row already existed — still a success
@@ -186,4 +187,5 @@ class MpesaAnalyzer:
             return 0
         count = self.db.insert_transactions(df)
         self._cache.clear()
+        self.groq.invalidate_cache()  # new transactions → stale Groq responses
         return count

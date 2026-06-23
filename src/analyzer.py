@@ -12,8 +12,61 @@ class MpesaAnalyzer:
         self.groq = GroqClient()
         self._cache: Dict = {}
 
-    def ask_question(self, question: str) -> Dict:
+    def build_context_string(self, days: int = 30) -> str:
+        """Build a rich, human-readable context block from current financial data
+        so the AI has the full picture instead of just the raw question."""
         try:
+            summary = self.db.get_summary() or {}
+            category_data = self.db.get_spending_by_category(days=days) or []
+            daily_trend = self.db.get_daily_trend(days=days) or []
+            top_merchants = self.db.get_top_merchants(days=days, limit=5) or []
+            anomalies = self.db.get_anomalies(days=days) or []
+
+            total_spent = summary.get('total_spent', 0) or 0
+            lines = []
+
+            lines.append(
+                f"Summary (last {days} days): {summary.get('total_transactions', 0)} transactions, "
+                f"Total Spent KES {total_spent:,.0f}, "
+                f"Total Received KES {summary.get('total_received', 0):,.0f}, "
+                f"Balance KES {summary.get('balance', 0):,.0f}."
+            )
+
+            if category_data and total_spent > 0:
+                cat_lines = []
+                for c in sorted(category_data, key=lambda x: x.get('total_amount', 0), reverse=True)[:6]:
+                    amt = c.get('total_amount', 0)
+                    pct = (amt / total_spent * 100) if total_spent else 0
+                    cat_lines.append(f"{c.get('merchant_category', 'Other')}: KES {amt:,.0f} ({pct:.1f}%)")
+                lines.append("Top spending categories: " + "; ".join(cat_lines))
+
+            if top_merchants:
+                merch_lines = [
+                    f"{m.get('recipient', 'Unknown')}: KES {m.get('total_amount', 0):,.0f}"
+                    for m in top_merchants[:5]
+                ]
+                lines.append("Top merchants/recipients: " + "; ".join(merch_lines))
+
+            if daily_trend:
+                recent = daily_trend[-7:] if len(daily_trend) > 7 else daily_trend
+                trend_lines = [f"{d.get('date')}: KES {d.get('total_spent', 0):,.0f}" for d in recent]
+                lines.append("Recent daily spend: " + "; ".join(trend_lines))
+
+            if anomalies:
+                anom_lines = [
+                    f"KES {a.get('amount', 0):,.0f} to {a.get('recipient', 'unknown')} on {a.get('timestamp', '')}"
+                    for a in anomalies[:3]
+                ]
+                lines.append("Unusual transactions detected: " + "; ".join(anom_lines))
+
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"build_context_string failed: {e}")
+            return ""
+
+    def ask_question(self, question: str, days: int = 90) -> Dict:
+        try:
+            context = self.build_context_string(days=days)
             schema = self.db.get_schema()
             sql = self.groq.generate_sql(question, schema)
             logger.info(f"Generated SQL: {sql}")
@@ -23,12 +76,12 @@ class MpesaAnalyzer:
                     'question': question,
                     'sql': sql,
                     'results': [],
-                    'analysis': self.groq.chat(question),
+                    'analysis': self.groq.chat(question, context=context),
                     'error': None,
                 }
 
             results = self.db.execute_query(sql)
-            analysis = self.groq.analyze_results(question, sql, results)
+            analysis = self.groq.analyze_results(question, sql, results, context=context)
 
             return {
                 'question': question,
@@ -59,7 +112,8 @@ class MpesaAnalyzer:
             anomalies = self.db.get_anomalies()
             top_merchants = self.db.get_top_merchants(days=days)
             recent_txs = self.db.get_transactions(days=days, limit=50)
-            insights = self.groq.generate_insights(summary) if summary else ""
+            context = self.build_context_string(days=days)
+            insights = self.groq.generate_insights(summary, extra_context=context) if summary else ""
 
             data = {
                 'summary': summary,

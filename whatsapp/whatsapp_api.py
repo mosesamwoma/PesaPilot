@@ -342,6 +342,49 @@ def generate_histogram_chart(df: pd.DataFrame, value_col: str, title: str = "�
         logger.error(f"Histogram chart error: {e}")
         return None
 
+def parse_days_from_question(question_lower: str, default: int = 30) -> int:
+    """Read an explicit time window out of natural language. Falls back to `default`."""
+    if 'all time' in question_lower or 'year' in question_lower or '365' in question_lower:
+        return 365
+    if '180' in question_lower or '6 months' in question_lower:
+        return 180
+    if '90' in question_lower or '3 months' in question_lower:
+        return 90
+    if '60' in question_lower:
+        return 60
+    if 'week' in question_lower or '7 days' in question_lower:
+        return 7
+    if '14 days' in question_lower or 'two weeks' in question_lower:
+        return 14
+    match = re.search(r'(\d{1,3})\s*day', question_lower)
+    if match:
+        days = int(match.group(1))
+        if 1 <= days <= 365:
+            return days
+    return default
+
+CATEGORY_SYNONYMS = {
+    'food': ['food', 'groceries', 'grocery', 'eating', 'restaurant', 'eats', 'lunch', 'dinner', 'kibanda', 'mama mboga'],
+    'transport': ['transport', 'fare', 'matatu', 'uber', 'bolt', 'taxi', 'fuel', 'petrol', 'boda'],
+    'utilities': ['utilities', 'utility', 'kplc', 'electricity', 'power', 'water bill', 'wifi', 'internet'],
+    'banking': ['banking', 'bank charges', 'bank charge', 'withdrawal', 'withdraw', 'deposit', 'transaction charges'],
+    'shopping': ['shopping', 'shop', 'clothes', 'clothing', 'retail'],
+    'health': ['health', 'medical', 'hospital', 'clinic', 'pharmacy', 'medicine', 'nhif', 'sha'],
+    'education': ['education', 'school fees', 'fees', 'tuition', 'school'],
+    'entertainment': ['entertainment', 'movies', 'netflix', 'showmax', 'fun', 'leisure'],
+    'savings': ['savings', 'saving', 'sacco', 'mmf', 'chama'],
+    'business': ['business', 'stock', 'supplies', 'wholesale'],
+    'other': ['other', 'miscellaneous', 'misc'],
+}
+
+def extract_category_filter(question_lower: str) -> Optional[str]:
+    """If the question names a known spending category, return its canonical name."""
+    for category, synonyms in CATEGORY_SYNONYMS.items():
+        for synonym in synonyms:
+            if synonym in question_lower:
+                return category
+    return None
+
 def generate_daily_summary() -> str:
     try:
         analyzer = MpesaAnalyzer()
@@ -409,6 +452,22 @@ async def ask_question(request: QuestionRequest):
 
         question_lower = question.lower().strip()
 
+        BUDGET_KEYWORDS = ['budget plan', 'budget', 'how should i budget', 'monthly plan', 'allocate my money', 'allocate income']
+        INVEST_KEYWORDS = ['invest', 'investment', 'where to invest', 'grow my money', 'grow savings', 'mmf', 'money market fund',
+                            'treasury bill', 't-bill', 'sacco', 'put my money']
+
+        if any(k in question_lower for k in BUDGET_KEYWORDS):
+            logger.info("📋 BUDGET PLAN")
+            context = analyzer.build_context_string(days=30)
+            analysis = analyzer.groq.budget_plan(context=context)
+            return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+
+        if any(k in question_lower for k in INVEST_KEYWORDS):
+            logger.info("📈 INVESTMENT ADVICE")
+            context = analyzer.build_context_string(days=30)
+            analysis = analyzer.groq.investment_advice(context=context)
+            return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+
         chart_keywords = {
             'bar': ('💰 Spending by Category', 'merchant_category', 'total_amount'),
             'bar chart': ('💰 Spending by Category', 'merchant_category', 'total_amount'),
@@ -448,55 +507,105 @@ async def ask_question(request: QuestionRequest):
 
         if chart_type:
             logger.info(f"📊 {chart_type.upper()}")
-            data = analyzer.get_dashboard_data(days=30)
+            chart_days = parse_days_from_question(question_lower, default=30)
+            category_filter = extract_category_filter(question_lower)
+            data = analyzer.get_dashboard_data(days=chart_days)
             chart_img = None
             analysis = ""
 
             if chart_type in ['bar', 'chart', 'graph', 'bar chart']:
-                df = pd.DataFrame(data.get('spending_by_category', []))
-                chart_img = generate_bar_chart(df, 'merchant_category', 'total_amount')
-                top_cat = df.nlargest(1, 'total_amount')
-                if not top_cat.empty:
-                    top_name = top_cat.iloc[0]['merchant_category']
-                    top_amount = top_cat.iloc[0]['total_amount']
-                    analysis = f"📊 **Spending Breakdown by Category**\n\n🔝 Top: {top_name} (KES {top_amount:,.0f})\n✅ Chart generated showing all categories ranked by spending"
+                if category_filter:
+                    raw_data = analyzer.db.get_transactions(days=chart_days, limit=1000)
+                    df_raw = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
+                    df_cat = (df_raw[df_raw['merchant_category'] == category_filter]
+                              if not df_raw.empty and 'merchant_category' in df_raw.columns
+                              else pd.DataFrame())
+                    chart_img = generate_bar_chart(
+                        df_cat, 'recipient', 'amount',
+                        title=f"💰 {category_filter.title()} Spending by Recipient (last {chart_days}d)"
+                    )
+                    if not df_cat.empty and 'amount' in df_cat.columns:
+                        total_cat = df_cat['amount'].sum()
+                        by_recipient = df_cat.groupby('recipient')['amount'].sum().sort_values(ascending=False)
+                        top_line = f"\n🔝 Top recipient: {by_recipient.index[0]} (KES {by_recipient.iloc[0]:,.0f})" if not by_recipient.empty else ""
+                        analysis = f"💰 **{category_filter.title()} Spending (last {chart_days} days)**\n\nTotal: KES {total_cat:,.0f}{top_line}\n✅ Chart generated showing recipients within this category"
+                else:
+                    df = pd.DataFrame(data.get('spending_by_category', []))
+                    chart_img = generate_bar_chart(df, 'merchant_category', 'total_amount',
+                                                    title=f"💰 Spending by Category (last {chart_days}d)")
+                    if not df.empty and 'total_amount' in df.columns:
+                        top_cat = df.nlargest(1, 'total_amount')
+                        if not top_cat.empty:
+                            top_name = top_cat.iloc[0]['merchant_category']
+                            top_amount = top_cat.iloc[0]['total_amount']
+                            analysis = f"📊 **Spending Breakdown by Category (last {chart_days} days)**\n\n🔝 Top: {top_name} (KES {top_amount:,.0f})\n✅ Chart generated showing all categories ranked by spending"
 
             elif chart_type in ['pie', 'pie chart']:
-                df = pd.DataFrame(data.get('spending_by_category', []))
-                chart_img = generate_pie_chart(df, 'merchant_category', 'total_amount')
-                total = df['total_amount'].sum()
-                analysis = f"🥧 **Spending Distribution Overview**\n\n💰 Total: KES {total:,.0f}\n✅ Percentages shown for each category"
+                if category_filter:
+                    raw_data = analyzer.db.get_transactions(days=chart_days, limit=1000)
+                    df_raw = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
+                    df_cat = (df_raw[df_raw['merchant_category'] == category_filter]
+                              if not df_raw.empty and 'merchant_category' in df_raw.columns
+                              else pd.DataFrame())
+                    chart_img = generate_pie_chart(
+                        df_cat, 'recipient', 'amount',
+                        title=f"🥧 {category_filter.title()} Spending Distribution (last {chart_days}d)"
+                    )
+                    if not df_cat.empty and 'amount' in df_cat.columns:
+                        total_cat = df_cat['amount'].sum()
+                        analysis = f"🥧 **{category_filter.title()} Spending Distribution (last {chart_days} days)**\n\n💰 Total: KES {total_cat:,.0f}\n✅ Percentages shown per recipient within this category"
+                else:
+                    df = pd.DataFrame(data.get('spending_by_category', []))
+                    chart_img = generate_pie_chart(df, 'merchant_category', 'total_amount',
+                                                    title=f"🥧 Spending Distribution (last {chart_days}d)")
+                    if not df.empty and 'total_amount' in df.columns:
+                        total = df['total_amount'].sum()
+                        analysis = f"🥧 **Spending Distribution Overview (last {chart_days} days)**\n\n💰 Total: KES {total:,.0f}\n✅ Percentages shown for each category"
 
             elif chart_type in ['trend', 'line', 'line chart', 'over days', 'over time', 'spending over', 'daily trend', 'spending trend']:
                 df = pd.DataFrame(data.get('daily_trend', []))
-                chart_img = generate_line_chart(df, 'date', 'total_spent')
-                if not df.empty:
+                chart_img = generate_line_chart(df, 'date', 'total_spent',
+                                                 title=f"📈 Daily Spending Trend (last {chart_days}d)")
+                if not df.empty and 'total_spent' in df.columns:
                     max_day = df.loc[df['total_spent'].idxmax()]
-                    analysis = f"📈 **7-Day Spending Trend**\n\n📍 Peak Day: {max_day['date']} (KES {max_day['total_spent']:,.0f})\n✅ Shows daily spending pattern with average line"
+                    analysis = f"📈 **{chart_days}-Day Spending Trend**\n\n📍 Peak Day: {max_day['date']} (KES {max_day['total_spent']:,.0f})\n✅ Shows daily spending pattern with average line"
 
             elif chart_type in ['heatmap', 'heat map', 'weekly']:
-                raw_data = analyzer.db.get_transactions(days=90, limit=1000)
+                heat_days = parse_days_from_question(question_lower, default=90)
+                raw_data = analyzer.db.get_transactions(days=heat_days, limit=2000)
                 df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
                 if not df.empty:
-                    chart_img = generate_heatmap_chart(df, 'timestamp', 'merchant_category', 'amount')
-                    analysis = "🔥 **Weekly Spending Heatmap**\n\n📅 Shows spending patterns across days and categories\n✅ Darker colors = higher spending"
+                    chart_img = generate_heatmap_chart(df, 'timestamp', 'merchant_category', 'amount',
+                                                        title=f"🔥 Weekly Spending Heatmap (last {heat_days}d)")
+                    analysis = f"🔥 **Weekly Spending Heatmap (last {heat_days} days)**\n\n📅 Shows spending patterns across days and categories\n✅ Darker colors = higher spending"
+                else:
+                    chart_img = None
 
             elif chart_type in ['merchants', 'top merchants', 'top recipients', 'recipients', 'top spending']:
-                raw_data = analyzer.db.get_transactions(days=30, limit=500)
+                merch_days = parse_days_from_question(question_lower, default=30)
+                raw_data = analyzer.db.get_transactions(days=merch_days, limit=1000)
                 df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
-                if not df.empty:
-                    chart_img = generate_top_merchants_chart(df, 'recipient', 'amount')
+                if not df.empty and 'amount' in df.columns and 'recipient' in df.columns:
+                    chart_img = generate_top_merchants_chart(df, 'recipient', 'amount',
+                                                              title=f"🏆 Top 10 Merchants (last {merch_days}d)")
                     top_recipient = df.nlargest(1, 'amount')
                     if not top_recipient.empty:
-                        analysis = f"🏆 **Top 10 Recipients**\n\n💸 #1: {top_recipient.iloc[0]['recipient']} (KES {top_recipient.iloc[0]['amount']:,.0f})\n✅ Your most frequent spending targets"
+                        analysis = f"🏆 **Top 10 Recipients (last {merch_days} days)**\n\n💸 #1: {top_recipient.iloc[0]['recipient']} (KES {top_recipient.iloc[0]['amount']:,.0f})\n✅ Your most frequent spending targets"
+                else:
+                    chart_img = None
 
             elif chart_type in ['histogram', 'distribution', 'amount distribution']:
-                raw_data = analyzer.db.get_transactions(days=30, limit=500)
+                hist_days = parse_days_from_question(question_lower, default=30)
+                raw_data = analyzer.db.get_transactions(days=hist_days, limit=1000)
                 df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
-                if not df.empty:
-                    chart_img = generate_histogram_chart(df, 'amount')
+                if not df.empty and 'amount' in df.columns:
+                    chart_img = generate_histogram_chart(df, 'amount',
+                                                          title=f"📊 Transaction Distribution (last {hist_days}d)")
                     amounts = df[df['amount'] > 0]['amount']
-                    analysis = f"📊 **Transaction Amount Analysis**\n\n📈 Average: KES {amounts.mean():,.0f}\n📌 Most Common: KES {amounts.median():,.0f}\n✅ Distribution shows spending pattern"
+                    if not amounts.empty:
+                        analysis = f"📊 **Transaction Amount Analysis (last {hist_days} days)**\n\n📈 Average: KES {amounts.mean():,.0f}\n📌 Most Common: KES {amounts.median():,.0f}\n✅ Distribution shows spending pattern"
+                else:
+                    chart_img = None
 
             if not chart_img:
                 analysis = "❌ No data available yet. Start by sending M-Pesa SMS or using: PIN-SMS_CONTENT"
@@ -520,6 +629,10 @@ async def ask_question(request: QuestionRequest):
   • "Top 5 expenses?"
   • "How much to Safaricom?"
 
+💡 **ADVICE**:
+  • "Give me a budget plan" → Personalized KES budget split
+  • "What should I invest in?" → Sacco / MMF / T-Bill guidance
+
 📋 **REPORTS**:
   • "Summary" → Last 30 days
   • "Daily summary" / "Today" → Today's overview
@@ -536,15 +649,7 @@ async def ask_question(request: QuestionRequest):
             return AnalysisResponse(question=request.question, analysis=analysis)
 
         if 'summary' in question_lower:
-            days = 30
-            if 'all time' in question_lower or 'year' in question_lower:
-                days = 365
-            elif '180' in question_lower:
-                days = 180
-            elif '90' in question_lower:
-                days = 90
-            elif 'week' in question_lower:
-                days = 7
+            days = parse_days_from_question(question_lower, default=30)
 
             logger.info(f"📊 Summary: {days}d")
             summary = analyzer.db.get_summary()

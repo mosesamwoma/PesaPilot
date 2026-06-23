@@ -130,6 +130,53 @@ class MpesaAnalyzer:
             logger.error(f"get_dashboard_data failed: {e}")
             return {}
 
+    def parse_and_insert_sms(self, sms_content: str) -> Dict:
+        """Parse a single M-Pesa SMS text and insert it into the database.
+        Called by the WhatsApp /parse-sms endpoint for manual PIN-based entry."""
+        from src.parse_sms import MpesaParser
+        parser = MpesaParser()
+        tx = parser._parse_sms_text(sms_content)
+
+        if not tx:
+            return {'success': False, 'error': 'Could not parse SMS — unrecognised format'}
+
+        tx_id = tx.get('transaction_id')
+        if not tx_id:
+            return {'success': False, 'error': 'No transaction ID found in SMS'}
+
+        import pandas as pd
+        df = pd.DataFrame([tx])
+        inserted = self.db.insert_transactions(df)
+        self._cache.clear()
+
+        if inserted == 0:
+            # upsert succeeded but row already existed — still a success
+            pass
+
+        tx_type = tx.get('type', 'debit')
+        amount = tx.get('amount', 0)
+        recipient = tx.get('recipient', 'Unknown')
+        balance = tx.get('balance', 0)
+        category = tx.get('merchant_category', 'other')
+
+        if tx_type == 'credit':
+            summary = (
+                f"✅ Received KES {amount:,.2f}\n"
+                f"From: {recipient}\n"
+                f"Balance: KES {balance:,.2f}\n"
+                f"Transaction ID: {tx_id}"
+            )
+        else:
+            summary = (
+                f"✅ Paid KES {amount:,.2f}\n"
+                f"To: {recipient}\n"
+                f"Category: {category.title()}\n"
+                f"Balance: KES {balance:,.2f}\n"
+                f"Transaction ID: {tx_id}"
+            )
+
+        return {'success': True, 'summary': summary, 'transaction': tx}
+
     def load_transactions(self, xml_path: str, csv_output: str = None) -> int:
         from src.parse_sms import MpesaParser
         parser = MpesaParser()

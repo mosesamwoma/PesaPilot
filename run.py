@@ -1,49 +1,128 @@
-# run.py
-import click
-import logging
+#!/usr/bin/env python3
+"""
+PesaPilot - Start all services
+"""
+import subprocess
+import os
+import sys
+import signal
+import time
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Colors
+GREEN = '\033[92m'
+RED = '\033[91m'
+BLUE = '\033[94m'
+YELLOW = '\033[93m'
+RESET = '\033[0m'
 
-@click.group()
-def cli():
-    """PesaPilot - M-Pesa Financial Intelligence"""
-    pass
+def print_header():
+    print(f"""
+{BLUE}╔══════════════════════════════════════════════════════════╗
+║         🚀 PesaPilot - M-Pesa Financial Assistant           ║
+║                      Starting Services...                     ║
+╚══════════════════════════════════════════════════════════╝{RESET}
+    """)
 
-@cli.command()
-def setup():
-    """Test the Supabase connection"""
-    from src.database import SupabaseDB
-    db = SupabaseDB()
-    click.echo("✅ Database connection OK")
-    click.echo("Run the SQL in scripts/init_db.sql in your Supabase dashboard to create tables.")
+def check_env():
+    """Check if .env exists"""
+    if not os.path.exists(".env"):
+        print(f"{RED}❌ .env file not found!{RESET}")
+        print(f"{YELLOW}Please create .env file with required variables{RESET}")
+        sys.exit(1)
 
-@cli.command()
-@click.argument('xml_path')
-@click.option('--csv', default='data/processed/mpesa_transactions.csv', help='CSV output path')
-def load(xml_path, csv):
-    """Parse and load XML backup into database"""
-    from src.analyzer import MpesaAnalyzer
-    analyzer = MpesaAnalyzer()
-    count = analyzer.load_transactions(xml_path, csv_output=csv)
-    click.echo(f"✅ Loaded {count} transactions")
+def start_services():
+    """Start FastAPI and Streamlit"""
+    print(f"{GREEN}Starting services...{RESET}\n")
+    
+    processes = []
+    
+    # Start FastAPI
+    print(f"{GREEN}▶ Starting FastAPI server (port 8000)...{RESET}")
+    api_cmd = [
+        sys.executable, "-m", "uvicorn",
+        "whatsapp.whatsapp_api:app",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--reload"
+    ]
+    try:
+        api_proc = subprocess.Popen(api_cmd)
+        processes.append(("FastAPI", api_proc))
+        print(f"{GREEN}✅ FastAPI started (PID: {api_proc.pid}){RESET}")
+    except Exception as e:
+        print(f"{RED}❌ Failed to start FastAPI: {e}{RESET}")
+        return []
+    
+    time.sleep(3)
+    
+    # Start Streamlit
+    print(f"{GREEN}▶ Starting Streamlit dashboard (port 8501)...{RESET}")
+    st_cmd = [
+        sys.executable, "-m", "streamlit", "run",
+        "app.py",
+        "--logger.level=error",
+        "--client.showErrorDetails=false"
+    ]
+    try:
+        st_proc = subprocess.Popen(st_cmd)
+        processes.append(("Streamlit", st_proc))
+        print(f"{GREEN}✅ Streamlit started (PID: {st_proc.pid}){RESET}")
+    except Exception as e:
+        print(f"{RED}❌ Failed to start Streamlit: {e}{RESET}")
+        return processes
+    
+    return processes
 
-@cli.command()
-@click.option('--port', default=8501, help='Streamlit port')
-def dashboard(port):
-    """Launch Streamlit dashboard"""
-    import subprocess
-    # FIX: was src/streamlit_app.py — dashboard lives at app.py (project root)
-    subprocess.run(['streamlit', 'run', 'app.py', f'--server.port={port}'])
+def main():
+    print_header()
+    check_env()
+    
+    processes = start_services()
+    
+    if not processes:
+        print(f"{RED}❌ Failed to start services{RESET}")
+        sys.exit(1)
+    
+    print(f"""
+{GREEN}
+╔══════════════════════════════════════════════════════════╗
+║            ✅ All services running successfully!          ║
+╚══════════════════════════════════════════════════════════╝{RESET}
 
-@cli.command()
-@click.argument('question')
-def ask(question):
-    """Ask a question about your transactions"""
-    from src.analyzer import MpesaAnalyzer
-    analyzer = MpesaAnalyzer()
-    result = analyzer.ask_question(question)
-    click.echo(f"\nSQL: {result['sql']}\n")
-    click.echo(f"Analysis:\n{result['analysis']}")
+📊 Dashboard:  {BLUE}http://localhost:8501{RESET}
+🔗 API:        {BLUE}http://localhost:8000{RESET}
+📱 WhatsApp:   {BLUE}Online & Connected{RESET}
 
-if __name__ == '__main__':
-    cli()
+{YELLOW}Commands:{RESET}
+  • Press Ctrl+C to stop all services
+  • Watch logs above for activity
+
+{GREEN}Ready to use! 🎉{RESET}
+    """)
+    
+    def signal_handler(sig, frame):
+        print(f"\n{YELLOW}⏹  Shutting down services...{RESET}")
+        for name, proc in processes:
+            print(f"  • Stopping {name}...", end=" ", flush=True)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+                print(f"{GREEN}✅{RESET}")
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                print(f"{YELLOW}(killed){RESET}")
+        print(f"{GREEN}✅ All services stopped{RESET}")
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Keep running
+    for name, proc in processes:
+        try:
+            proc.wait()
+        except KeyboardInterrupt:
+            signal_handler(None, None)
+
+if __name__ == "__main__":
+    main()

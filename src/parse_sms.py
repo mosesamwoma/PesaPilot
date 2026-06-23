@@ -123,6 +123,12 @@ class MpesaParser:
             return None
 
     def _extract_amount(self, body: str):
+        """Extract the primary transaction amount.
+
+        M-Pesa SMS always leads with the transaction amount as the FIRST Ksh figure.
+        Later occurrences are balance, transaction cost, or daily limit — skip them.
+        We also guard against grabbing a Ksh0.00 transaction-cost line as the amount.
+        """
         patterns = [
             r'Ksh\s?([\d,]+\.?\d*)',
             r'KSh\s?([\d,]+\.?\d*)',
@@ -131,14 +137,34 @@ class MpesaParser:
         for p in patterns:
             m = re.search(p, body, re.IGNORECASE)
             if m:
-                return float(m.group(1).replace(',', ''))
+                value = float(m.group(1).replace(',', ''))
+                # If the first match is 0.00 keep scanning — could be a quirky SMS
+                if value == 0.0:
+                    for m2 in re.finditer(p, body, re.IGNORECASE):
+                        v2 = float(m2.group(1).replace(',', ''))
+                        if v2 > 0:
+                            return v2
+                    return value  # all amounts are 0 — still return it
+                return value
         return None
 
     def _extract_balance(self, body: str):
+        """Extract the new M-PESA balance after the transaction.
+
+        Handles all real-world Safaricom SMS variants:
+          • "New M-PESA balance is Ksh200.38"      (most common)
+          • "New balance is Ksh200.38"
+          • "M-PESA balance is Ksh200.38"
+          • "balance is Ksh200.38"
+          • "balance: Ksh200.38"
+        The balance always follows the keyword 'balance' (case-insensitive)
+        and optionally 'is', then a Ksh amount.
+        """
         patterns = [
-            r'balance[:\s]+(?:is\s+)?Ksh\s?([\d,]+\.?\d*)',
-            r'new\s+balance[:\s]+Ksh\s?([\d,]+\.?\d*)',
-            r'balance\s+is\s+Ksh\s?([\d,]+\.?\d*)',
+            # Covers "New M-PESA balance is Ksh..." and "New balance is Ksh..."
+            r'(?:new\s+)?(?:m-?pesa\s+)?balance\s+is\s+Ksh\s?([\d,]+\.?\d*)',
+            # Covers "balance: Ksh..." or "balance Ksh..."
+            r'balance[:\s]+Ksh\s?([\d,]+\.?\d*)',
         ]
         for p in patterns:
             m = re.search(p, body, re.IGNORECASE)
@@ -162,14 +188,22 @@ class MpesaParser:
 
     def _extract_recipient(self, body: str) -> str:
         patterns = [
-            r'(?:paid to|sent to|pay to)\s+([A-Z][A-Z\s]+?)(?:\s+for|\s+on|\s+Ksh|\.|$)',
+            # Outgoing: "paid to FRANCIS MULINGE MUNGALI. on"
+            r'(?:paid to|sent to|pay to)\s+([A-Z][A-Z\s\-]+?)(?:\s+on|\s+for|\s+Ksh|\.|$)',
+            # Incoming: "received Ksh200.00 from IM BANK LIMITED- APP on"
+            r'received\s+Ksh[\d,.]+\s+from\s+([A-Z][A-Z\s\-]+?)\s+on\b',
+            # Incoming shorter: "from NAME on"
+            r'\bfrom\s+([A-Z][A-Z\s\-]{2,40}?)\s+on\b',
+            # Generic "to NAME account/for/on"
             r'to\s+([A-Z][A-Z\s]+?)\s+(?:account|for|on)',
+            # Fallback generic
             r'(?:to|for)\s+([A-Z][A-Z\s]{2,30})',
         ]
         for p in patterns:
             m = re.search(p, body, re.IGNORECASE)
             if m:
-                return m.group(1).strip().title()
+                name = m.group(1).strip().rstrip('.-').strip()
+                return name.title()
         return 'Unknown'
 
     def _extract_phone(self, body: str) -> str:

@@ -1,17 +1,19 @@
-# PesaPilot 
+# PesaPilot
 
-AI-powered M-Pesa financial assistant for Kenya. It parses your SMS transaction backup, stores it in Supabase, and lets you explore your spending through a Streamlit dashboard or by just texting it on WhatsApp.
+AI-powered M-Pesa financial assistant for Kenya. It parses your SMS transaction backup, stores it in Supabase, and lets you explore your spending — and get real Kenyan financial advice — through a Streamlit dashboard or by just texting it on WhatsApp.
 
 ---
 
 ## Features
 
 - **Dashboard** — spending overview, daily trend, category breakdown, top merchants, AI-generated insights
-- **Ask AI** — ask questions about your spending in plain English; Groq turns them into SQL, runs it, and explains the result
+- **Ask AI** — ask questions about your spending in plain English; Groq turns them into SQL, runs it, and explains the result, grounded in your actual numbers (totals, % per category, top merchants, recent trend, anomalies)
+- **Budget plans** — ask for a "budget plan" and get a KES-denominated needs/wants/savings split sized to your real spending, plus one specific category to trim
+- **Investment guidance** — ask "what should I invest in?" and get a recommendation across Kenyan options (Sacco, Money Market Fund, Treasury Bills) sized to your actual free cash flow, with a suggested split and one concrete next step
 - **Transactions** — filterable, searchable transaction history
 - **Anomalies** — unusually large transactions flagged by z-score
 - **Load Data** — parses SMS Backup & Restore XML exports, auto-categorizes, de-duplicates on reload
-- **WhatsApp Bot** — ask the same questions, get charts, and log SMS manually, all from WhatsApp
+- **WhatsApp Bot** — ask the same questions, get charts, get budget/investment advice, and log SMS manually, all from WhatsApp
 - **Daily summary** — a 7 AM scheduled job (Africa/Nairobi by default) keeps a running daily digest
 
 ## Prerequisites
@@ -69,9 +71,9 @@ The app refuses to start (both locally and in Docker) without these six:
 |---|---|---|
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot looks for the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | Port FastAPI listens on |
-| `LLM_MODEL` | `llama-3.3-70b-versatile` | Groq model used for SQL generation and chat |
-| `LLM_TEMPERATURE` | `0.2` | Groq sampling temperature |
-| `LLM_MAX_TOKENS` | `1000` | Max tokens per Groq response |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | Groq model used for SQL generation, chat, budgets, and investment advice |
+| `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature — kept warmer than pure SQL-gen tasks so advice reads naturally |
+| `LLM_MAX_TOKENS` | `600` | Max tokens per Groq response |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Chromium binary the bot launches |
 | `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD` | `true` | Skips Puppeteer's own ~280MB Chromium download at install time (we use system Chromium instead) |
 | `NODE_ENV` | `production` | Node runtime mode |
@@ -145,6 +147,18 @@ Your session is saved under `.wwebjs_auth/` (Docker: the `sessions/` bind mount)
 
 Anyone texting the bot's number who isn't `WHATSAPP_MAIN_NUMBER`/`WHATSAPP_LID` gets: *"⛔ This number is not authorized."*
 
+### What you can ask it
+
+| You send | What happens |
+|---|---|
+| `bar chart` / `pie chart` / `trend` / `heatmap` / `merchants` / `histogram` | Instant chart, rendered as an image |
+| `What did I spend on food?` | Plain-English answer with KES + % breakdown, grounded in your real transactions |
+| `Give me a budget plan` | A needs/wants/savings split in KES, one category to trim, where to park the savings bucket |
+| `What should I invest in?` | A Sacco / Money Market Fund / Treasury Bill recommendation sized to your actual surplus, with a suggested split |
+| `Summary` / `Daily summary` / `Today` | Period or daily financial digest |
+| `help` | Full list of supported commands |
+| `1234-MJ7XK2P9QD Confirmed. You have sent...` | Manual SMS entry: `PIN-PASTE_SMS_HERE` |
+
 ---
 
 ## CLI reference (`run.py`)
@@ -162,6 +176,20 @@ python run.py dashboard                       # Launch the Streamlit dashboard
 npm start    # node whatsapp/whatsapp_bot.js
 npm run dev  # same, via nodemon (auto-restart on file changes; dev only)
 ```
+
+---
+
+## How the AI advice is grounded
+
+Every question that reaches the AI — chat, budget plan, or investment advice — is paired with real context pulled live from Supabase before the prompt is sent to Groq:
+
+- Summary stats (total spent, received, balance, transaction count)
+- Top spending categories, with both KES amounts and percentages
+- Top merchants/recipients
+- Recent daily spending trend
+- Any detected anomalies
+
+This context sits underneath a Kenya-specific system prompt (in `src/groq_client.py`) that enforces seven rules on every response: show amounts *and* percentages, compare to averages, give one specific actionable tip, reference real Kenyan options (Sacco, MMF, Treasury Bills) where relevant, recommend a concrete budget split, nudge toward an emergency fund, and celebrate small wins. It never recommends Fuliza or names a specific bank or provider.
 
 ---
 
@@ -230,6 +258,14 @@ curl http://127.0.0.1:8000/health
 curl -X POST http://127.0.0.1:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What did I spend on food?"}'
+
+curl -X POST http://127.0.0.1:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Give me a budget plan"}'
+
+curl -X POST http://127.0.0.1:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What should I invest in?"}'
 ```
 
 ---
@@ -249,6 +285,7 @@ curl -X POST http://127.0.0.1:8000/ask \
 | WhatsApp session keeps getting logged out | Make sure `sessions/` (or your volume) is actually persisted between restarts — check it isn't being wiped by your deploy process |
 | `WHATSAPP_PIN not set` | Add `WHATSAPP_PIN` to `.env` |
 | Charts not sending / chart errors in logs | `pip install matplotlib seaborn` (already in `requirements.txt`, but confirm your venv has them) |
+| "Budget plan" or "invest" questions get treated as a generic AI question instead of the dedicated handler | Check your phrasing includes one of the recognized keywords (e.g. "budget", "invest", "sacco", "MMF", "treasury bill") — see `BUDGET_KEYWORDS`/`INVEST_KEYWORDS` in `whatsapp/whatsapp_api.py` |
 | Groq rate limit / empty AI responses | Wait ~60s and retry; consider lowering `LLM_MAX_TOKENS` |
 | `streamlit: command not found` | Activate your virtualenv first: `source venv/bin/activate` |
 | `balance` column is always empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |

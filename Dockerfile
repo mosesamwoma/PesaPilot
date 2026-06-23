@@ -116,6 +116,15 @@ RUN mkdir -p data/raw data/processed data/sessions \
     && chmod -R 777 data
 
 # ============================================================
+# ✅ ADD EMOJI FONTS
+# ============================================================
+RUN apt-get update && apt-get install -y \
+    fonts-noto-color-emoji \
+    fonts-dejavu \
+    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================
 # Entrypoint
 # ============================================================
 ENTRYPOINT ["./entrypoint.sh"]

@@ -1,6 +1,8 @@
 # src/groq_client.py
 import os
+import hashlib
 import logging
+import time
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -15,7 +17,7 @@ CONTEXT YOU UNDERSTAND DEEPLY:
 - Money Market Funds (MMF) — e.g. unit trusts from firms like Sanlam, CIC, Britam, Old Mutual, NCBA, Madison — typically 9-15% annual returns, withdrawable in 1-3 days
 - Treasury Bills/Bonds via CBK (91/182/364-day T-bills, infrastructure bonds) — government-backed, currently competitive double-digit yields
 - KPLC tokens, school fees cycles, matatu/fare costs, chama contributions
-- Typical Kenyan income brackets and cost-of-living realities (rent, fare, food, fees, family obligations/"black tax")
+- Typical Kenyan income brackets and cost-of-living realities (rent, fare, food, fees, family obligations/\"black tax\")
 
 HOW YOU RESPOND — 7 RULES:
 1. SHOW THE FULL PICTURE — always pair amounts with percentages (e.g. "KES 8,400 on food — that's 32% of your spending").
@@ -34,16 +36,85 @@ STYLE RULES:
 - End most answers with one clear, practical next step.
 """
 
+# ─────────────────────────────────────────────────────────────
+# Simple in-memory cache
+# ─────────────────────────────────────────────────────────────
+class _ResponseCache:
+    """
+    Lightweight TTL cache keyed on a SHA-256 hash of (system, user).
+
+    TTL buckets (seconds):
+      - SQL generation       →  1 hour   (schema never changes mid-session)
+      - Insights / summary   →  10 min   (data changes only when new SMS is added)
+      - Budget / investment  →  15 min   (advice is stable over a session)
+      - General chat         →  5 min    (conversational — shorter freshness)
+    """
+
+    def __init__(self):
+        self._store: dict = {}   # key → {'response': str, 'expires_at': float}
+
+    @staticmethod
+    def _key(system: str, user: str) -> str:
+        raw = f"{system}||{user}"
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def get(self, system: str, user: str):
+        key = self._key(system, user)
+        entry = self._store.get(key)
+        if entry and time.time() < entry['expires_at']:
+            logger.debug(f"Cache HIT  [{key[:12]}]")
+            return entry['response']
+        if entry:
+            logger.debug(f"Cache MISS (expired) [{key[:12]}]")
+            del self._store[key]
+        return None
+
+    def set(self, system: str, user: str, response: str, ttl: int):
+        key = self._key(system, user)
+        self._store[key] = {
+            'response':   response,
+            'expires_at': time.time() + ttl,
+        }
+        logger.debug(f"Cache SET  [{key[:12]}] ttl={ttl}s")
+
+    def clear(self):
+        self._store.clear()
+        logger.info("Cache cleared")
+
+    @property
+    def size(self) -> int:
+        # Prune expired entries while we're here
+        now = time.time()
+        self._store = {k: v for k, v in self._store.items() if now < v['expires_at']}
+        return len(self._store)
+
+
+# Module-level singleton — shared across all GroqClient instances
+_cache = _ResponseCache()
+
+
+# ─────────────────────────────────────────────────────────────
+# TTL constants (seconds)
+# ─────────────────────────────────────────────────────────────
+TTL_SQL        = 3600   # 1 hour  — SQL for the same question won't change
+TTL_INSIGHTS   =  600   # 10 min  — dashboard insights
+TTL_ADVICE     =  900   # 15 min  — budget / investment advice
+TTL_CHAT       =  300   #  5 min  — general conversational answers
+
+
 class GroqClient:
     def __init__(self):
         api_key = os.getenv('GROQ_API_KEY')
         if not api_key:
             raise ValueError("GROQ_API_KEY must be set")
         self.client = Groq(api_key=api_key)
-        self.model = os.getenv('LLM_MODEL', 'llama-3.3-70b-versatile')
+        self.model = os.getenv('LLM_MODEL', 'llama-3.1-8b-instant')
         self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))
-        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 600))
+        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 400))
 
+    # ------------------------------------------------------------------
+    # Internal: raw API call (no caching here — callers decide TTL)
+    # ------------------------------------------------------------------
     def _chat(self, system: str, user: str, timeout: int = 20) -> str:
         try:
             resp = self.client.chat.completions.create(
@@ -52,7 +123,7 @@ class GroqClient:
                 max_tokens=self.max_tokens,
                 messages=[
                     {'role': 'system', 'content': system},
-                    {'role': 'user', 'content': user},
+                    {'role': 'user',   'content': user},
                 ]
             )
             return resp.choices[0].message.content.strip()
@@ -60,6 +131,34 @@ class GroqClient:
             logger.error(f"Groq API error: {e}")
             return ""
 
+    # ------------------------------------------------------------------
+    # Internal: cache-aware wrapper
+    # ------------------------------------------------------------------
+    def _cached_chat(self, system: str, user: str, ttl: int) -> str:
+        cached = _cache.get(system, user)
+        if cached is not None:
+            return cached
+        response = self._chat(system, user)
+        if response:                          # only cache successful responses
+            _cache.set(system, user, response, ttl=ttl)
+        return response
+
+    # ------------------------------------------------------------------
+    # Public: cache invalidation (call after inserting new transactions)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def invalidate_cache():
+        """Clear all cached responses. Call whenever new transactions are added."""
+        _cache.clear()
+
+    @staticmethod
+    def cache_size() -> int:
+        """Return number of live (non-expired) cache entries."""
+        return _cache.size
+
+    # ------------------------------------------------------------------
+    # API methods
+    # ------------------------------------------------------------------
     def generate_sql(self, question: str, schema: str) -> str:
         system = f"""You are a PostgreSQL expert. Generate ONE SQL SELECT query.
 
@@ -71,40 +170,36 @@ Rules:
 - Filter to last 90 days
 - Exclude type='credit' for spending
 - Limit 100 rows"""
-
-        sql = self._chat(system, question)
+        sql = self._cached_chat(system, question, ttl=TTL_SQL)
         return sql.replace('```sql', '').replace('```', '').strip()
 
     def analyze_results(self, question: str, sql: str, results: list, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
 
 You are answering a question backed by real transaction query results. Ground your answer strictly in the numbers given. Apply Rules 1-7. Max 180 words."""
-
         user_parts = []
         if context:
             user_parts.append(f"Financial context:\n{context}")
         user_parts.append(f"Question: {question}")
         user_parts.append(f"Query results (raw rows): {results[:20]}")
         user = "\n\n".join(user_parts)
-        return self._chat(system, user)
+        return self._cached_chat(system, user, ttl=TTL_CHAT)
 
     def generate_insights(self, summary: dict, extra_context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
 
 Generate 3-4 punchy financial insights for the dashboard. Apply Rules 1-7. Be specific with numbers and percentages. Keep each insight to 1-2 sentences. Use bullet points."""
-
         user = f"Summary: {summary}"
         if extra_context:
             user += f"\n\nAdditional context:\n{extra_context}"
-        return self._chat(system, user)
+        return self._cached_chat(system, user, ttl=TTL_INSIGHTS)
 
     def chat(self, question: str, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
 
 Answer the user's question conversationally and helpfully. Apply Rules 1-7 wherever the context supports it — don't invent numbers you weren't given. Max 200 words."""
-
         user = f"Financial context:\n{context}\n\nQuestion: {question}" if context else question
-        return self._chat(system, user)
+        return self._cached_chat(system, user, ttl=TTL_CHAT)
 
     def budget_plan(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -115,9 +210,8 @@ The user wants a concrete budget plan. Using their real spending context if give
 3. One specific category to trim and by how much (KES).
 4. One concrete place to put the savings bucket (Sacco, MMF, or T-Bill) with a rough expected return.
 Apply Rules 1-7. Max 220 words. Use headers/bullets, no SQL/database language."""
-
         user = f"Financial context:\n{context}" if context else "No transaction context available — give a general but practical Kenyan budget framework, and ask one clarifying question about their income at the end."
-        return self._chat(system, user)
+        return self._cached_chat(system, user, ttl=TTL_ADVICE)
 
     def investment_advice(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -128,6 +222,5 @@ The user is asking where to invest or grow savings. Using their real financial c
 3. Suggest a simple split across these (e.g. percentages) rather than picking just one.
 4. End with one encouraging, concrete next step they can do this week.
 Never mention Fuliza or name a specific bank/provider. Apply Rules 1-7. Max 220 words. No database/SQL language."""
-
         user = f"Financial context:\n{context}" if context else "No transaction context available — ask one quick question about their monthly surplus, then give a general Kenyan investment framework (MMF, T-Bills, Sacco) anyway."
-        return self._chat(system, user)
+        return self._cached_chat(system, user, ttl=TTL_ADVICE)

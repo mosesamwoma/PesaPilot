@@ -14,7 +14,7 @@ AI-powered M-Pesa financial assistant for Kenya. It parses your SMS transaction 
 - **Anomalies** — unusually large transactions flagged by z-score
 - **Load Data** — parses SMS Backup & Restore XML exports, auto-categorizes, de-duplicates on reload
 - **WhatsApp Bot** — ask the same questions, get charts, get budget/investment advice, and log SMS manually, all from WhatsApp
-- **Daily summary** — a 7 AM scheduled job (Africa/Nairobi by default) keeps a running daily digest
+- **Daily summary** — a 9 PM scheduled job (Africa/Nairobi by default) sends an end-of-day spending digest to your WhatsApp
 
 ## Prerequisites
 
@@ -290,5 +290,19 @@ curl -X POST http://127.0.0.1:8000/ask \
 | `streamlit: command not found` | Activate your virtualenv first: `source venv/bin/activate` |
 | `balance` column is always empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
 | `pytest` fails on Supabase/Groq tests | Those tests need real, working `SUPABASE_URL`/`SUPABASE_KEY`/`GROQ_API_KEY` and the schema from `scripts/init_db.sql` already applied — see the Testing section above |
+
+---
+
+## Future Improvements
+
+- **Multi-user support** — currently hardcoded to one number/Supabase project.
+- **Other mobile money providers** — Airtel Money, T-Kash via pluggable parsers.
+- **Smarter anomaly detection** — ML-based, per-user patterns instead of z-score.
+- **Budget goals with alerts** — proactive WhatsApp pings near/over budget.
+- **Web-based onboarding** — guided setup instead of manual `.env`/SQL/XML steps.
+- **Self-hosted/local LLM option** — for privacy-conscious users.
+- **CI/CD pipeline** — automated tests + Docker builds via GitHub Actions.
+- **Encryption at rest** — for stored SMS content.
+- **Native mobile app** — replaces local Streamlit dashboard.
 
 ---

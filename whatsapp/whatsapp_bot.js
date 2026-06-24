@@ -1,6 +1,7 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
+const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
@@ -285,6 +286,26 @@ client.on('disconnected', (reason) => {
     console.log(`\n⚠️ Disconnected: ${reason}`);
     console.log('🔄 Attempting to reconnect...\n');
 });
+
+// ──────────────────────────────────────────────────────────────
+// DAILY SUMMARY CRON — 9:00 PM Africa/Nairobi, every day
+// ──────────────────────────────────────────────────────────────
+const mainNumeric = MAIN_NUMBER.replace(/@.*$/, '');
+const DAILY_SUMMARY_CHAT_ID = MAIN_NUMBER.includes('@') ? MAIN_NUMBER : `${mainNumeric}@c.us`;
+
+cron.schedule('0 21 * * *', async () => {
+    console.log('\n⏰ Running scheduled daily summary job (21:00 Africa/Nairobi)...');
+    try {
+        const response = await axios.get(`${API_URL}/daily-summary`, { timeout: 20000 });
+        const summaryText = response?.data?.summary || '⚠️ Could not generate summary.';
+        await client.sendMessage(DAILY_SUMMARY_CHAT_ID, summaryText);
+        console.log('✅ Daily summary sent successfully\n');
+    } catch (error) {
+        console.error(`❌ Daily summary cron error: ${error.message}\n`);
+    }
+}, { timezone: 'Africa/Nairobi' });
+
+console.log('📅 Daily summary scheduled for 9:00 PM Africa/Nairobi every day\n');
 
 function splitMessage(text, maxLength) {
     if (text.length <= maxLength) return [text];

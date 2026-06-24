@@ -426,6 +426,12 @@ app.add_middleware(
 
 analyzer = MpesaAnalyzer()
 
+@app.get("/daily-summary")
+async def daily_summary():
+    """Returns today's financial summary text. Used by the WhatsApp bot's
+    daily cron job (9PM Africa/Nairobi) to push the summary proactively."""
+    return {"summary": generate_daily_summary()}
+
 @app.get("/health")
 async def health():
     return {

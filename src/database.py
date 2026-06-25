@@ -2,6 +2,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional
 import pandas as pd
 from supabase import create_client, Client
@@ -83,6 +84,71 @@ class SupabaseDB:
         except Exception as e:
             logger.error(f"get_summary failed: {e}")
             return {}
+
+    def get_today_summary(self) -> Dict:
+        """Returns a summary scoped to TODAY only (Africa/Nairobi calendar day),
+        plus the latest known account balance. Used by the 9PM daily summary cron."""
+        try:
+            nairobi = ZoneInfo("Africa/Nairobi")
+            start_of_day_nairobi = datetime.now(nairobi).replace(hour=0, minute=0, second=0, microsecond=0)
+            since = start_of_day_nairobi.astimezone(ZoneInfo("UTC")).isoformat()
+
+            result = (self.client.table('transactions')
+                      .select('amount, type, balance, timestamp')
+                      .gte('timestamp', since)
+                      .order('timestamp', desc=True)
+                      .execute())
+            data = result.data or []
+            df = pd.DataFrame(data)
+
+            latest_balance = 0.0
+            if not df.empty and 'balance' in df.columns and df['balance'].notna().any():
+                latest_balance = float(df['balance'].iloc[0])
+            else:
+                latest_balance = self._get_latest_balance()
+
+            if df.empty:
+                return {
+                    'total_transactions': 0,
+                    'total_spent': 0,
+                    'total_received': 0,
+                    'avg_spend': 0,
+                    'debit_count': 0,
+                    'credit_count': 0,
+                    'balance': latest_balance,
+                }
+
+            debits = df[df['type'].isin(['debit', 'payment', 'withdrawal', 'transfer', 'airtime'])]
+            credits = df[df['type'] == 'credit']
+            return {
+                'total_transactions': len(df),
+                'total_spent': float(debits['amount'].sum()) if not debits.empty else 0,
+                'total_received': float(credits['amount'].sum()) if not credits.empty else 0,
+                'avg_spend': float(debits['amount'].mean()) if not debits.empty else 0,
+                'debit_count': len(debits),
+                'credit_count': len(credits),
+                'balance': latest_balance,
+            }
+        except Exception as e:
+            logger.error(f"get_today_summary failed: {e}")
+            return {}
+
+    def _get_latest_balance(self) -> float:
+        """Fallback: fetch the balance from the single most recent transaction,
+        regardless of date, in case today has no transactions yet."""
+        try:
+            result = (self.client.table('transactions')
+                      .select('balance')
+                      .order('timestamp', desc=True)
+                      .limit(1)
+                      .execute())
+            data = result.data or []
+            if data and data[0].get('balance') is not None:
+                return float(data[0]['balance'])
+            return 0.0
+        except Exception as e:
+            logger.error(f"_get_latest_balance failed: {e}")
+            return 0.0
 
     def get_spending_by_category(self, days: int = 30) -> List[Dict]:
         since = (datetime.now() - timedelta(days=days)).isoformat()

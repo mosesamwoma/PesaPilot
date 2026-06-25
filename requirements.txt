@@ -30,3 +30,6 @@ pytest-cov>=4.1.0
 pytest-asyncio>=0.21.0
 # Scheduler
 apscheduler>=3.10.1
+# ML & Forecasting
+prophet>=1.1.7
+cmdstanpy>=1.2.0

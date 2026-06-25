@@ -36,6 +36,13 @@ if not WHATSAPP_PIN:
 
 DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC']
 
+# ── FORECAST (NEW) ─────────────────────────────────────────────────────────
+FORECAST_KEYWORDS = [
+    'forecast', 'spending prediction', 'predict my spending', 'spending forecast',
+    'projected spending', 'predict spending', 'future spending',
+]
+# ── END FORECAST ───────────────────────────────────────────────────────────
+
 class QuestionRequest(BaseModel):
     question: str
 
@@ -385,6 +392,52 @@ def extract_category_filter(question_lower: str) -> Optional[str]:
                 return category
     return None
 
+# ── FORECAST (NEW) ─────────────────────────────────────────────────────────
+def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending Forecast") -> Optional[str]:
+    """Render historical spend + forecast spend + confidence band as a single
+    line chart, in the same matplotlib style as the other WhatsApp charts."""
+    try:
+        hist_pts = forecast_data.get('historical', [])[-60:]
+        fcst_pts = forecast_data.get('forecast', [])
+
+        if not hist_pts and not fcst_pts:
+            return _empty_chart(title)
+
+        fig, ax = plt.subplots(figsize=(13, 7), facecolor='white', edgecolor='#e0e0e0')
+
+        if hist_pts:
+            df_h = pd.DataFrame(hist_pts)
+            ax.plot(df_h['date'], df_h['amount'], color='#2196F3', linewidth=2.5,
+                    marker='o', markersize=3, label='Historical Spending')
+
+        if fcst_pts:
+            df_f = pd.DataFrame(fcst_pts)
+            ax.plot(df_f['date'], df_f['predicted'], color='#FF6B6B', linewidth=2.5,
+                    linestyle='--', marker='o', markersize=5, label='Forecast Spending')
+            ax.fill_between(df_f['date'], df_f['lower'], df_f['upper'],
+                             color='#FF6B6B', alpha=0.18, label='Confidence Interval')
+
+        ax.set_xlabel('Date', fontsize=12, fontweight='bold', color='#333333')
+        ax.set_ylabel('Amount (KES)', fontsize=12, fontweight='bold', color='#333333')
+        ax.set_title(title, fontsize=15, fontweight='bold', pad=20, color='#333333')
+        ax.grid(True, alpha=0.3, linestyle='--', color='#cccccc')
+        ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        return _encode_figure()
+    except Exception as e:
+        logger.error(f"Forecast chart error: {e}")
+        return None
+
+def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
+    """Read an explicit forecast horizon out of natural language. Defaults to 7 days."""
+    if '30' in question_lower or 'month' in question_lower:
+        return 30
+    if '7' in question_lower or 'week' in question_lower:
+        return 7
+    return default
+# ── END FORECAST ───────────────────────────────────────────────────────────
+
 def generate_daily_summary() -> str:
     try:
         analyzer = MpesaAnalyzer()
@@ -473,6 +526,34 @@ async def ask_question(request: QuestionRequest):
             context = analyzer.build_context_string(days=30)
             analysis = analyzer.groq.investment_advice(context=context)
             return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+
+        # ── FORECAST (NEW) ─────────────────────────────────────────────────
+        if any(k in question_lower for k in FORECAST_KEYWORDS):
+            logger.info("🔮 FORECAST")
+            horizon = parse_forecast_horizon(question_lower, default=7)
+            forecast_data = analyzer.get_forecast(horizon_days=horizon)
+
+            if not forecast_data.get('sufficient_data'):
+                analysis = f"📉 {forecast_data.get('message', 'Not enough transaction history yet for a forecast.')}"
+                return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+
+            chart_img = generate_forecast_chart(forecast_data, title=f"🔮 {horizon}-Day Spending Forecast")
+
+            trend_icon = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(forecast_data.get('trend', 'Stable'), '➡️')
+            risk_icon = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(forecast_data.get('risk_level', 'Low'), '🟢')
+
+            header = (
+                f"🔮 **{horizon}-Day Spending Forecast**\n\n"
+                f"💰 Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
+                f"📅 Avg per Day: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
+                f"{trend_icon} Trend: {forecast_data.get('trend', 'Stable')}\n"
+                f"{risk_icon} Risk Level: {forecast_data.get('risk_level', 'Low')}\n"
+            )
+            ai_summary = forecast_data.get('insight', '')
+            analysis = clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else ""))
+
+            return AnalysisResponse(question=request.question, analysis=analysis, chart=chart_img)
+        # ── END FORECAST ───────────────────────────────────────────────────
 
         chart_keywords = {
             'bar': ('💰 Spending by Category', 'merchant_category', 'total_amount'),
@@ -646,6 +727,12 @@ async def ask_question(request: QuestionRequest):
 
 📱 **MANUAL SMS**:
   • PIN-PASTE_SMS_HERE (e.g., 3749-UFMD8OKA...)
+
+🔮 **FORECASTING**:
+  • "Forecast" / "Forecast 7 days" → Next 7-day spending prediction
+  • "Forecast 30 days" → Next 30-day spending prediction
+  • "Spending prediction" → Same as "forecast"
+  • Returns predicted amount, trend, risk level + AI summary
 
 ✨ Just ask naturally! Charts & analysis are smart."""
             return AnalysisResponse(question=request.question, analysis=help_text)

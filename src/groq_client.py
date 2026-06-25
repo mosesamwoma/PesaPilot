@@ -224,3 +224,23 @@ The user is asking where to invest or grow savings. Using their real financial c
 Never mention Fuliza or name a specific bank/provider. Apply Rules 1-7. Max 220 words. No database/SQL language."""
         user = f"Financial context:\n{context}" if context else "No transaction context available — ask one quick question about their monthly surplus, then give a general Kenyan investment framework (MMF, T-Bills, Sacco) anyway."
         return self._cached_chat(system, user, ttl=TTL_ADVICE)
+
+    # ── FORECAST (NEW) ─────────────────────────────────────────────────────
+    def generate_forecast_insights(self, forecast_data: dict) -> str:
+        """Turn a Prophet forecast result (see src/forecasting.py) into a short,
+        plain-English explanation — clearly framed as a projection, not a fact."""
+        horizon = forecast_data.get('horizon_days', 7)
+        system = KENYA_SYSTEM_PROMPT + f"""
+
+You are explaining a {horizon}-day spending FORECAST produced by a statistical model — a projection, not something that has already happened. Apply Rules 1-7 wherever they fit. Clearly frame the numbers as predictions ("you're on track to..."), not historical fact. Explain the trend and risk level in plain language, and end with one practical next step tied to the projected risk level. Max 150 words. No database/SQL/model/technical language — never mention Prophet, confidence intervals, or statistics by name."""
+        user = (
+            f"Forecast horizon: {horizon} days\n"
+            f"Historical average daily spend: KES {forecast_data.get('historical_avg_daily', 0):,.0f}\n"
+            f"Total predicted spend for this period: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
+            f"Average predicted daily spend: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
+            f"Trend: {forecast_data.get('trend', 'Stable')}\n"
+            f"Risk level: {forecast_data.get('risk_level', 'Low')}\n"
+            f"Based on {forecast_data.get('history_days', 0)} days of transaction history."
+        )
+        return self._cached_chat(system, user, ttl=TTL_INSIGHTS)
+    # ── END FORECAST ───────────────────────────────────────────────────────

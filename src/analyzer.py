@@ -3,6 +3,7 @@ import logging
 from typing import Dict, List, Optional
 from src.database import SupabaseDB
 from src.groq_client import GroqClient
+from src import forecasting
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,44 @@ class MpesaAnalyzer:
             logger.error(f"get_dashboard_data failed: {e}")
             return {}
 
+    # ── FORECAST (NEW) ─────────────────────────────────────────────────────
+    def get_forecast(self, horizon_days: int = 7) -> Dict:
+        """Generate (or reuse a cached) Prophet spending forecast for the given
+        horizon, aggregating the existing transaction history into daily totals,
+        plus a Groq-generated natural-language summary of the projection."""
+        try:
+            transactions = self.db.get_transactions(days=forecasting.TRAIN_HISTORY_DAYS, limit=5000)
+            result = forecasting.generate_forecast(transactions, horizon_days=horizon_days)
+
+            if not result.get('sufficient_data'):
+                result['insight'] = result.get(
+                    'message',
+                    "I need a bit more transaction history before I can forecast your spending."
+                )
+                return result
+
+            result['insight'] = self.groq.generate_forecast_insights(result)
+            return result
+        except Exception as e:
+            logger.error(f"get_forecast failed: {e}")
+            fallback_msg = "Could not generate a forecast right now. Please try again later."
+            return {
+                'sufficient_data': False,
+                'history_days': 0,
+                'min_required_days': forecasting.MIN_HISTORY_DAYS,
+                'message': fallback_msg,
+                'insight': fallback_msg,
+            }
+
+    def get_forecast_bundle(self) -> Dict:
+        """Convenience helper for the dashboard: both the 7-day and 30-day
+        forecasts in a single call (each independently cached by horizon)."""
+        return {
+            'horizon_7': self.get_forecast(horizon_days=7),
+            'horizon_30': self.get_forecast(horizon_days=30),
+        }
+    # ── END FORECAST ───────────────────────────────────────────────────────
+
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
         """Parse a single M-Pesa SMS text and insert it into the database.
         Called by the WhatsApp /parse-sms endpoint for manual PIN-based entry."""
@@ -149,6 +188,7 @@ class MpesaAnalyzer:
         inserted = self.db.insert_transactions(df)
         self._cache.clear()
         self.groq.invalidate_cache()  # new transactions → stale Groq responses
+        forecasting.invalidate_cache()  # new transactions → stale forecast
 
         if inserted == 0:
             # upsert succeeded but row already existed — still a success
@@ -188,4 +228,5 @@ class MpesaAnalyzer:
         count = self.db.insert_transactions(df)
         self._cache.clear()
         self.groq.invalidate_cache()  # new transactions → stale Groq responses
+        forecasting.invalidate_cache()  # new transactions → stale forecast
         return count

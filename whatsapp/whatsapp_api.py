@@ -388,7 +388,7 @@ def extract_category_filter(question_lower: str) -> Optional[str]:
 def generate_daily_summary() -> str:
     try:
         analyzer = MpesaAnalyzer()
-        summary = analyzer.db.get_summary()
+        summary = analyzer.db.get_today_summary()
         
         if not summary or summary.get('total_transactions', 0) == 0:
             return "📭 No transactions recorded today.\n\nStart tracking by sending M-Pesa SMS or manual entry: PIN-SMS_CONTENT"
@@ -407,8 +407,8 @@ def generate_daily_summary() -> str:
 ⚖️ Current Balance: KES {balance:,.0f}
 
 **Insights:**
-• Average per transaction: KES {spent/max(transactions, 1):,.0f}
-• Spending velocity: {'High' if spent > 5000 else 'Moderate' if spent > 1000 else 'Low'}
+- Average per transaction: KES {spent/max(transactions, 1):,.0f}
+- Spending velocity: {'High' if spent > 5000 else 'Moderate' if spent > 1000 else 'Low'}
 """
     except Exception as e:
         logger.error(f"Daily summary error: {e}")
@@ -675,9 +675,9 @@ async def ask_question(request: QuestionRequest):
 ⚖️ Balance: KES {balance:,.0f}
 
 **Analytics:**
-• Daily Average: KES {spent / max(days, 1):,.0f}
-• Per Transaction: KES {spent / max(transactions, 1):,.0f}
-• Spending Trend: {'📈 Increasing' if spent > received else '📉 Decreasing'}"""
+- Daily Average: KES {spent / max(days, 1):,.0f}
+- Per Transaction: KES {spent / max(transactions, 1):,.0f}
+- Spending Trend: {'📈 Increasing' if spent > received else '📉 Decreasing'}"""
             else:
                 analysis = "📭 No transactions in this period. Start tracking now!"
 

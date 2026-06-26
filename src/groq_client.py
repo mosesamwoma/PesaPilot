@@ -110,7 +110,7 @@ class GroqClient:
         self.client = Groq(api_key=api_key)
         self.model = os.getenv('LLM_MODEL', 'llama-3.1-8b-instant')
         self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))
-        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 400))
+        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 600))
 
     # ------------------------------------------------------------------
     # Internal: raw API call (no caching here — callers decide TTL)

@@ -430,10 +430,11 @@ def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending For
         return None
 
 def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
-    """Read an explicit forecast horizon out of natural language. Defaults to 7 days."""
-    if '30' in question_lower or 'month' in question_lower:
+    """Read an explicit forecast horizon out of natural language. Defaults to 7 days.
+    Only 7 and 30 are supported horizons; anything else falls back to `default`."""
+    if 'month' in question_lower or re.search(r'\b30\b', question_lower):
         return 30
-    if '7' in question_lower or 'week' in question_lower:
+    if 'week' in question_lower or re.search(r'\b7\b', question_lower):
         return 7
     return default
 # ── END FORECAST ───────────────────────────────────────────────────────────

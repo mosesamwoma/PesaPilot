@@ -150,6 +150,52 @@ class SupabaseDB:
             logger.error(f"_get_latest_balance failed: {e}")
             return 0.0
 
+    def get_range_summary(self, days: int = 30) -> Dict:
+        """Returns a summary scoped to the last N days, plus the latest known
+        account balance. Used by the Streamlit dashboard so 'Last {days} days'
+        actually reflects that window instead of all-time totals."""
+        since = (datetime.now() - timedelta(days=days)).isoformat()
+        try:
+            result = (self.client.table('transactions')
+                      .select('amount, type, balance, timestamp')
+                      .gte('timestamp', since)
+                      .order('timestamp', desc=True)
+                      .execute())
+            data = result.data or []
+            df = pd.DataFrame(data)
+
+            latest_balance = 0.0
+            if not df.empty and 'balance' in df.columns and df['balance'].notna().any():
+                latest_balance = float(df['balance'].iloc[0])
+            else:
+                latest_balance = self._get_latest_balance()
+
+            if df.empty:
+                return {
+                    'total_transactions': 0,
+                    'total_spent': 0,
+                    'total_received': 0,
+                    'avg_spend': 0,
+                    'debit_count': 0,
+                    'credit_count': 0,
+                    'balance': latest_balance,
+                }
+
+            debits = df[df['type'].isin(['debit', 'payment', 'withdrawal', 'transfer', 'airtime'])]
+            credits = df[df['type'] == 'credit']
+            return {
+                'total_transactions': len(df),
+                'total_spent': float(debits['amount'].sum()) if not debits.empty else 0,
+                'total_received': float(credits['amount'].sum()) if not credits.empty else 0,
+                'avg_spend': float(debits['amount'].mean()) if not debits.empty else 0,
+                'debit_count': len(debits),
+                'credit_count': len(credits),
+                'balance': latest_balance,
+            }
+        except Exception as e:
+            logger.error(f"get_range_summary failed: {e}")
+            return {}
+
     def get_spending_by_category(self, days: int = 30) -> List[Dict]:
         since = (datetime.now() - timedelta(days=days)).isoformat()
         try:

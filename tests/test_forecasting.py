@@ -105,12 +105,10 @@ def test_cache_roundtrip():
     assert forecasting._cache.get('fingerprint-abc', 7) is None
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip("prophet", reason="prophet not installed"),
-    reason="prophet not installed"
-)
 def test_generate_forecast_with_prophet():
-    """Full end-to-end forecast when Prophet is available in the environment."""
+    """Full end-to-end forecast when Prophet is available in the environment.
+    Skips just this one test (not the whole module) if prophet isn't installed."""
+    pytest.importorskip("prophet")
     txs = _make_transactions(40)
     result = forecasting.generate_forecast(txs, horizon_days=7)
     assert result['sufficient_data'] is True

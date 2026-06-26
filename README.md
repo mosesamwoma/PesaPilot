@@ -330,7 +330,6 @@ curl -X POST http://127.0.0.1:8000/ask \
 - **Other mobile money providers** — Airtel Money, T-Kash via pluggable parsers.
 - **Smarter anomaly detection** — ML-based, per-user patterns instead of z-score.
 - **Budget goals with alerts** — proactive WhatsApp pings near/over budget.
-- **Web-based onboarding** — guided setup instead of manual `.env`/SQL/XML steps.
 - **Self-hosted/local LLM option** — for privacy-conscious users.
 - **CI/CD pipeline** — automated tests + Docker builds via GitHub Actions.
 - **Encryption at rest** — for stored SMS content.

@@ -6,7 +6,8 @@ AI-powered M-Pesa financial assistant for Kenya. It parses your SMS transaction 
 
 ## Features
 
-- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, AI-generated insights
+- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, spending heatmap, amount-distribution histogram, and AI-generated insights
+- **Forecast** — Prophet-powered 7-day and 30-day spending projections with a confidence band, trend classification (Increasing / Decreasing / Stable), risk level (Low / Moderate / High), and a Groq-written plain-English summary of the projection
 - **Ask AI** — ask questions about your spending in plain English; Groq turns them into SQL, runs it, and explains the result, grounded in your actual numbers (totals, % per category, top merchants, recent trend, anomalies)
 - **Budget plans** — ask for a "budget plan" and get a KES-denominated needs/wants/savings split sized to your real spending, plus one specific category to trim
 - **Investment guidance** — ask "what should I invest in?" and get a recommendation across Kenyan options (Sacco, Money Market Fund, Treasury Bills) sized to your actual free cash flow, with a suggested split and one concrete next step
@@ -79,7 +80,7 @@ The app refuses to start (both locally and in Docker) without these six:
 | `NODE_ENV` | `production` | Node runtime mode |
 | `NODE_OPTIONS` | `--max-old-space-size=2048` | Node heap size cap |
 | `PYTHONUNBUFFERED` | `1` | Streams Python logs immediately instead of buffering |
-| `TZ` | `Africa/Nairobi` | Container timezone — affects log timestamps and the 7 AM daily-summary job |
+| `TZ` | `Africa/Nairobi` | Container timezone — affects log timestamps and the 9 PM daily-summary job |
 
 ## 3. Create the database schema
 
@@ -106,10 +107,10 @@ Re-running this on the same or an updated file is always safe — transactions a
 
 ## 6. Run it
 
-**Dashboard only:**
+**Dashboard only (local):**
 
 ```bash
-streamlit run app.py
+streamlit run dashboard/app.py
 ```
 Open [http://localhost:8501](http://localhost:8501).
 
@@ -125,6 +126,33 @@ npm start
 ```
 
 A QR code prints in Terminal 2 the first time — scan it (see below). All three — dashboard, API, and bot — can run at once; they share the same Supabase database.
+
+> **Note:** The Streamlit dashboard (`dashboard/app.py`) is for local use only. The Docker image deploys the FastAPI backend and WhatsApp bot only.
+
+---
+
+## The Forecast page
+
+The 🔮 **Forecast** page uses [Meta Prophet](https://facebook.github.io/prophet/) to project your daily spending forward 7 or 30 days.
+
+**How it works:**
+1. The analyzer pulls up to 180 days of debit transactions from Supabase.
+2. `src/forecasting.py` aggregates them into a daily spending series (zero-filled for days with no spending).
+3. Prophet fits a linear-growth model with weekly seasonality (when ≥ 14 days of data are available) and produces a forecast with an 80% confidence interval.
+4. The result is cached in memory (6-hour TTL, invalidated automatically when new transactions are inserted).
+5. Groq writes a plain-English insight framing the projection as a prediction, not a fact.
+
+**Minimum data required:** 14 days of spending history. If you have fewer, the page shows a friendly message explaining what is still needed.
+
+**Trend classification:**
+- **Increasing** — second half of the forecast horizon averages more than 7% above the first half
+- **Decreasing** — second half averages more than 7% below the first half
+- **Stable** — within ±7%
+
+**Risk level:**
+- **High** — projected total more than 25% above your historical daily average × horizon, or daily spending volatility > 0.9
+- **Moderate** — 10–25% above historical pace, or volatility 0.6–0.9
+- **Low** — everything else
 
 ---
 
@@ -155,6 +183,7 @@ Anyone texting the bot's number who isn't `WHATSAPP_MAIN_NUMBER`/`WHATSAPP_LID` 
 | `What did I spend on food?` | Plain-English answer with KES + % breakdown, grounded in your real transactions |
 | `Give me a budget plan` | A needs/wants/savings split in KES, one category to trim, where to park the savings bucket |
 | `What should I invest in?` | A Sacco / Money Market Fund / Treasury Bill recommendation sized to your actual surplus, with a suggested split |
+| `forecast` / `spending forecast` / `predict my spending` | 7-day spending forecast with trend and risk level |
 | `Summary` / `Daily summary` / `Today` | Period or daily financial digest |
 | `help` | Full list of supported commands |
 | `1234-MJ7XK2P9QD Confirmed. You have sent...` | Manual SMS entry: `PIN-PASTE_SMS_HERE` |
@@ -207,7 +236,7 @@ python -m pytest tests/ -v
 
 ## Docker
 
-The container runs **both the FastAPI backend and the WhatsApp bot together** — there's no separate "bot host" needed. Streamlit isn't included in the image (it's a local/dev-only dashboard); only `src/`, `whatsapp/`, `run.py`, and `tests/` are copied in.
+The container runs **both the FastAPI backend and the WhatsApp bot together** — there's no separate "bot host" needed. The Streamlit dashboard is not included in the image (local/dev only); only `src/`, `whatsapp/`, `run.py`, and `tests/` are copied in.
 
 ### Build and run
 
@@ -281,15 +310,17 @@ curl -X POST http://127.0.0.1:8000/ask \
 | No transactions after loading an XML | Confirm the file is an unmodified export from SMS Backup & Restore, and that it actually contains M-Pesa messages |
 | Port 8000 already in use | Set `WHATSAPP_API_PORT` to something else, and update `API_URL` and the `docker-compose.yml` port mapping to match |
 | WhatsApp QR never appears / hangs | Check `docker compose logs -f pesapilot`; confirm `chromium` is installed in the image (`docker compose exec pesapilot chromium --version`) |
-| `Failed to launch the browser process` / `profile already in use` after a crash or forced container kill | `entrypoint.sh` clears the known Chrome lock files (`SingletonLock`, `SingletonSocket`, `SingletonCookie`, `SingletonTab`) on every boot. If it still happens after a *hard* crash (OOM kill, `docker kill`, power loss), stop the container and delete the `sessions/` folder (or the `.wwebjs_auth` volume) once, then restart and re-scan the QR code |
-| WhatsApp session keeps getting logged out | Make sure `sessions/` (or your volume) is actually persisted between restarts — check it isn't being wiped by your deploy process |
+| `Failed to launch the browser process` / `profile already in use` after a crash | `entrypoint.sh` clears Chrome lock files on every boot. If it still happens after a hard crash, stop the container and delete the `sessions/` folder once, then restart and re-scan the QR code |
+| WhatsApp session keeps getting logged out | Make sure `sessions/` is actually persisted between restarts — check it isn't being wiped by your deploy process |
 | `WHATSAPP_PIN not set` | Add `WHATSAPP_PIN` to `.env` |
 | Charts not sending / chart errors in logs | `pip install matplotlib seaborn` (already in `requirements.txt`, but confirm your venv has them) |
-| "Budget plan" or "invest" questions get treated as a generic AI question instead of the dedicated handler | Check your phrasing includes one of the recognized keywords (e.g. "budget", "invest", "sacco", "MMF", "treasury bill") — see `BUDGET_KEYWORDS`/`INVEST_KEYWORDS` in `whatsapp/whatsapp_api.py` |
+| "Budget plan" or "invest" questions get treated as a generic AI question | Check your phrasing includes one of the recognized keywords — see `BUDGET_KEYWORDS`/`INVEST_KEYWORDS` in `whatsapp/whatsapp_api.py` |
+| Forecast page shows "Not enough data" | You need at least 14 distinct days of debit transactions; load more SMS history |
+| Forecast page shows "forecasting engine unavailable" | `prophet` is not installed — run `pip install prophet cmdstanpy` |
 | Groq rate limit / empty AI responses | Wait ~60s and retry; consider lowering `LLM_MAX_TOKENS` |
 | `streamlit: command not found` | Activate your virtualenv first: `source venv/bin/activate` |
 | `balance` column is always empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
-| `pytest` fails on Supabase/Groq tests | Those tests need real, working `SUPABASE_URL`/`SUPABASE_KEY`/`GROQ_API_KEY` and the schema from `scripts/init_db.sql` already applied — see the Testing section above |
+| `pytest` fails on Supabase/Groq tests | Those tests need real, working credentials and the schema from `scripts/init_db.sql` already applied — see the Testing section above |
 
 ---
 

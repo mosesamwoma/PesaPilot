@@ -33,9 +33,9 @@ def check_env():
 def start_services():
     """Start FastAPI and Streamlit"""
     print(f"{GREEN}Starting services...{RESET}\n")
-    
+
     processes = []
-    
+
     # Start FastAPI
     print(f"{GREEN}▶ Starting FastAPI server (port 8000)...{RESET}")
     api_cmd = [
@@ -52,14 +52,14 @@ def start_services():
     except Exception as e:
         print(f"{RED}❌ Failed to start FastAPI: {e}{RESET}")
         return []
-    
+
     time.sleep(3)
-    
-    # Start Streamlit
+
+    # Start Streamlit — dashboard is now at dashboard/app.py
     print(f"{GREEN}▶ Starting Streamlit dashboard (port 8501)...{RESET}")
     st_cmd = [
         sys.executable, "-m", "streamlit", "run",
-        "app.py",
+        "dashboard/app.py",
         "--logger.level=error",
         "--client.showErrorDetails=false"
     ]
@@ -70,19 +70,19 @@ def start_services():
     except Exception as e:
         print(f"{RED}❌ Failed to start Streamlit: {e}{RESET}")
         return processes
-    
+
     return processes
 
 def main():
     print_header()
     check_env()
-    
+
     processes = start_services()
-    
+
     if not processes:
         print(f"{RED}❌ Failed to start services{RESET}")
         sys.exit(1)
-    
+
     print(f"""
 {GREEN}
 ╔══════════════════════════════════════════════════════════╗
@@ -99,7 +99,7 @@ def main():
 
 {GREEN}Ready to use! 🎉{RESET}
     """)
-    
+
     def signal_handler(sig, frame):
         print(f"\n{YELLOW}⏹  Shutting down services...{RESET}")
         for name, proc in processes:
@@ -113,10 +113,10 @@ def main():
                 print(f"{YELLOW}(killed){RESET}")
         print(f"{GREEN}✅ All services stopped{RESET}")
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     # Keep running
     for name, proc in processes:
         try:

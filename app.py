@@ -101,7 +101,7 @@ def main() -> None:
         st.markdown("*Your M-Pesa Financial Advisor*")
         st.divider()
 
-        page: str = st.radio("Navigate", ["📊 Dashboard", "💬 Ask AI", "📋 Transactions", "⚠️ Anomalies"])
+        page: str = st.radio("Navigate", ["📊 Dashboard", "🔮 Forecast", "💬 Ask AI", "📋 Transactions", "⚠️ Anomalies"])
         st.divider()
 
         days: int = st.slider("Analysis period (days)", 7, 180, 30)
@@ -320,6 +320,86 @@ def main() -> None:
                     st.info("No debit transactions to chart.")
             else:
                 st.info("No transaction data available.")
+
+    # ── FORECAST (NEW) ───────────────────────────────────────────────────────
+    elif page == "🔮 Forecast":
+        st.title("🔮 Spending Forecast")
+        st.caption("AI-projected spending based on your real transaction history")
+
+        horizon_label = st.radio("Forecast horizon", ["7 days", "30 days"], horizontal=True)
+        horizon_days = 7 if horizon_label == "7 days" else 30
+
+        with st.spinner("Training forecast model..."):
+            forecast_data: dict[str, Any] = analyzer.get_forecast(horizon_days=horizon_days)
+
+        if not forecast_data.get('sufficient_data'):
+            st.info(forecast_data.get('message', 'Not enough transaction history yet for a forecast.'))
+        else:
+            fc1, fc2, fc3, fc4 = st.columns(4)
+            trend_emoji = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(forecast_data.get('trend', 'Stable'), '➡️')
+            risk_emoji = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(forecast_data.get('risk_level', 'Low'), '🟢')
+            forecast_metrics: list[tuple[Any, str, Any]] = [
+                (fc1, "Predicted Spend", fmt_ksh(forecast_data.get('total_predicted', 0))),
+                (fc2, "Avg per Day", fmt_ksh(forecast_data.get('avg_predicted_daily', 0))),
+                (fc3, "Trend", f"{trend_emoji} {forecast_data.get('trend', 'Stable')}"),
+                (fc4, "Risk Level", f"{risk_emoji} {forecast_data.get('risk_level', 'Low')}"),
+            ]
+            for col, label, value in forecast_metrics:
+                with col:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-value">{value}</div>
+                        <div class="metric-label">{label}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            st.markdown("")
+            st.subheader("Historical Spending + Forecast")
+            hist_points: list[dict[str, Any]] = forecast_data.get('historical', [])[-60:]
+            forecast_points: list[dict[str, Any]] = forecast_data.get('forecast', [])
+
+            fig = go.Figure()
+            if hist_points:
+                df_hist: pd.DataFrame = pd.DataFrame(hist_points)
+                fig.add_trace(go.Scatter(
+                    x=df_hist['date'], y=df_hist['amount'],
+                    name='Historical', mode='lines+markers',
+                    line=dict(color='#00d4aa', width=2),
+                    marker=dict(size=4),
+                ))
+            if forecast_points:
+                df_fcst: pd.DataFrame = pd.DataFrame(forecast_points)
+                fig.add_trace(go.Scatter(
+                    x=df_fcst['date'], y=df_fcst['predicted'],
+                    name='Forecast', mode='lines+markers',
+                    line=dict(color='#ff4b6e', width=2, dash='dash'),
+                    marker=dict(size=5),
+                ))
+                fig.add_trace(go.Scatter(
+                    x=pd.concat([df_fcst['date'], df_fcst['date'][::-1]]),
+                    y=pd.concat([df_fcst['upper'], df_fcst['lower'][::-1]]),
+                    fill='toself', fillcolor='rgba(255,75,110,0.15)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='Confidence Interval', hoverinfo='skip',
+                ))
+            fig.update_layout(
+                **PLOTLY_DARK,
+                xaxis=dict(gridcolor='#2d3250'),
+                yaxis=dict(gridcolor='#2d3250'),
+                legend=dict(bgcolor='rgba(0,0,0,0)'),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            insight: str = forecast_data.get('insight', '')
+            if insight:
+                st.subheader("💡 AI Insight")
+                st.markdown(f"""
+                <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
+                {insight.replace(chr(10), '<br>')}
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.caption(f"Based on {forecast_data.get('history_days', 0)} days of spending history")
 
     # ── ASK AI ─────────────────────────────────────────────────────────────
     elif page == "💬 Ask AI":

@@ -107,7 +107,7 @@ class MpesaAnalyzer:
             return self._cache[cache_key]
 
         try:
-            summary = self.db.get_summary()
+            summary = self.db.get_range_summary(days=days)
             category_spend = self.db.get_spending_by_category(days=days)
             daily_trend = self.db.get_daily_trend(days=days)
             anomalies = self.db.get_anomalies()

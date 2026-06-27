@@ -72,7 +72,7 @@ The app refuses to start (both locally and in Docker) without these six:
 |---|---|---|
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot looks for the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | Port FastAPI listens on |
-| `LLM_MODEL` | `llama-3.3-70b-versatile` | Groq model used for SQL generation, chat, budgets, and investment advice |
+| `LLM_MODEL` | `llama-3.1-8b-instant` | Groq model used for SQL generation, chat, budgets, and investment advice |
 | `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature — kept warmer than pure SQL-gen tasks so advice reads naturally |
 | `LLM_MAX_TOKENS` | `600` | Max tokens per Groq response |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Chromium binary the bot launches |

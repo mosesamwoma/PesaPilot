@@ -74,14 +74,12 @@ RUN npm install --production \
 COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
 COPY run.py .
-COPY tests/ ./tests/
 
 RUN mkdir -p data/raw data/processed data/sessions \
     && mkdir -p .wwebjs_auth \
     && chmod -R 777 .wwebjs_auth \
     && chmod -R 777 data
 
-# ✅ EMOJI FONTS - Installed once with fc-cache
 RUN apt-get update && apt-get install -y \
     fonts-noto-color-emoji \
     fonts-dejavu \

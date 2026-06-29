@@ -2,14 +2,23 @@
   "name": "pesapilot",
   "version": "2.1.0",
   "description": "AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in the cloud, and gives you real-time spending insights powered by Groq AI.",
-  "main": "whatsapp/whatsapp_bot.js",
+  "main": "dist/whatsapp_bot.js",
+  "type": "module",
   "directories": {
     "test": "tests"
   },
   "scripts": {
-    "start": "node whatsapp/whatsapp_bot.js",
-    "dev": "nodemon whatsapp/whatsapp_bot.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node dist/whatsapp_bot.js",
+    "start:legacy": "node whatsapp/whatsapp_bot.js",
+    "start:baileys": "node whatsapp/whatsapp_bot_baileys.mjs",
+    "dev": "nodemon --exec ts-node whatsapp/whatsapp_bot.ts",
+    "dev:legacy": "nodemon whatsapp/whatsapp_bot.js",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "api": "python -m uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 --reload",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rm -rf dist ./.baileys_auth",
+    "prebuild": "npm run clean"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -24,7 +33,9 @@
     "mpesa",
     "ai",
     "groq",
-    "financial"
+    "financial",
+    "baileys",
+    "typescript"
   ],
   "author": "Moses Amwoma",
   "license": "ISC",
@@ -33,14 +44,22 @@
   },
   "homepage": "https://github.com/mosesamwoma/PesaPilot#readme",
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.10",
     "axios": "^1.18.0",
     "dotenv": "^17.4.2",
     "node-cron": "^3.0.3",
-    "qrcode-terminal": "^0.12.0",
+    "pino": "^9.3.2",
     "puppeteer": "^22.0.0",
+    "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.24.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "@types/node": "^20.14.9",
+    "@types/node-cron": "^3.0.11",
+    "@types/pino": "^7.0.5",
+    "nodemon": "^3.1.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3"
   }
 }

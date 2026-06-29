@@ -13,3 +13,6 @@ node_modules/
 *.html
 Hosting.md
 mose/
+baileys_error.log
+.baileys_auth/
+dist/

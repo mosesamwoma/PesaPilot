@@ -9,15 +9,16 @@
   },
   "scripts": {
     "start": "node dist/whatsapp_bot.js",
-    "start:legacy": "node whatsapp/whatsapp_bot.js",
-    "start:baileys": "node whatsapp/whatsapp_bot_baileys.mjs",
+    "start:js": "node whatsapp/whatsapp_bot.js",
+    "start:wwebjs": "node dist/whatsapp_bot_wwebjs.js",
     "dev": "nodemon --exec ts-node whatsapp/whatsapp_bot.ts",
-    "dev:legacy": "nodemon whatsapp/whatsapp_bot.js",
+    "dev:wwebjs": "nodemon --exec ts-node whatsapp/whatsapp_bot_wwebjs.ts",
+    "dev:js": "nodemon whatsapp/whatsapp_bot.js",
     "build": "tsc",
     "watch": "tsc --watch",
     "api": "python -m uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 --reload",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "clean": "rm -rf dist ./.baileys_auth",
+    "clean": "rm -rf dist ./.baileys_auth ./.wwebjs_auth",
     "prebuild": "npm run clean"
   },
   "engines": {
@@ -35,7 +36,8 @@
     "groq",
     "financial",
     "baileys",
-    "typescript"
+    "typescript",
+    "whatsapp-web.js"
   ],
   "author": "Moses Amwoma",
   "license": "ISC",
@@ -58,6 +60,7 @@
     "@types/node": "^20.14.9",
     "@types/node-cron": "^3.0.11",
     "@types/pino": "^7.0.5",
+    "@types/whatsapp-web.js": "^1.24.0",
     "nodemon": "^3.1.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.3"

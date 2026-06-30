@@ -3,9 +3,9 @@ import {
     useMultiFileAuthState,
     DisconnectReason,
     delay,
-    WASocket,
     proto,
 } from '@whiskeysockets/baileys';
+import type { WASocket } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcodeTerminal from 'qrcode-terminal';

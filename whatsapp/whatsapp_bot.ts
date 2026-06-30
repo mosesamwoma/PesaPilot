@@ -2,6 +2,8 @@ import {
     makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
+    delay,
+    WASocket,
     proto,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -59,19 +61,20 @@ const config: Config = {
     apiUrl: process.env.API_URL || 'http://127.0.0.1:8000',
     authPath: process.env.BAILEYS_AUTH_PATH || './.baileys_auth',
     usePairingCode: (process.env.WHATSAPP_USE_PAIRING_CODE || 'false').toLowerCase() === 'true',
-    logLevel: process.env.BAILEYS_LOG_LEVEL || 'silent',
+    logLevel: process.env.BAILEYS_LOG_LEVEL || 'info',
 };
 
 // ──────────────────────────────────────────────────────────────
 // VALIDATION
 // ──────────────────────────────────────────────────────────────
 
-function validateConfig(cfg: Config): void {
-    if (!cfg.mainNumber) {
+function validateConfig(config: Config): void {
+    if (!config.mainNumber) {
         console.error('\n❌ ERROR: WHATSAPP_MAIN_NUMBER is required in .env');
         process.exit(1);
     }
-    if (!cfg.whatsappPin) {
+
+    if (!config.whatsappPin) {
         console.error('\n❌ ERROR: WHATSAPP_PIN is required in .env');
         process.exit(1);
     }
@@ -83,16 +86,17 @@ validateConfig(config);
 // STARTUP BANNER
 // ──────────────────────────────────────────────────────────────
 
-function printBanner(cfg: Config): void {
+function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
     console.log('🤖 PesaPilot WhatsApp Bot v2.1 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
-    console.log(`✅ Phone Number : ${cfg.mainNumber}`);
-    console.log(`✅ LID          : ${cfg.whatsappLid ? 'configured' : 'not set (optional)'}`);
-    console.log(`✅ PIN          : configured`);
-    console.log(`🔗 API URL      : ${cfg.apiUrl}`);
-    console.log(`📂 Auth path    : ${cfg.authPath}`);
-    console.log(`🔑 Login mode   : ${cfg.usePairingCode ? 'Pairing code' : 'QR code'}`);
+    console.log(`✅ Phone Number : ${config.mainNumber}`);
+    console.log(`✅ LID          : ${config.whatsappLid ? 'configured' : 'not set (optional)'}`);
+    console.log(`✅ PIN          : ${config.whatsappPin}`);
+    console.log(`🔗 API URL      : ${config.apiUrl}`);
+    console.log(`📂 Auth path    : ${config.authPath}`);
+    console.log(`🔑 Login mode   : ${config.usePairingCode ? 'Pairing code' : 'QR code'}`);
+    console.log(`📊 Log level    : ${config.logLevel}`);
     console.log('═══════════════════════════════════════════════════════\n');
 }
 
@@ -116,11 +120,12 @@ function ensureAuthDirectory(authPath: string): void {
 ensureAuthDirectory(config.authPath);
 
 // ──────────────────────────────────────────────────────────────
-// LOGGER — use 'silent' level in prod so Baileys internal noise
-// is suppressed; override via BAILEYS_LOG_LEVEL env var
+// LOGGER
 // ──────────────────────────────────────────────────────────────
 
-const logger = pino({ level: config.logLevel }) as ReturnType<typeof pino>;
+const logger = pino({
+    level: config.logLevel,
+});
 
 // ──────────────────────────────────────────────────────────────
 // UTILITY FUNCTIONS
@@ -137,38 +142,33 @@ function stripSuffix(jid: string): string {
 function extractText(msg: proto.IWebMessageInfo): string {
     const m = msg.message;
     if (!m) return '';
+    
     if (m.conversation) return m.conversation;
     if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
     if (m.imageMessage?.caption) return m.imageMessage.caption;
     if (m.videoMessage?.caption) return m.videoMessage.caption;
     if (m.buttonsResponseMessage?.selectedButtonId) return m.buttonsResponseMessage.selectedButtonId;
-    if (m.listResponseMessage?.singleSelectReply?.selectedRowId) {
-        return m.listResponseMessage.singleSelectReply.selectedRowId;
-    }
-    if (m.buttonsResponseMessage?.selectedDisplayText) {
-        return m.buttonsResponseMessage.selectedDisplayText;
-    }
+    if (m.listResponseMessage?.singleSelectReply?.selectedRowId) return m.listResponseMessage.singleSelectReply.selectedRowId;
+    if (m.buttonsResponseMessage?.selectedDisplayText) return m.buttonsResponseMessage.selectedDisplayText;
+    
     return '';
 }
 
-async function react(
-    sock: ReturnType<typeof makeWASocket>,
-    jid: string,
-    key: proto.IMessageKey,
-    emoji: string
-): Promise<void> {
+async function react(sock: WASocket, jid: string, key: proto.IMessageKey, emoji: string): Promise<void> {
     try {
         await sock.sendMessage(jid, { react: { text: emoji, key } });
-    } catch (_e) {
+    } catch (e) {
         // Silently fail for reactions
     }
 }
 
 function splitMessage(text: string, maxLength: number): string[] {
     if (text.length <= maxLength) return [text];
+    
     const chunks: string[] = [];
     let currentChunk = '';
     const sentences = text.split(/(?<=[.!?])\s+/);
+    
     for (const sentence of sentences) {
         if ((currentChunk + sentence).length > maxLength) {
             if (currentChunk) chunks.push(currentChunk.trim());
@@ -177,19 +177,22 @@ function splitMessage(text: string, maxLength: number): string[] {
             currentChunk += (currentChunk ? ' ' : '') + sentence;
         }
     }
+    
     if (currentChunk) chunks.push(currentChunk.trim());
     return chunks;
 }
 
-function checkAuthorized(
+function isAuthorized(
     senderNumeric: string,
     mainNumber: string,
     lidNumber?: string
 ): boolean {
     const mainNumeric = stripSuffix(mainNumber);
     const lidNumeric = lidNumber ? stripSuffix(lidNumber) : '';
+
     if (mainNumeric && senderNumeric === mainNumeric) return true;
     if (lidNumeric && senderNumeric === lidNumeric) return true;
+
     return false;
 }
 
@@ -197,7 +200,7 @@ function checkAuthorized(
 // STATE
 // ──────────────────────────────────────────────────────────────
 
-let currentSock: ReturnType<typeof makeWASocket> | null = null;
+let currentSock: WASocket | null = null;
 let isConnected = false;
 let startupResolved = false;
 let shuttingDown = false;
@@ -206,9 +209,7 @@ const STARTUP_TIMEOUT_MS = 120 * 1000;
 
 const startupWatchdog = setTimeout(() => {
     if (!startupResolved) {
-        console.error(
-            `\n❌ No QR/pairing code or open connection after ${STARTUP_TIMEOUT_MS / 1000}s.`
-        );
+        console.error(`\n❌ No QR/pairing code or open connection after ${STARTUP_TIMEOUT_MS / 1000}s.`);
         console.error('   Exiting so the container restarts.\n');
         process.exit(1);
     }
@@ -220,11 +221,7 @@ startupWatchdog.unref();
 // API FUNCTIONS
 // ──────────────────────────────────────────────────────────────
 
-async function callApi<T>(
-    endpoint: string,
-    method: 'GET' | 'POST' = 'GET',
-    data?: unknown
-): Promise<T> {
+async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data?: any): Promise<T> {
     const url = `${config.apiUrl}${endpoint}`;
     try {
         const response = await axios({
@@ -232,9 +229,11 @@ async function callApi<T>(
             url,
             data,
             timeout: 30000,
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+            },
         });
-        return response.data as T;
+        return response.data;
     } catch (error) {
         const err = error as AxiosError;
         if (err.code === 'ECONNREFUSED') {
@@ -244,23 +243,16 @@ async function callApi<T>(
     }
 }
 
-async function handleManualSms(
-    smsContent: string,
-    sock: ReturnType<typeof makeWASocket>,
-    jid: string,
-    msg: proto.IWebMessageInfo
-): Promise<void> {
+async function handleManualSms(smsContent: string, sock: WASocket, jid: string, msg: proto.IWebMessageInfo): Promise<void> {
     console.log('📝 Manual SMS entry');
-
+    
     if (!smsContent) {
         await sock.sendMessage(jid, { text: '❌ Format: PIN-SMS_CONTENT' }, { quoted: msg });
         return;
     }
-
+    
     try {
-        const response = await callApi<ParseSMSResponse>('/parse-sms', 'POST', {
-            sms_content: smsContent,
-        });
+        const response = await callApi<ParseSMSResponse>('/parse-sms', 'POST', { sms_content: smsContent });
         if (response.success) {
             await sock.sendMessage(jid, { text: response.summary }, { quoted: msg });
             await react(sock, jid, msg.key, '✅');
@@ -276,16 +268,9 @@ async function handleManualSms(
     }
 }
 
-async function handleQuestion(
-    userMessage: string,
-    sock: ReturnType<typeof makeWASocket>,
-    jid: string,
-    msg: proto.IWebMessageInfo
-): Promise<void> {
+async function handleQuestion(userMessage: string, sock: WASocket, jid: string, msg: proto.IWebMessageInfo): Promise<void> {
     try {
-        const response = await callApi<MessageResponse>('/ask', 'POST', {
-            question: userMessage,
-        });
+        const response = await callApi<MessageResponse>('/ask', 'POST', { question: userMessage });
 
         if (response.chart) {
             try {
@@ -296,7 +281,7 @@ async function handleQuestion(
                     { quoted: msg }
                 );
                 await react(sock, jid, msg.key, '📊');
-            } catch (_chartError) {
+            } catch (chartError) {
                 await sock.sendMessage(
                     jid,
                     { text: `${response.analysis}\n\n(Chart unavailable)` },
@@ -311,23 +296,20 @@ async function handleQuestion(
         if (analysis.length > 4000) {
             analysis = analysis.substring(0, 4000) + '\n\n...(truncated)';
         }
-
+        
         const chunks = splitMessage(analysis, 3000);
         for (let i = 0; i < chunks.length; i++) {
             await sock.sendMessage(jid, { text: chunks[i] }, { quoted: msg });
             if (i < chunks.length - 1) await sleep(500);
         }
         await react(sock, jid, msg.key, '✅');
+
     } catch (error) {
         const err = error as Error;
         console.error(`❌ Error: ${err.message}`);
         await sock.sendMessage(
             jid,
-            {
-                text: err.message.includes('API server')
-                    ? `❌ ${err.message}`
-                    : '❌ Error processing your request.',
-            },
+            { text: err.message.includes('API server') ? `❌ ${err.message}` : '❌ Error processing your request.' },
             { quoted: msg }
         );
         await react(sock, jid, msg.key, '❌');
@@ -340,60 +322,47 @@ async function handleQuestion(
 
 async function handleMessage(
     msg: proto.IWebMessageInfo,
-    sock: ReturnType<typeof makeWASocket>
+    sock: WASocket
 ): Promise<void> {
     try {
         if (!msg.message) return;
         if (msg.key.fromMe) return;
 
         const jid = msg.key.remoteJid;
-        if (
-            !jid ||
-            jid === 'status@broadcast' ||
-            jid.endsWith('@g.us') ||
-            jid.endsWith('@broadcast')
-        ) {
-            return;
-        }
+        if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@broadcast')) return;
 
         const userMessage = extractText(msg).trim();
         if (!userMessage) return;
 
-        // For DMs the sender IS the remoteJid; extract numeric part
         const senderNumeric = stripSuffix(jid);
-        const authorized = checkAuthorized(
+        const authorized = isAuthorized(
             senderNumeric,
             config.mainNumber,
             config.whatsappLid
         );
 
         console.log(`\n📨 From: ${senderNumeric}`);
-        console.log(
-            `📝 Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`
-        );
+        console.log(`📝 Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
 
         if (!authorized) {
             console.log('⛔ Unauthorized');
-            await sock.sendMessage(
-                jid,
-                { text: '⛔ This number is not authorized.' },
-                { quoted: msg }
-            );
+            await sock.sendMessage(jid, { text: '⛔ This number is not authorized.' }, { quoted: msg });
             return;
         }
 
         console.log('✅ Authorized');
         await react(sock, jid, msg.key, '⏳');
 
-        // Manual SMS entry: PIN-SMS_CONTENT
+        // Check for manual SMS entry (PIN-SMS_CONTENT)
         if (userMessage.startsWith(config.whatsappPin + '-')) {
             const smsContent = userMessage.substring(config.whatsappPin.length + 1).trim();
             await handleManualSms(smsContent, sock, jid, msg);
             return;
         }
 
-        // Normal question
+        // Handle normal question
         await handleQuestion(userMessage, sock, jid, msg);
+
     } catch (error) {
         const err = error as Error;
         console.error(`❌ Fatal: ${err.message}`);
@@ -401,8 +370,8 @@ async function handleMessage(
             if (msg.key.remoteJid) {
                 await sock.sendMessage(msg.key.remoteJid, { text: '❌ Something went wrong.' });
             }
-        } catch (_e) {
-            // ignore
+        } catch (e) {
+            // Ignore
         }
     }
 }
@@ -411,141 +380,141 @@ async function handleMessage(
 // BOT STARTUP
 // ──────────────────────────────────────────────────────────────
 
-async function startBaileys(): Promise<ReturnType<typeof makeWASocket>> {
+async function startBaileys(): Promise<WASocket> {
     console.log('🔄 Initializing WhatsApp client...\n');
 
-    const { state, saveCreds } = await useMultiFileAuthState(config.authPath);
-    console.log('✅ Auth state loaded');
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(config.authPath);
+        console.log('✅ Auth state loaded');
 
-    const sock = makeWASocket({
-        auth: state,
-        // Baileys expects a pino logger; cast to avoid version-mismatch type noise
-        logger: logger as Parameters<typeof makeWASocket>[0]['logger'],
-        browser: ['Ubuntu', 'Chrome', '120.0.0'],
-        syncFullHistory: false,
-        markOnlineOnConnect: false,
-        generateHighQualityLinkPreview: false,
-    });
+        const sock = makeWASocket({
+            auth: state,
+            logger,
+            browser: ['Ubuntu', 'Chrome', '120.0.0'],
+            syncFullHistory: false,
+            markOnlineOnConnect: false,
+            generateHighQualityLinkPreview: false,
+        });
 
-    currentSock = sock;
-    console.log('✅ Socket created');
+        currentSock = sock;
+        console.log('✅ Socket created');
 
-    // Save credentials on update
-    sock.ev.on('creds.update', saveCreds);
+        // ──────────────────────────────────────────────────────────
+        // CREDENTIALS UPDATE
+        // ──────────────────────────────────────────────────────────
+        sock.ev.on('creds.update', saveCreds);
 
-    // ──────────────────────────────────────────────────────────
-    // PAIRING CODE (if enabled and not yet registered)
-    // ──────────────────────────────────────────────────────────
-    if (config.usePairingCode && !state.creds.registered) {
-        try {
-            console.log('📱 Requesting pairing code...');
-            // Give socket a moment to open the WS connection before requesting
-            await sleep(3000);
-            const code = await sock.requestPairingCode(config.mainNumber);
-            startupResolved = true;
-            console.log('\n╔════════════════════════════════════════════════════════╗');
-            console.log('║          ENTER THIS PAIRING CODE ON YOUR PHONE         ║');
-            console.log('║  Settings → Linked Devices → Link with phone number    ║');
-            console.log('╚════════════════════════════════════════════════════════╝\n');
-            console.log(`🔑 Pairing code: ${code}\n`);
-            console.log('⏳ Waiting for connection...\n');
-        } catch (e) {
-            const err = e as Error;
-            console.error(`❌ Failed to request pairing code: ${err.message}`);
-            // Don't exit — fall through so connection.update can still fire
-            startupResolved = true;
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────
-    // CONNECTION UPDATE
-    // ──────────────────────────────────────────────────────────
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        // QR code path
-        if (qr && !config.usePairingCode) {
-            startupResolved = true;
-            console.log('\n╔════════════════════════════════════════════════════════╗');
-            console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
-            console.log('║  Settings → Linked Devices → Link a Device             ║');
-            console.log('╚════════════════════════════════════════════════════════╝\n');
-
+        // ──────────────────────────────────────────────────────────
+        // PAIRING CODE (if enabled)
+        // ──────────────────────────────────────────────────────────
+        if (config.usePairingCode && !state.creds.registered) {
             try {
-                qrcodeTerminal.generate(qr, { small: true });
+                console.log('📱 Requesting pairing code...');
+                await delay(3000);
+                const code = await sock.requestPairingCode(config.mainNumber);
+                startupResolved = true;
+                console.log('\n╔════════════════════════════════════════════════════════╗');
+                console.log('║          ENTER THIS PAIRING CODE ON YOUR PHONE         ║');
+                console.log('║  Settings → Linked Devices → Link with phone number    ║');
+                console.log('╚════════════════════════════════════════════════════════╝\n');
+                console.log(`🔑 Pairing code: ${code}\n`);
+                console.log('⏳ Waiting for connection...\n');
             } catch (e) {
-                console.warn(`⚠️  QR rendering error: ${(e as Error).message}`);
+                const err = e as Error;
+                console.error(`❌ Failed to request pairing code: ${err.message}`);
+                startupResolved = true; // Prevent timeout
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────
+        // CONNECTION UPDATE HANDLER
+        // ──────────────────────────────────────────────────────────
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
+
+            if (qr && !config.usePairingCode) {
+                startupResolved = true;
+                console.log('\n╔════════════════════════════════════════════════════════╗');
+                console.log('║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║');
+                console.log('║  Settings → Linked Devices → Link a Device             ║');
+                console.log('╚════════════════════════════════════════════════════════╝\n');
+                
+                try {
+                    console.log('📱 QR Code (scan with WhatsApp):');
+                    qrcodeTerminal.generate(qr, { small: true });
+                } catch (e) {
+                    console.warn(`⚠️  QR rendering error: ${(e as Error).message}`);
+                }
+                
+                const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+                console.log('\n📱 QR Code data (if above is not visible):');
+                console.log(qr.substring(0, 100) + '...');
+                console.log(`\n🔗 Or open this link on your phone browser:\n${qrServerUrl}\n`);
+                console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
             }
 
-            const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-            console.log('\n📱 Or open this link on your phone if QR above is unclear:');
-            console.log(`🔗 ${qrServerUrl}\n`);
-            console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
-        }
+            if (connection === 'open') {
+                startupResolved = true;
+                isConnected = true;
+                console.log('\n╔═══════════════════════════════════════════════════════╗');
+                console.log('║              ✅ BOT IS ONLINE!                        ║');
+                console.log('╚═══════════════════════════════════════════════════════╝');
+                console.log(`🤖 Bot WhatsApp ID : ${sock.user?.id || 'Unknown'}`);
+                console.log(`🔗 API             : ${config.apiUrl}`);
+                console.log('\n💬 Commands: Summary, Help, Bar chart, Pie chart, Trend');
+                console.log(`📝 Manual entry: ${config.whatsappPin}-SMS_CONTENT\n`);
+            }
 
-        // Connected
-        if (connection === 'open') {
-            startupResolved = true;
-            isConnected = true;
-            console.log('\n╔═══════════════════════════════════════════════════════╗');
-            console.log('║              ✅ BOT IS ONLINE!                        ║');
-            console.log('╚═══════════════════════════════════════════════════════╝');
-            console.log(`🤖 Bot WhatsApp ID : ${sock.user?.id ?? 'Unknown'}`);
-            console.log(`🔗 API             : ${config.apiUrl}`);
-            console.log('\n💬 Commands: Summary, Help, Bar chart, Pie chart, Trend');
-            console.log(`📝 Manual entry: ${config.whatsappPin}-SMS_CONTENT\n`);
-        }
-
-        // Disconnected
-        if (connection === 'close') {
-            isConnected = false;
-
-            const statusCode =
-                lastDisconnect?.error instanceof Boom
+            if (connection === 'close') {
+                isConnected = false;
+                const statusCode = lastDisconnect?.error instanceof Boom
                     ? lastDisconnect.error.output?.statusCode
                     : undefined;
+                const loggedOut = statusCode === DisconnectReason.loggedOut;
 
-            const loggedOut = statusCode === DisconnectReason.loggedOut;
-
-            if (loggedOut) {
-                console.error('\n❌ Session logged out. Clearing auth so you can re-pair.');
-                console.error(
-                    '   Exiting; container restart will show a fresh QR/pairing code.\n'
-                );
-                try {
-                    fs.rmSync(config.authPath, { recursive: true, force: true });
-                } catch (e) {
-                    console.warn(`⚠️  Could not clear auth: ${(e as Error).message}`);
-                }
-                process.exit(1);
-            }
-
-            if (shuttingDown) return;
-
-            console.log(
-                `\n⚠️ Disconnected (status ${statusCode ?? 'unknown'}). Reconnecting in 5s...\n`
-            );
-            setTimeout(() => {
-                startBaileys().catch((err) => {
-                    console.error(`❌ Reconnect failed: ${(err as Error).message}`);
+                if (loggedOut) {
+                    console.error('\n❌ Session logged out. Clearing auth so you can re-pair.');
+                    console.error('   Exiting; the container restart will show a fresh QR/pairing code.\n');
+                    try {
+                        fs.rmSync(config.authPath, { recursive: true, force: true });
+                    } catch (e) {
+                        console.warn(`⚠️  Could not clear auth: ${(e as Error).message}`);
+                    }
                     process.exit(1);
-                });
-            }, 5000);
-        }
-    });
+                }
 
-    // ──────────────────────────────────────────────────────────
-    // MESSAGE HANDLER
-    // ──────────────────────────────────────────────────────────
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
-        for (const msg of messages) {
-            await handleMessage(msg, sock);
-        }
-    });
+                if (shuttingDown) return;
 
-    console.log('✅ Bot is ready and waiting for messages...\n');
-    return sock;
+                console.log(`\n⚠️ Disconnected (status ${statusCode ?? 'unknown'}). Reconnecting in 5s...\n`);
+                setTimeout(() => {
+                    startBaileys().catch((err) => {
+                        console.error(`❌ Reconnect failed: ${(err as Error).message}`);
+                        process.exit(1);
+                    });
+                }, 5000);
+            }
+        });
+
+        // ──────────────────────────────────────────────────────────
+        // MESSAGE HANDLER
+        // ──────────────────────────────────────────────────────────
+        sock.ev.on('messages.upsert', async ({ messages, type }) => {
+            if (type !== 'notify') return;
+
+            for (const msg of messages) {
+                await handleMessage(msg, sock);
+            }
+        });
+
+        console.log('✅ Bot is ready and waiting for messages...\n');
+        return sock;
+
+    } catch (error) {
+        const err = error as Error;
+        console.error(`❌ Failed to start Baileys: ${err.message}`);
+        console.error(err.stack);
+        throw error;
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -553,32 +522,27 @@ async function startBaileys(): Promise<ReturnType<typeof makeWASocket>> {
 // ──────────────────────────────────────────────────────────────
 
 function setupDailySummary(): void {
-    const mainNumericStr = stripSuffix(config.mainNumber);
-    // Baileys uses @s.whatsapp.net for individual contacts
-    const DAILY_SUMMARY_JID = config.mainNumber.includes('@')
-        ? config.mainNumber
-        : `${mainNumericStr}@s.whatsapp.net`;
+    const mainNumericGlobal = stripSuffix(config.mainNumber);
+    const DAILY_SUMMARY_JID = config.mainNumber.includes('@') 
+        ? config.mainNumber 
+        : `${mainNumericGlobal}@s.whatsapp.net`;
 
-    cron.schedule(
-        '0 21 * * *',
-        async () => {
-            console.log('\n⏰ Running scheduled daily summary job (21:00 Africa/Nairobi)...');
-            if (!currentSock || !isConnected) {
-                console.warn('⚠️  Skipped: bot is not currently connected.\n');
-                return;
-            }
-            try {
-                const response = await callApi<DailySummaryResponse>('/daily-summary');
-                const summaryText = response?.summary || '⚠️ Could not generate summary.';
-                await currentSock.sendMessage(DAILY_SUMMARY_JID, { text: summaryText });
-                console.log('✅ Daily summary sent successfully\n');
-            } catch (error) {
-                const err = error as Error;
-                console.error(`❌ Daily summary cron error: ${err.message}\n`);
-            }
-        },
-        { timezone: 'Africa/Nairobi' }
-    );
+    cron.schedule('0 21 * * *', async () => {
+        console.log('\n⏰ Running scheduled daily summary job (21:00 Africa/Nairobi)...');
+        if (!currentSock || !isConnected) {
+            console.warn('⚠️  Skipped: bot is not currently connected.\n');
+            return;
+        }
+        try {
+            const response = await callApi<DailySummaryResponse>('/daily-summary');
+            const summaryText = response?.summary || '⚠️ Could not generate summary.';
+            await currentSock.sendMessage(DAILY_SUMMARY_JID, { text: summaryText });
+            console.log('✅ Daily summary sent successfully\n');
+        } catch (error) {
+            const err = error as Error;
+            console.error(`❌ Daily summary cron error: ${err.message}\n`);
+        }
+    }, { timezone: 'Africa/Nairobi' });
 
     console.log('📅 Daily summary scheduled for 9:00 PM Africa/Nairobi every day\n');
 }
@@ -586,7 +550,7 @@ function setupDailySummary(): void {
 setupDailySummary();
 
 // ──────────────────────────────────────────────────────────────
-// GRACEFUL SHUTDOWN
+// SHUTDOWN HANDLERS
 // ──────────────────────────────────────────────────────────────
 
 async function shutdown(signal: string): Promise<void> {
@@ -595,18 +559,16 @@ async function shutdown(signal: string): Promise<void> {
     console.log(`\n👋 Received ${signal}, shutting down...`);
     try {
         if (currentSock) {
-            // ws.close() is safe on all Baileys versions
-            currentSock.ws?.close();
+            await currentSock.end(undefined);
         }
     } catch (e) {
         console.warn(`⚠️  Error during shutdown: ${(e as Error).message}`);
     }
-    // Give 3 s for in-flight messages to drain, then exit
-    setTimeout(() => process.exit(0), 3000);
+    process.exit(0);
 }
 
-process.on('SIGINT', () => { void shutdown('SIGINT'); });
-process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 process.on('unhandledRejection', (reason) => {
     console.error('❌ Unhandled promise rejection:', reason);
@@ -614,11 +576,11 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught exception:', err);
-    void shutdown('uncaughtException');
+    shutdown('uncaughtException');
 });
 
 // ──────────────────────────────────────────────────────────────
-// BOOTSTRAP
+// START THE BOT
 // ──────────────────────────────────────────────────────────────
 
 console.log('🚀 Starting WhatsApp client...\n');

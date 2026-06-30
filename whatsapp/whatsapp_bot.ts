@@ -1,6 +1,7 @@
 import {
     makeWASocket,
     useMultiFileAuthState,
+    fetchLatestBaileysVersion,
     DisconnectReason,
     delay,
     proto,
@@ -387,9 +388,24 @@ async function startBaileys(): Promise<WASocket> {
         const { state, saveCreds } = await useMultiFileAuthState(config.authPath);
         console.log('✅ Auth state loaded');
 
+        // WhatsApp servers reject connections that report a stale/outdated
+        // WA Web protocol version with a 405 "Connection Failure" — fetch
+        // the live version on every startup instead of relying on the
+        // version baked into the installed Baileys package.
+        let waVersion: [number, number, number];
+        try {
+            const { version, isLatest } = await fetchLatestBaileysVersion();
+            waVersion = version;
+            console.log(`✅ Using WA web version: ${version.join('.')} (latest: ${isLatest})`);
+        } catch (e) {
+            console.warn(`⚠️  Could not fetch latest WA version, using Baileys default: ${(e as Error).message}`);
+            waVersion = [2, 3000, 1023223821];
+        }
+
         const sock = makeWASocket({
             auth: state,
             logger,
+            version: waVersion,
             browser: ['Ubuntu', 'Chrome', '120.0.0'],
             syncFullHistory: false,
             markOnlineOnConnect: false,

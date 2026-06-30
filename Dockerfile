@@ -1,20 +1,24 @@
 # PesaPilot — Baileys (TypeScript) WhatsApp bot + FastAPI dashboard API
-# No Chromium/Puppeteer needed: Baileys talks to WhatsApp over a websocket.
+# Shipped image: Baileys only. No Chromium/Puppeteer needed in production —
+# Baileys talks to WhatsApp over a websocket, not a headless browser.
+# (whatsapp-web.js scripts in package.json remain available for local dev only.)
 FROM python:3.10-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV DEBIAN_FRONTEND=noninteractive
 
 # ----------------------------------------------------------------
-# System deps: curl (healthcheck) + Node.js 20.x
+# System deps: curl (healthcheck) + fontconfig (chart fonts) + Node.js 20.x
 # ----------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     gnupg \
+    fontconfig \
+    fonts-noto-color-emoji \
+    fonts-dejavu \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && fc-cache -fv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -23,8 +27,9 @@ RUN node --version && npm --version
 WORKDIR /app
 
 # ----------------------------------------------------------------
-# Entrypoint (Baileys-specific — entrypoint.sh in repo is for the
-# legacy whatsapp-web.js bot and is intentionally NOT used here)
+# Entrypoint (Baileys only — entrypoint.sh stays in the repo as a
+# local-dev/manual fallback for whatsapp-web.js, but is intentionally
+# NOT copied into the shipped image)
 # ----------------------------------------------------------------
 COPY entrypoint.baileys.sh /app/entrypoint.baileys.sh
 RUN chmod +x /app/entrypoint.baileys.sh
@@ -37,8 +42,10 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # ----------------------------------------------------------------
-# Node deps (install all, including devDependencies, since we
-# need typescript/ts-node to build the Baileys bot)
+# Node deps (full install incl. devDependencies for the tsc build step;
+# puppeteer/whatsapp-web.js get installed here too since they're still
+# in package.json for local dev, but they are NEVER invoked at runtime
+# in this image since only dist/whatsapp_bot.js gets executed)
 # ----------------------------------------------------------------
 COPY package*.json tsconfig.json ./
 RUN npm install \
@@ -63,13 +70,6 @@ RUN mkdir -p data/raw data/processed data/sessions \
     && chmod -R 777 .baileys_auth \
     && chmod -R 777 data
 
-RUN apt-get update && apt-get install -y \
-    fonts-noto-color-emoji \
-    fonts-dejavu \
-    && fc-cache -fv \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV NODE_ENV=production \
-    BAILEYS_AUTH_PATH=/app/.baileys_auth
+ENV NODE_ENV=production
 
 ENTRYPOINT ["./entrypoint.baileys.sh"]

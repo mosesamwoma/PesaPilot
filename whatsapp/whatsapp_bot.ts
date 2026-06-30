@@ -1,11 +1,12 @@
 import {
     makeWASocket,
     useMultiFileAuthState,
+    fetchLatestBaileysVersion,
     DisconnectReason,
     delay,
-    WASocket,
     proto,
 } from '@whiskeysockets/baileys';
+import type { WASocket } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -185,22 +186,14 @@ function splitMessage(text: string, maxLength: number): string[] {
 function isAuthorized(
     senderNumeric: string,
     mainNumber: string,
-    lidNumber?: string,
-    remoteJidAlt?: string | null
+    lidNumber?: string
 ): boolean {
     const mainNumeric = stripSuffix(mainNumber);
     const lidNumeric = lidNumber ? stripSuffix(lidNumber) : '';
-    
+
     if (mainNumeric && senderNumeric === mainNumeric) return true;
     if (lidNumeric && senderNumeric === lidNumeric) return true;
-    
-    if (remoteJidAlt) {
-        const altNumeric = stripSuffix(remoteJidAlt);
-        if ((mainNumeric && altNumeric === mainNumeric) || (lidNumeric && altNumeric === lidNumeric)) {
-            return true;
-        }
-    }
-    
+
     return false;
 }
 
@@ -346,8 +339,7 @@ async function handleMessage(
         const authorized = isAuthorized(
             senderNumeric,
             config.mainNumber,
-            config.whatsappLid,
-            msg.key.remoteJidAlt || null
+            config.whatsappLid
         );
 
         console.log(`\n📨 From: ${senderNumeric}`);
@@ -396,9 +388,24 @@ async function startBaileys(): Promise<WASocket> {
         const { state, saveCreds } = await useMultiFileAuthState(config.authPath);
         console.log('✅ Auth state loaded');
 
+        // WhatsApp servers reject connections that report a stale/outdated
+        // WA Web protocol version with a 405 "Connection Failure" — fetch
+        // the live version on every startup instead of relying on the
+        // version baked into the installed Baileys package.
+        let waVersion: [number, number, number];
+        try {
+            const { version, isLatest } = await fetchLatestBaileysVersion();
+            waVersion = version;
+            console.log(`✅ Using WA web version: ${version.join('.')} (latest: ${isLatest})`);
+        } catch (e) {
+            console.warn(`⚠️  Could not fetch latest WA version, using Baileys default: ${(e as Error).message}`);
+            waVersion = [2, 3000, 1023223821];
+        }
+
         const sock = makeWASocket({
             auth: state,
             logger,
+            version: waVersion,
             browser: ['Ubuntu', 'Chrome', '120.0.0'],
             syncFullHistory: false,
             markOnlineOnConnect: false,

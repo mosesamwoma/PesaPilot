@@ -26,10 +26,11 @@ services:
       - WHATSAPP_LID=${WHATSAPP_LID}
       - WHATSAPP_PIN=${WHATSAPP_PIN}
       
-      # Puppeteer
-      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-      
+      # Puppeteer/Chromium not used (Baileys connects via websocket, no browser)
+
+      # Baileys auth storage path (inside the container)
+      - BAILEYS_AUTH_PATH=/app/.baileys_auth
+
       # Node
       - NODE_ENV=production
       - NODE_OPTIONS=--max-old-space-size=2048
@@ -41,7 +42,7 @@ services:
       - TZ=Africa/Nairobi
     volumes:
       - ./data:/app/data
-      - ./sessions:/app/.wwebjs_auth
+      - ./sessions:/app/.baileys_auth
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s

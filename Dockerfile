@@ -1,83 +1,66 @@
+# PesaPilot — Baileys (TypeScript) WhatsApp bot + FastAPI dashboard API
+# No Chromium/Puppeteer needed: Baileys talks to WhatsApp over a websocket.
 FROM python:3.10-slim
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
+# ----------------------------------------------------------------
+# System deps: curl (healthcheck) + Node.js 20.x
+# ----------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     curl \
-    wget \
-    gnupg \
     ca-certificates \
-    chromium \
-    chromium-driver \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcb-dri3-0 \
-    libxcb-present0 \
-    libxcb-randr0 \
-    libxcb-shm0 \
-    libxcb-sync1 \
-    libxcb-xfixes0 \
-    libxcb-keysyms1 \
-    libxcb-icccm4 \
-    libxcb-image0 \
-    libxcb-shape0 \
-    libxcb-util1 \
-    libxcb-xkb1 \
-    libxkbcommon-x11-0 \
-    libglib2.0-0 \
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxss1 \
-    libgbm1 \
-    libasound2 \
-    libxrandr2 \
-    libxinerama1 \
-    libxi6 \
-    libxcursor1 \
-    libxext6 \
-    libxdamage1 \
-    libxfixes3 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libxcomposite1 \
-    libxshmfence1 \
-    libgtk-3-0 \
-    libgdk-pixbuf-2.0-0 \
-    fonts-liberation \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && apt-get clean
-
-RUN chromium --version && node --version && npm --version
+RUN node --version && npm --version
 
 WORKDIR /app
 
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# ----------------------------------------------------------------
+# Entrypoint (Baileys-specific — entrypoint.sh in repo is for the
+# legacy whatsapp-web.js bot and is intentionally NOT used here)
+# ----------------------------------------------------------------
+COPY entrypoint.baileys.sh /app/entrypoint.baileys.sh
+RUN chmod +x /app/entrypoint.baileys.sh
 
+# ----------------------------------------------------------------
+# Python deps
+# ----------------------------------------------------------------
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY package*.json ./
-RUN npm install --production \
+# ----------------------------------------------------------------
+# Node deps (install all, including devDependencies, since we
+# need typescript/ts-node to build the Baileys bot)
+# ----------------------------------------------------------------
+COPY package*.json tsconfig.json ./
+RUN npm install \
     && npm cache clean --force
 
+# ----------------------------------------------------------------
+# App source
+# ----------------------------------------------------------------
 COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
 COPY run.py .
 
+# Compile whatsapp_bot.ts -> dist/whatsapp_bot.js (Baileys)
+RUN npm run build
+
+# Drop devDependencies now that the build is done, to slim the image
+RUN npm prune --omit=dev \
+    && npm cache clean --force
+
 RUN mkdir -p data/raw data/processed data/sessions \
-    && mkdir -p .wwebjs_auth \
-    && chmod -R 777 .wwebjs_auth \
+    && mkdir -p .baileys_auth \
+    && chmod -R 777 .baileys_auth \
     && chmod -R 777 data
 
 RUN apt-get update && apt-get install -y \
@@ -86,4 +69,7 @@ RUN apt-get update && apt-get install -y \
     && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENV NODE_ENV=production \
+    BAILEYS_AUTH_PATH=/app/.baileys_auth
+
+ENTRYPOINT ["./entrypoint.baileys.sh"]

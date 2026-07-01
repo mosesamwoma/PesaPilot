@@ -146,7 +146,7 @@ Open two terminals:
 
 ```bash
 # Terminal 1 — FastAPI backend
-npm run api
+uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000
 
 # Terminal 2 — WhatsApp bot (whatsapp-web.js + Chromium)
 npm run dev:wwebjs
@@ -160,7 +160,7 @@ Session is saved under `.wwebjs_auth/` — no rescan on normal restarts.
 
 ```bash
 # Terminal 1 — FastAPI backend
-npm run api
+uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000
 
 # Terminal 2 — WhatsApp bot (Baileys, no Chromium)
 npm run dev
@@ -180,8 +180,13 @@ npm run dev:wwebjs   # whatsapp-web.js bot via nodemon
 npm run build        # Compile whatsapp_bot.ts → dist/whatsapp_bot.js
 npm start            # Run compiled Baileys bot: node dist/whatsapp_bot.js
 npm start:wwebjs     # Run whatsapp-web.js bot: node whatsapp/whatsapp_bot.js
-npm run api          # Start FastAPI: uvicorn whatsapp.whatsapp_api:app --reload
 npm run clean        # Remove dist/ and auth session folders
+```
+
+To start the FastAPI backend:
+
+```bash
+uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000
 ```
 
 ---

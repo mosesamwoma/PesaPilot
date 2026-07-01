@@ -1,30 +1,50 @@
 # PesaPilot
 
-AI-powered M-Pesa financial assistant for Kenya. It parses your SMS transaction backup, stores it in Supabase, and lets you explore your spending — and get real Kenyan financial advice — through a Streamlit dashboard or by just texting it on WhatsApp.
+AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction backup, stores it in Supabase, and lets you explore your spending — and get real Kenyan financial advice — through a Streamlit dashboard or by texting it on WhatsApp.
 
 ---
 
 ## Features
 
-- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, spending heatmap, amount-distribution histogram, and AI-generated insights
-- **Forecast** — Prophet-powered 7-day and 30-day spending projections with a confidence band, trend classification (Increasing / Decreasing / Stable), risk level (Low / Moderate / High), and a Groq-written plain-English summary of the projection
-- **Ask AI** — ask questions about your spending in plain English; Groq turns them into SQL, runs it, and explains the result, grounded in your actual numbers (totals, % per category, top merchants, recent trend, anomalies)
-- **Budget plans** — ask for a "budget plan" and get a KES-denominated needs/wants/savings split sized to your real spending, plus one specific category to trim
-- **Investment guidance** — ask "what should I invest in?" and get a recommendation across Kenyan options (Sacco, Money Market Fund, Treasury Bills) sized to your actual free cash flow, with a suggested split and one concrete next step
+- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, heatmap, histogram, and AI-generated insights
+- **Forecast** — Prophet-powered 7-day and 30-day spending projections with confidence band, trend classification (Increasing / Decreasing / Stable), risk level (Low / Moderate / High), and a Groq plain-English summary
+- **Ask AI** — ask questions in plain English; Groq turns them into SQL, runs it, and explains the result grounded in your actual numbers
+- **Budget plans** — ask for a "budget plan" and get a KES-denominated needs/wants/savings split sized to your real spending
+- **Investment guidance** — ask "what should I invest in?" and get a Sacco / MMF / T-Bill recommendation sized to your actual free cash flow
 - **Transactions** — filterable, searchable transaction history
 - **Anomalies** — unusually large transactions flagged by z-score
 - **Load Data** — parses SMS Backup & Restore XML exports, auto-categorizes, de-duplicates on reload
 - **WhatsApp Bot** — ask the same questions, get charts, get budget/investment advice, and log SMS manually, all from WhatsApp
-- **Daily summary** — a 9 PM scheduled job (Africa/Nairobi by default) sends an end-of-day spending digest to your WhatsApp
+- **Daily summary** — a 9 PM scheduled job (Africa/Nairobi) sends an end-of-day spending digest to your WhatsApp
+
+---
+
+## WhatsApp Bot — Two Modes
+
+PesaPilot ships with **two WhatsApp bot implementations**. They share the same FastAPI backend and Supabase database — only the WhatsApp connection layer differs.
+
+| | `whatsapp_bot.js` | `whatsapp_bot.ts` |
+|---|---|---|
+| **Library** | whatsapp-web.js | Baileys |
+| **Connection** | Headless Chromium (Puppeteer) | Pure WebSocket |
+| **Use case** | Local development | Docker / VPS (production) |
+| **Memory** | ~300–500 MB (Chromium) | ~80–120 MB |
+| **Auth session** | `.wwebjs_auth/` | `.baileys_auth/` |
+| **npm script** | `npm run dev:wwebjs` | `npm run dev` |
+| **Docker** | ❌ not used | ✅ default |
+
+> **Rule of thumb:** use `whatsapp_bot.js` when developing locally on your own machine. Use `whatsapp_bot.ts` (Baileys) for everything deployed — Docker, VPS, Railway, any server.
+
+---
 
 ## Prerequisites
 
 - Python 3.10+
-- Node.js **20+** (the Dockerfile installs Node 20 LTS; `package.json` requires `>=20.0.0`)
-- A [Supabase](https://supabase.com) project (free tier is fine)
-- A [Groq](https://console.groq.com) API key (free tier is fine)
-- Docker + Docker Compose, if you want to run it containerized
-- A spare WhatsApp-capable number/SIM to run the bot on (you message it from your main number)
+- Node.js 20+ (`package.json` requires `>=20.0.0`)
+- A [Supabase](https://supabase.com) project (free tier works)
+- A [Groq](https://console.groq.com) API key (free tier works)
+- Docker + Docker Compose for VPS/production deployment
+- A spare WhatsApp-capable SIM to run the bot on (you message it from your main number)
 
 ---
 
@@ -39,9 +59,11 @@ python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Node.js (for the WhatsApp bot)
+# Node.js
 npm install
 ```
+
+---
 
 ## 2. Configure environment variables
 
@@ -49,176 +71,245 @@ npm install
 cp .env.example .env
 ```
 
-Then open `.env` and fill in the values below. **Never commit `.env`** — it's already in `.gitignore`.
+Open `.env` and fill in the values. **Never commit `.env`** — it is already in `.gitignore`.
 
 ### Required
 
-The app refuses to start (both locally and in Docker) without these six:
-
 | Variable | Where to get it |
 |---|---|
-| `SUPABASE_URL` | supabase.com/dashboard → Settings → API |
-| `SUPABASE_KEY` | supabase.com/dashboard → Settings → API |
+| `SUPABASE_URL` | supabase.com → Settings → API |
+| `SUPABASE_KEY` | supabase.com → Settings → API |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
-| `WHATSAPP_MAIN_NUMBER` | Your main number, e.g. `254712345678` (country code, no `+`) — the number you'll text the bot **from** |
-| `WHATSAPP_LID` | See "Finding your LID" below |
-| `WHATSAPP_PIN` | Any 4-digit number you choose, e.g. `1234` — used for manual SMS entry |
+| `WHATSAPP_MAIN_NUMBER` | Your main number e.g. `254712345678` (country code, no `+`) — the number you text the bot **from** |
+| `WHATSAPP_PIN` | Any 4-digit number you choose e.g. `1234` — used for manual SMS entry |
 
-**Finding your `WHATSAPP_LID`:** WhatsApp sometimes routes your number through an internal LID instead of the plain number. Run the bot once, send it any message from your main number, and the terminal prints the exact sender ID next to `From:`. Copy that into `.env` as `WHATSAPP_LID`.
-
-### Optional (sensible defaults if omitted)
+### Optional
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `WHATSAPP_LID` | — | WhatsApp sometimes routes your number through an internal LID. Run the bot once, send a message, copy the value printed next to `From:` in the terminal, paste it here |
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot looks for the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | Port FastAPI listens on |
-| `LLM_MODEL` | `llama-3.1-8b-instant` | Groq model used for SQL generation, chat, budgets, and investment advice |
-| `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature — kept warmer than pure SQL-gen tasks so advice reads naturally |
+| `LLM_MODEL` | `llama-3.1-8b-instant` | Groq model |
+| `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature |
 | `LLM_MAX_TOKENS` | `600` | Max tokens per Groq response |
-| `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Chromium binary the bot launches |
-| `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD` | `true` | Skips Puppeteer's own ~280MB Chromium download at install time (we use system Chromium instead) |
 | `NODE_ENV` | `production` | Node runtime mode |
 | `NODE_OPTIONS` | `--max-old-space-size=2048` | Node heap size cap |
-| `PYTHONUNBUFFERED` | `1` | Streams Python logs immediately instead of buffering |
-| `TZ` | `Africa/Nairobi` | Container timezone — affects log timestamps and the 9 PM daily-summary job |
+| `TZ` | `Africa/Nairobi` | Timezone — affects log timestamps and the 9 PM daily-summary cron |
+
+---
 
 ## 3. Create the database schema
 
-1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) → your project → **SQL Editor** → **New Query**
+1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) → your project → **SQL Editor → New Query**
 2. Paste the contents of `scripts/init_db.sql`
 3. Click **Run**
 
-You should see a single row back: `PesaPilot DB ready ✅`. This creates the `transactions` table, indexes, a `run_query(text)` RPC function (the only way the app is allowed to execute AI-generated SQL — it rejects anything that isn't a `SELECT`), and two read-only views (`daily_summary`, `category_summary`) you can query directly from the SQL editor if you want.
+You should see: `PesaPilot DB ready ✅`
 
-## 4. Get your M-Pesa data onto your computer
+This creates the `transactions` table, indexes, a `run_query(text)` RPC function (only `SELECT` is ever allowed through it), and two read-only views (`daily_summary`, `category_summary`).
+
+---
+
+## 4. Get your M-Pesa data
 
 1. Install [SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore) on the phone with your M-Pesa SMS history
-2. **Back Up** → select **SMS** only → save to phone storage or Google Drive
-3. Transfer the resulting XML file to your computer
+2. **Back Up** → select **SMS only** → save to phone storage or Google Drive
+3. Transfer the XML file to your computer
 4. Place it in `data/raw/`
 
-## 5. Load it
+---
+
+## 5. Load data
 
 ```bash
 python run.py load data/raw/your-sms-backup.xml
 ```
 
-Re-running this on the same or an updated file is always safe — transactions are upserted on `transaction_id`, so duplicates are silently skipped/updated rather than duplicated.
+Re-running on the same or updated file is safe — transactions are upserted on `transaction_id`, so duplicates are silently skipped.
 
-## 6. Run it
+---
 
-**Dashboard only (local):**
+## 6. Run locally
+
+### Dashboard only
 
 ```bash
 streamlit run dashboard/app.py
 ```
+
 Open [http://localhost:8501](http://localhost:8501).
 
-**API + WhatsApp bot (two terminals):**
+### API + WhatsApp bot (whatsapp-web.js — local dev)
+
+Open two terminals:
 
 ```bash
 # Terminal 1 — FastAPI backend
-uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000
+npm run api
 
-# Terminal 2 — WhatsApp bot
-npm start
-# (equivalent to: node whatsapp/whatsapp_bot.js)
+# Terminal 2 — WhatsApp bot (whatsapp-web.js + Chromium)
+npm run dev:wwebjs
 ```
 
-A QR code prints in Terminal 2 the first time — scan it (see below). All three — dashboard, API, and bot — can run at once; they share the same Supabase database.
+A QR code prints in Terminal 2 on first run. Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**.
 
-> **Note:** The Streamlit dashboard (`dashboard/app.py`) is for local use only. The Docker image deploys the FastAPI backend and WhatsApp bot only.
+Session is saved under `.wwebjs_auth/` — no rescan on normal restarts.
+
+### API + WhatsApp bot (Baileys TypeScript — also works locally)
+
+```bash
+# Terminal 1 — FastAPI backend
+npm run api
+
+# Terminal 2 — WhatsApp bot (Baileys, no Chromium)
+npm run dev
+```
+
+Session is saved under `.baileys_auth/`.
+
+> The Streamlit dashboard is for local use only and is not included in the Docker image.
+
+---
+
+## npm scripts
+
+```bash
+npm run dev          # Baileys bot via ts-node (auto-restart on save)
+npm run dev:wwebjs   # whatsapp-web.js bot via nodemon
+npm run build        # Compile whatsapp_bot.ts → dist/whatsapp_bot.js
+npm start            # Run compiled Baileys bot: node dist/whatsapp_bot.js
+npm start:wwebjs     # Run whatsapp-web.js bot: node whatsapp/whatsapp_bot.js
+npm run api          # Start FastAPI: uvicorn whatsapp.whatsapp_api:app --reload
+npm run clean        # Remove dist/ and auth session folders
+```
+
+---
+
+## CLI reference
+
+```bash
+python run.py setup                           # Test Supabase connection
+python run.py load data/raw/sms-backup.xml    # Parse + load SMS export
+python run.py ask "what did I spend on rent?" # One-off terminal question
+python run.py dashboard                       # Launch Streamlit dashboard
+```
 
 ---
 
 ## The Forecast page
 
-The 🔮 **Forecast** page uses [Meta Prophet](https://facebook.github.io/prophet/) to project your daily spending forward 7 or 30 days.
+Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spending forward 7 or 30 days.
+
+**Minimum data required:** 14 days of spending history.
 
 **How it works:**
-1. The analyzer pulls up to 180 days of debit transactions from Supabase.
-2. `src/forecasting.py` aggregates them into a daily spending series (zero-filled for days with no spending).
-3. Prophet fits a linear-growth model with weekly seasonality (when ≥ 14 days of data are available) and produces a forecast with an 80% confidence interval.
-4. The result is cached in memory (6-hour TTL, invalidated automatically when new transactions are inserted).
-5. Groq writes a plain-English insight framing the projection as a prediction, not a fact.
+1. Pulls up to 180 days of debit transactions from Supabase
+2. Aggregates into a daily series (zero-filled for no-spend days)
+3. Prophet fits a linear-growth model with weekly seasonality
+4. Result is cached in memory (6-hour TTL, invalidated on new inserts)
+5. Groq writes a plain-English insight framing the projection as a prediction, not a fact
 
-**Minimum data required:** 14 days of spending history. If you have fewer, the page shows a friendly message explaining what is still needed.
+**Trend classification:** Increasing / Decreasing / Stable based on ±7% difference between first and second half of the forecast horizon.
 
-**Trend classification:**
-- **Increasing** — second half of the forecast horizon averages more than 7% above the first half
-- **Decreasing** — second half averages more than 7% below the first half
-- **Stable** — within ±7%
-
-**Risk level:**
-- **High** — projected total more than 25% above your historical daily average × horizon, or daily spending volatility > 0.9
-- **Moderate** — 10–25% above historical pace, or volatility 0.6–0.9
-- **Low** — everything else
+**Risk level:** High (>25% above historical pace or volatility >0.9) / Moderate (10–25% or 0.6–0.9) / Low (everything else).
 
 ---
 
-## WhatsApp bot setup
-
-The bot logs into WhatsApp Web using **whatsapp-web.js** + a headless Chromium, ideally on a spare number, while you send it questions from your **main** number (`WHATSAPP_MAIN_NUMBER` / `WHATSAPP_LID`). Anyone who isn't that number gets a polite refusal.
-
-### Scan the QR code
-
-```
-╔════════════════════════════════════════════════════════╗
-║        SCAN QR CODE WITH YOUR SPARE AIRTEL PHONE       ║
-║  Settings → Linked Devices → Link a Device              ║
-╚════════════════════════════════════════════════════════╝
-```
-
-On the spare phone: **WhatsApp → Settings → Linked Devices → Link a Device**, then scan the ASCII QR code in the terminal. If the ASCII art doesn't scan cleanly (common over SSH/cloud log viewers), the bot also prints a fallback `https://api.qrserver.com/...` link that renders the same QR as an image you can open on the phone instead. The bot waits up to two minutes for a scan before regenerating.
-
-Your session is saved under `.wwebjs_auth/` (Docker: the `sessions/` bind mount) — you won't be asked to scan again on normal restarts.
-
-Anyone texting the bot's number who isn't `WHATSAPP_MAIN_NUMBER`/`WHATSAPP_LID` gets: *"⛔ This number is not authorized."*
-
-### What you can ask it
+## What you can ask the bot
 
 | You send | What happens |
 |---|---|
-| `bar chart` / `pie chart` / `trend` / `heatmap` / `merchants` / `histogram` | Instant chart, rendered as an image |
-| `What did I spend on food?` | Plain-English answer with KES + % breakdown, grounded in your real transactions |
-| `Give me a budget plan` | A needs/wants/savings split in KES, one category to trim, where to park the savings bucket |
-| `What should I invest in?` | A Sacco / Money Market Fund / Treasury Bill recommendation sized to your actual surplus, with a suggested split |
-| `forecast` / `spending forecast` / `predict my spending` | 7-day spending forecast with trend and risk level |
+| `bar chart` / `pie chart` / `trend` / `heatmap` / `merchants` / `histogram` | Chart rendered and sent as an image |
+| `What did I spend on food?` | Plain-English answer with KES + % breakdown |
+| `Give me a budget plan` | Needs/wants/savings split in KES, one category to trim |
+| `What should I invest in?` | Sacco / MMF / T-Bill recommendation sized to your surplus |
+| `forecast` / `forecast 30 days` | Spending forecast with trend, risk level, and AI summary |
 | `Summary` / `Daily summary` / `Today` | Period or daily financial digest |
-| `help` | Full list of supported commands |
-| `1234-MJ7XK2P9QD Confirmed. You have sent...` | Manual SMS entry: `PIN-PASTE_SMS_HERE` |
+| `help` | Full command list |
+| `1234-MJ7XK2P9 Confirmed. You have sent...` | Manual SMS: `PIN-PASTE_SMS_HERE` |
+
+Anyone texting the bot who isn't `WHATSAPP_MAIN_NUMBER` / `WHATSAPP_LID` gets: *⛔ This number is not authorized.*
 
 ---
 
-## CLI reference (`run.py`)
+## Docker (VPS / Production)
+
+> **The Docker image uses Baileys (`whatsapp_bot.ts`) exclusively.**
+> Baileys connects to WhatsApp over a pure WebSocket — no Chromium, no Puppeteer, no browser needed. This is why the Docker image is lean (~80 MB Node footprint vs ~500 MB with Chromium).
+>
+> `whatsapp_bot.js` (whatsapp-web.js) is available for local development only and is never invoked inside the container.
+
+The container runs **both the FastAPI backend and the Baileys bot together** — no separate bot host needed.
+
+### Build and run
 
 ```bash
-python run.py setup                          # Test the Supabase connection
-python run.py load data/raw/sms-backup.xml    # Parse + load an SMS export
-python run.py ask "what did I spend on rent?" # Ask a one-off question from the terminal
-python run.py dashboard                       # Launch the Streamlit dashboard
+docker compose up -d --build
+docker compose logs -f pesapilot     # watch startup + QR code
 ```
 
-## npm scripts
+- Health check: `http://YOUR_VPS_IP:8000/health`
+
+### What's persisted
+
+| Volume | Container path | Purpose |
+|---|---|---|
+| `baileys_auth` | `/app/.baileys_auth` | Baileys session — survives restarts, no rescan needed |
+| `pesapilot_data` | `/app/data` | Raw/processed transaction files |
+
+Back them up:
 
 ```bash
-npm start    # node whatsapp/whatsapp_bot.js
-npm run dev  # same, via nodemon (auto-restart on file changes; dev only)
+docker run --rm \
+  -v pesapilot_baileys_auth:/baileys \
+  -v pesapilot_pesapilot_data:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/pesapilot-backup-$(date +%F).tar.gz /baileys /data
+```
+
+### Management
+
+```bash
+docker compose ps                        # status
+docker compose logs -f pesapilot         # live logs
+docker compose restart pesapilot         # restart (session persists)
+docker compose down                      # stop and remove container
+docker compose up -d --build             # rebuild after code change
+
+# Force a new QR scan (wipes Baileys session)
+docker compose exec pesapilot rm -rf /app/.baileys_auth
+docker compose restart pesapilot
+docker compose logs -f pesapilot
+```
+
+### Test the API
+
+```bash
+curl http://YOUR_VPS_IP:8000/health
+
+curl -X POST http://YOUR_VPS_IP:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What did I spend on food?"}'
+
+curl -X POST http://YOUR_VPS_IP:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Give me a budget plan"}'
 ```
 
 ---
 
 ## How the AI advice is grounded
 
-Every question that reaches the AI — chat, budget plan, or investment advice — is paired with real context pulled live from Supabase before the prompt is sent to Groq:
+Every question sent to Groq is paired with live context pulled from Supabase first:
 
 - Summary stats (total spent, received, balance, transaction count)
-- Top spending categories, with both KES amounts and percentages
+- Top spending categories with KES amounts and percentages
 - Top merchants/recipients
 - Recent daily spending trend
-- Any detected anomalies
+- Detected anomalies
 
-This context sits underneath a Kenya-specific system prompt (in `src/groq_client.py`) that enforces seven rules on every response: show amounts *and* percentages, compare to averages, give one specific actionable tip, reference real Kenyan options (Sacco, MMF, Treasury Bills) where relevant, recommend a concrete budget split, nudge toward an emergency fund, and celebrate small wins. It never recommends Fuliza or names a specific bank or provider.
+This sits under a Kenya-specific system prompt (`src/groq_client.py`) that enforces: show amounts and percentages, compare to averages, give one actionable tip, reference real Kenyan options (Sacco, MMF, Treasury Bills), recommend a budget split, nudge toward an emergency fund, celebrate small wins. It never recommends Fuliza or names a specific bank.
 
 ---
 
@@ -228,74 +319,9 @@ This context sits underneath a Kenya-specific system prompt (in `src/groq_client
 python -m pytest tests/ -v
 ```
 
-38 tests across `test_parser.py` (17), `test_analyzer.py` (10), and `test_database.py` (11).
+38 tests across `test_parser.py` (17), `test_analyzer.py` (10), `test_database.py` (11).
 
-> **Heads up:** unlike the parser tests, `test_analyzer.py` and `test_database.py` are **not mocked** — they call your real Supabase project and your real Groq API key, and `test_insert_and_retrieve` writes one row (`transaction_id = TEST0000001`) into your live `transactions` table. Don't point this at a production database you care about being pristine, and expect each full run to use a small amount of Groq quota.
-
----
-
-## Docker
-
-The container runs **both the FastAPI backend and the WhatsApp bot together** — there's no separate "bot host" needed. The Streamlit dashboard is not included in the image (local/dev only); only `src/`, `whatsapp/`, `run.py`, and `tests/` are copied in.
-
-### Build and run
-
-```bash
-docker compose up -d --build
-docker compose logs -f pesapilot     # watch startup + the QR code
-```
-
-- API: [http://127.0.0.1:8000](http://127.0.0.1:8000)
-- Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-
-(`docker-compose` with a hyphen also works if you're on the older standalone CLI.)
-
-> ⚠️ **Use `127.0.0.1`, not `localhost`, when shipping this.** Every default in the code — `.env.example`'s `API_URL`, the Docker healthcheck, `entrypoint.sh` — points at `http://127.0.0.1:8000`. On some hosts `localhost` resolves to the IPv6 loopback (`::1`) first, which fails to connect since the service only listens on IPv4. `localhost` is fine for a quick check in your own browser; for anything scripted, deployed, or shared with someone else, use `127.0.0.1` to match what's actually configured.
-
-### What's persisted
-
-`docker-compose.yml` bind-mounts two host folders, created next to the repo on first run:
-
-| Host path | Container path | Purpose |
-|---|---|---|
-| `./sessions` | `/app/.wwebjs_auth` | WhatsApp session — keeps you logged in across restarts |
-| `./data` | `/app/data` | Raw/processed transaction files |
-
-Back them up like any other folder:
-
-```bash
-tar -czf pesapilot-backup-$(date +%F).tar.gz sessions/ data/
-```
-
-### Management
-
-```bash
-docker compose ps                          # status
-docker compose logs -f pesapilot           # logs
-docker compose restart                     # restart (session persists)
-docker compose down                        # stop + remove container
-docker compose up -d --build               # rebuild after a code change
-docker compose exec pesapilot bash         # shell in
-docker inspect pesapilot-bot --format '{{json .State.Health}}'   # health status
-```
-
-### Test the API
-
-```bash
-curl http://127.0.0.1:8000/health
-
-curl -X POST http://127.0.0.1:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What did I spend on food?"}'
-
-curl -X POST http://127.0.0.1:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Give me a budget plan"}'
-
-curl -X POST http://127.0.0.1:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What should I invest in?"}'
-```
+> `test_analyzer.py` and `test_database.py` are **not mocked** — they call your real Supabase project and Groq API key. `test_insert_and_retrieve` writes one row (`transaction_id = TEST0000001`) into your live `transactions` table. Don't run against a production database you care about being pristine.
 
 ---
 
@@ -303,36 +329,32 @@ curl -X POST http://127.0.0.1:8000/ask \
 
 | Issue | Fix |
 |---|---|
-| `❌ Missing required environment variables` on startup | One of the six required vars (see above) is unset — check `.env` exists and is in the project root |
-| `SUPABASE_URL and SUPABASE_KEY must be set` | Same as above, for direct Python runs outside Docker |
-| `run_query not found` / RPC errors | You haven't run `scripts/init_db.sql` in the Supabase SQL Editor yet |
+| `❌ Missing required environment variables` | Check `.env` exists in the project root and all required vars are set |
+| `run_query not found` / RPC errors | Run `scripts/init_db.sql` in the Supabase SQL Editor |
 | `ModuleNotFoundError: No module named 'src'` | Run commands from the project root, not from inside `src/` or `whatsapp/` |
-| No transactions after loading an XML | Confirm the file is an unmodified export from SMS Backup & Restore, and that it actually contains M-Pesa messages |
-| Port 8000 already in use | Set `WHATSAPP_API_PORT` to something else, and update `API_URL` and the `docker-compose.yml` port mapping to match |
-| WhatsApp QR never appears / hangs | Check `docker compose logs -f pesapilot`; confirm `chromium` is installed in the image (`docker compose exec pesapilot chromium --version`) |
-| `Failed to launch the browser process` / `profile already in use` after a crash | `entrypoint.sh` clears Chrome lock files on every boot. If it still happens after a hard crash, stop the container and delete the `sessions/` folder once, then restart and re-scan the QR code |
-| WhatsApp session keeps getting logged out | Make sure `sessions/` is actually persisted between restarts — check it isn't being wiped by your deploy process |
-| `WHATSAPP_PIN not set` | Add `WHATSAPP_PIN` to `.env` |
-| Charts not sending / chart errors in logs | `pip install matplotlib seaborn` (already in `requirements.txt`, but confirm your venv has them) |
-| "Budget plan" or "invest" questions get treated as a generic AI question | Check your phrasing includes one of the recognized keywords — see `BUDGET_KEYWORDS`/`INVEST_KEYWORDS` in `whatsapp/whatsapp_api.py` |
-| Forecast page shows "Not enough data" | You need at least 14 distinct days of debit transactions; load more SMS history |
-| Forecast page shows "forecasting engine unavailable" | `prophet` is not installed — run `pip install prophet cmdstanpy` |
-| Groq rate limit / empty AI responses | Wait ~60s and retry; consider lowering `LLM_MAX_TOKENS` |
-| `streamlit: command not found` | Activate your virtualenv first: `source venv/bin/activate` |
-| `balance` column is always empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
-| `pytest` fails on Supabase/Groq tests | Those tests need real, working credentials and the schema from `scripts/init_db.sql` already applied — see the Testing section above |
+| No transactions after loading XML | Confirm the file is an unmodified export from SMS Backup & Restore containing M-Pesa messages |
+| Port 8000 already in use | Set `WHATSAPP_API_PORT` to another port and update `API_URL` and `docker-compose.yml` to match |
+| **Baileys:** `405 Connection Failure` loop, no QR shown | The bot auto-fetches the latest WA Web protocol version on startup — if it still loops, wipe `.baileys_auth/` and restart |
+| **Baileys:** QR never appears after wiping session | Check internet connectivity from the container: `docker compose exec pesapilot curl -I https://web.whatsapp.com` |
+| **whatsapp-web.js:** `Failed to launch the browser process` | Chromium is missing or `PUPPETEER_EXECUTABLE_PATH` is wrong — only relevant for local dev, not Docker |
+| **whatsapp-web.js:** `profile already in use` after a crash | Delete `.wwebjs_auth/` once, restart, and rescan the QR |
+| WhatsApp session keeps logging out | Confirm the auth volume (`baileys_auth` for Docker, `.baileys_auth/` locally) is not being wiped by your deploy process |
+| Charts not sending | Confirm `matplotlib` and `seaborn` are installed: `pip install matplotlib seaborn` |
+| Forecast shows "Not enough data" | You need at least 14 distinct days of debit transactions |
+| Forecast shows "forecasting engine unavailable" | `pip install prophet cmdstanpy` |
+| Groq rate limit / empty AI responses | Wait ~60s and retry; lower `LLM_MAX_TOKENS` if it happens often |
+| `streamlit: command not found` | Activate your virtualenv: `source venv/bin/activate` |
+| `balance` column empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
+| `pytest` fails on Supabase/Groq tests | Tests need real credentials and the schema from `scripts/init_db.sql` already applied |
 
 ---
 
 ## Future Improvements
 
-- **Multi-user support** — currently hardcoded to one number/Supabase project.
-- **Other mobile money providers** — Airtel Money, T-Kash via pluggable parsers.
-- **Smarter anomaly detection** — ML-based, per-user patterns instead of z-score.
-- **Budget goals with alerts** — proactive WhatsApp pings near/over budget.
-- **Self-hosted/local LLM option** — for privacy-conscious users.
-- **CI/CD pipeline** — automated tests + Docker builds via GitHub Actions.
-- **Encryption at rest** — for stored SMS content.
-- **Native mobile app** — replaces local Streamlit dashboard.
-
----
+- Multi-user support — currently hardcoded to one number/Supabase project
+- Other mobile money providers — Airtel Money, T-Kash via pluggable parsers
+- Smarter anomaly detection — ML-based per-user patterns instead of z-score
+- Budget goals with alerts — proactive WhatsApp pings near/over budget
+- Self-hosted/local LLM option — for privacy-conscious users
+- CI/CD pipeline — automated tests + Docker builds via GitHub Actions
+- Native mobile app — replaces local Streamlit dashboard

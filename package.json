@@ -11,7 +11,7 @@
     "start:wwebjs": "node whatsapp/whatsapp_bot.js",
     "dev": "nodemon --exec ts-node --esm whatsapp/whatsapp_bot.ts",
     "dev:wwebjs": "nodemon whatsapp/whatsapp_bot.js",
-    "build": "tsc && echo '{\"type\":\"module\"}' > dist/package.json",
+    "build": "tsc",
     "build:watch": "tsc --watch",
     "api": "python -m uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 --reload",
     "test": "echo \"Error: no test specified\" && exit 1",

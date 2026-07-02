@@ -234,7 +234,7 @@ Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spendi
 | `help` | Full command list |
 | `1234-MJ7XK2P9 Confirmed. You have sent...` | Manual SMS: `PIN-PASTE_SMS_HERE` |
 
-Anyone texting the bot who isn't `WHATSAPP_MAIN_NUMBER` / `WHATSAPP_LID` gets: *⛔ This number is not authorized.*
+Anyone texting the bot's WhatsApp number who isn't `WHATSAPP_MAIN_NUMBER` / `WHATSAPP_LID` is simply left alone — the bot does not reply or react, so the message sits as a normal WhatsApp chat for you to answer manually from your phone. Only messages from `WHATSAPP_MAIN_NUMBER` (or `WHATSAPP_LID`) trigger the bot's AI/analytics replies.
 
 ---
 
@@ -300,6 +300,46 @@ curl -X POST http://YOUR_VPS_IP:8000/ask \
 curl -X POST http://YOUR_VPS_IP:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "Give me a budget plan"}'
+```
+
+---
+
+## Redeploying after a code change
+
+`redeploy.sh` (in the project root) syncs your local changes to the VPS and rebuilds/restarts the Docker container in one step. It doesn't hardcode any server details — you're prompted for them each run, so the script is safe to keep in a public/open-source repo.
+
+### One-time setup
+
+```bash
+chmod +x redeploy.sh
+```
+
+### Usage
+
+```bash
+./redeploy.sh
+```
+
+You'll be prompted for:
+
+```
+VPS username: mosesamwoma
+VPS host/IP: 153.75.247.17
+Remote project path [default: ~/PesaPilot]:   # press Enter to accept the default
+```
+
+Then for your SSH password (may be asked more than once, since sync, rebuild, and status checks each open a separate SSH connection).
+
+The script then:
+1. **Syncs** your local project to the VPS via `rsync` (skipping `node_modules`, `.git`, `dist`, session folders, logs, and caches)
+2. **Rebuilds** the Docker image on the VPS (`docker compose up -d --build`), which recompiles the TypeScript bot and restarts the container
+3. **Shows** the container status so you can confirm it came up healthy
+
+### Flags
+
+```bash
+./redeploy.sh --no-build   # sync only, then restart without rebuilding (fast path for non-code changes)
+./redeploy.sh --logs       # after deploying, tail the container logs so you can watch it come online
 ```
 
 ---

@@ -16,4 +16,3 @@ mose/
 baileys_error.log
 .baileys_auth/
 dist/
-redeploy.sh

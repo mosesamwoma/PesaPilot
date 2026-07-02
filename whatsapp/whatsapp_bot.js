@@ -213,8 +213,11 @@ client.on('message', async (message) => {
         console.log(`📝 Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
 
         if (!isAuthorized) {
-            console.log('⛔ Unauthorized');
-            await message.reply('⛔ This number is not authorized.');
+            // Not your main (Safaricom) number — don't auto-reply or block.
+            // Let the message sit as a normal WhatsApp chat on this device
+            // (Airtel) so you can read/reply to it yourself. The bot only
+            // auto-responds with analytics for messages from MAIN_NUMBER.
+            console.log('👤 Non-main sender — leaving for manual reply');
             return;
         }
 

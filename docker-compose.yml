@@ -13,19 +13,23 @@ services:
       # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
-      
+
       # Supabase
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
-      
+
       # Groq
       - GROQ_API_KEY=${GROQ_API_KEY}
-      
+      - LLM_MODEL_FAST=${LLM_MODEL_FAST:-llama-3.1-8b-instant}
+      - LLM_MODEL_SMART=${LLM_MODEL_SMART:-llama-3.3-70b-versatile}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.6}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-600}
+
       # WhatsApp
       - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
       - WHATSAPP_LID=${WHATSAPP_LID}
       - WHATSAPP_PIN=${WHATSAPP_PIN}
-      
+
       # Puppeteer/Chromium not used (Baileys connects via websocket, no browser)
 
       # Baileys auth storage path (inside the container)
@@ -34,10 +38,10 @@ services:
       # Node
       - NODE_ENV=production
       - NODE_OPTIONS=--max-old-space-size=2048
-      
+
       # Python
       - PYTHONUNBUFFERED=1
-      
+
       # Timezone
       - TZ=Africa/Nairobi
     volumes:

@@ -12,7 +12,7 @@
     "start:wwebjs": "node whatsapp/whatsapp_bot.js",
     "dev": "nodemon --exec ts-node --esm whatsapp/whatsapp_bot.ts",
     "dev:wwebjs": "nodemon whatsapp/whatsapp_bot.js",
-    "build": "tsc",
+    "build": "tsc && echo '{\"type\":\"module\"}' > dist/package.json",
     "build:watch": "tsc --watch",
     "api": "python -m uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 --reload",
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -45,7 +45,7 @@
   "homepage": "https://github.com/mosesamwoma/PesaPilot#readme",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.10",
+    "@whiskeysockets/baileys": "6.7.10",
     "axios": "^1.18.0",
     "dotenv": "^17.4.2",
     "node-cron": "^3.0.3",

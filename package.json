@@ -3,7 +3,6 @@
   "version": "2.1.0",
   "description": "AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in the cloud, and gives you real-time spending insights powered by Groq AI.",
   "main": "dist/whatsapp_bot.js",
-  "type": "module",
   "directories": {
     "test": "tests"
   },

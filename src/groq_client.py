@@ -1,5 +1,6 @@
 # src/groq_client.py
 import os
+import re
 import hashlib
 import logging
 import time
@@ -102,23 +103,69 @@ TTL_ADVICE     =  900   # 15 min  — budget / investment advice
 TTL_CHAT       =  300   #  5 min  — general conversational answers
 
 
+# ─────────────────────────────────────────────────────────────
+# SQL safety guard (defense-in-depth for LLM-generated SQL)
+# ─────────────────────────────────────────────────────────────
+_FORBIDDEN_SQL_KEYWORDS = re.compile(
+    r'\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE|'
+    r'EXEC|EXECUTE|CREATE|ATTACH|REPLACE|MERGE|CALL)\b',
+    re.IGNORECASE
+)
+
+
+def is_safe_select_sql(sql: str) -> bool:
+    """Cheap guard before any LLM-generated SQL touches the DB.
+
+    Checks:
+      - Non-empty, starts with SELECT
+      - No stacked statements (a stray ';' before the end)
+      - No DDL/DML keywords (DROP, DELETE, UPDATE, INSERT, ALTER, ...)
+
+    This is a belt-and-suspenders check, not a substitute for running
+    queries against a read-only DB role/user.
+    """
+    if not sql:
+        return False
+    cleaned = sql.strip()
+    if not cleaned.upper().startswith('SELECT'):
+        return False
+    body = cleaned.rstrip(';').strip()
+    if ';' in body:                          # stacked statements
+        return False
+    if _FORBIDDEN_SQL_KEYWORDS.search(body):
+        return False
+    return True
+
+
 class GroqClient:
     def __init__(self):
         api_key = os.getenv('GROQ_API_KEY')
         if not api_key:
             raise ValueError("GROQ_API_KEY must be set")
         self.client = Groq(api_key=api_key)
-        self.model = os.getenv('LLM_MODEL', 'llama-3.1-8b-instant')
+
+        # Two model tiers:
+        #   FAST  -> chat / generate_insights (speed matters, lower stakes)
+        #   SMART -> budget_plan / investment_advice / analyze_results / generate_sql
+        #            (numeric reasoning + advice quality matters more than latency)
+        self.model_fast = os.getenv('LLM_MODEL_FAST', 'llama-3.1-8b-instant')
+        self.model_smart = os.getenv('LLM_MODEL_SMART', 'llama-3.3-70b-versatile')
+
+        # Back-compat: if someone still sets LLM_MODEL, use it as the fast default
+        legacy = os.getenv('LLM_MODEL')
+        if legacy:
+            self.model_fast = legacy
+
         self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))
         self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 600))
 
     # ------------------------------------------------------------------
     # Internal: raw API call (no caching here — callers decide TTL)
     # ------------------------------------------------------------------
-    def _chat(self, system: str, user: str, timeout: int = 20) -> str:
+    def _chat(self, system: str, user: str, model: str = None, timeout: int = 20) -> str:
         try:
             resp = self.client.chat.completions.create(
-                model=self.model,
+                model=model or self.model_fast,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 messages=[
@@ -128,17 +175,17 @@ class GroqClient:
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"Groq API error: {e}")
+            logger.error(f"Groq API error (model={model or self.model_fast}): {e}")
             return ""
 
     # ------------------------------------------------------------------
     # Internal: cache-aware wrapper
     # ------------------------------------------------------------------
-    def _cached_chat(self, system: str, user: str, ttl: int) -> str:
+    def _cached_chat(self, system: str, user: str, ttl: int, model: str = None) -> str:
         cached = _cache.get(system, user)
         if cached is not None:
             return cached
-        response = self._chat(system, user)
+        response = self._chat(system, user, model=model)
         if response:                          # only cache successful responses
             _cache.set(system, user, response, ttl=ttl)
         return response
@@ -170,20 +217,28 @@ Rules:
 - Filter to last 90 days
 - Exclude type='credit' for spending
 - Limit 100 rows"""
-        sql = self._cached_chat(system, question, ttl=TTL_SQL)
-        return sql.replace('```sql', '').replace('```', '').strip()
+        sql = self._cached_chat(system, question, ttl=TTL_SQL, model=self.model_smart)
+        sql = sql.replace('```sql', '').replace('```', '').strip()
 
-    def analyze_results(self, question: str, sql: str, results: list, context: str = "") -> str:
+        if not is_safe_select_sql(sql):
+            logger.warning(f"Rejected unsafe/invalid SQL from LLM: {sql!r}")
+            return ""
+
+        return sql
+
+    def analyze_results(self, question: str, sql: str, aggregates: dict, context: str = "") -> str:
+        """Explain query results using Python-computed aggregates (sums/avgs/counts),
+        never raw rows — keeps the LLM from doing arithmetic over dumped data."""
         system = KENYA_SYSTEM_PROMPT + """
 
-You are answering a question backed by real transaction query results. Ground your answer strictly in the numbers given. Apply Rules 1-7. Max 180 words."""
+You are answering a question backed by pre-computed aggregate numbers from real transaction data (already summed/averaged/counted in Python — trust these numbers exactly, do not recompute or estimate them yourself). Ground your answer strictly in the numbers given. Apply Rules 1-7. Max 180 words."""
         user_parts = []
         if context:
             user_parts.append(f"Financial context:\n{context}")
         user_parts.append(f"Question: {question}")
-        user_parts.append(f"Query results (raw rows): {results[:20]}")
+        user_parts.append(f"Aggregated results: {aggregates}")
         user = "\n\n".join(user_parts)
-        return self._cached_chat(system, user, ttl=TTL_CHAT)
+        return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_smart)
 
     def generate_insights(self, summary: dict, extra_context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -192,14 +247,14 @@ Generate 3-4 punchy financial insights for the dashboard. Apply Rules 1-7. Be sp
         user = f"Summary: {summary}"
         if extra_context:
             user += f"\n\nAdditional context:\n{extra_context}"
-        return self._cached_chat(system, user, ttl=TTL_INSIGHTS)
+        return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
 
     def chat(self, question: str, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
 
 Answer the user's question conversationally and helpfully. Apply Rules 1-7 wherever the context supports it — don't invent numbers you weren't given. Max 200 words."""
         user = f"Financial context:\n{context}\n\nQuestion: {question}" if context else question
-        return self._cached_chat(system, user, ttl=TTL_CHAT)
+        return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
 
     def budget_plan(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -211,7 +266,7 @@ The user wants a concrete budget plan. Using their real spending context if give
 4. One concrete place to put the savings bucket (Sacco, MMF, or T-Bill) with a rough expected return.
 Apply Rules 1-7. Max 220 words. Use headers/bullets, no SQL/database language."""
         user = f"Financial context:\n{context}" if context else "No transaction context available — give a general but practical Kenyan budget framework, and ask one clarifying question about their income at the end."
-        return self._cached_chat(system, user, ttl=TTL_ADVICE)
+        return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart)
 
     def investment_advice(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -223,7 +278,7 @@ The user is asking where to invest or grow savings. Using their real financial c
 4. End with one encouraging, concrete next step they can do this week.
 Never mention Fuliza or name a specific bank/provider. Apply Rules 1-7. Max 220 words. No database/SQL language."""
         user = f"Financial context:\n{context}" if context else "No transaction context available — ask one quick question about their monthly surplus, then give a general Kenyan investment framework (MMF, T-Bills, Sacco) anyway."
-        return self._cached_chat(system, user, ttl=TTL_ADVICE)
+        return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart)
 
     # ── FORECAST (NEW) ─────────────────────────────────────────────────────
     def generate_forecast_insights(self, forecast_data: dict) -> str:
@@ -242,5 +297,5 @@ You are explaining a {horizon}-day spending FORECAST produced by a statistical m
             f"Risk level: {forecast_data.get('risk_level', 'Low')}\n"
             f"Based on {forecast_data.get('history_days', 0)} days of transaction history."
         )
-        return self._cached_chat(system, user, ttl=TTL_INSIGHTS)
+        return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
     # ── END FORECAST ───────────────────────────────────────────────────────

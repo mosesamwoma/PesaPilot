@@ -7,6 +7,58 @@ from src import forecasting
 
 logger = logging.getLogger(__name__)
 
+
+def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> Dict:
+    """Turn raw SQL result rows into Python-computed aggregates (sums/avgs/
+    counts) so the LLM narrates numbers instead of eyeballing/recomputing
+    them from a dumped row list. Generic — works for whatever columns the
+    dynamically-generated SQL happened to return.
+    """
+    if not results:
+        return {"row_count": 0}
+
+    sample = results[0]
+    numeric_cols = [
+        k for k, v in sample.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    ]
+
+    agg: Dict = {"row_count": len(results)}
+
+    for col in numeric_cols:
+        vals = [r.get(col) for r in results if isinstance(r.get(col), (int, float))]
+        if not vals:
+            continue
+        agg[col] = {
+            "sum": round(sum(vals), 2),
+            "avg": round(sum(vals) / len(vals), 2),
+            "min": round(min(vals), 2),
+            "max": round(max(vals), 2),
+            "count": len(vals),
+        }
+
+    # Group the primary numeric column (prefer 'amount') by the first
+    # categorical column present, so the model gets a ranked breakdown
+    # without needing to sum raw rows itself.
+    amount_col = 'amount' if 'amount' in numeric_cols else (numeric_cols[0] if numeric_cols else None)
+    for group_col in ('merchant_category', 'recipient', 'type'):
+        if group_col in sample and amount_col:
+            totals: Dict = {}
+            for r in results:
+                key = r.get(group_col) or 'Unknown'
+                val = r.get(amount_col)
+                if isinstance(val, (int, float)):
+                    totals[key] = totals.get(key, 0) + val
+            if totals:
+                ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:top_group_limit]
+                agg[f"by_{group_col}"] = [
+                    {"key": k, "total": round(v, 2)} for k, v in ranked
+                ]
+            break  # one grouping is enough — keep the payload compact
+
+    return agg
+
+
 class MpesaAnalyzer:
     def __init__(self):
         self.db = SupabaseDB()
@@ -82,7 +134,8 @@ class MpesaAnalyzer:
                 }
 
             results = self.db.execute_query(sql)
-            analysis = self.groq.analyze_results(question, sql, results, context=context)
+            aggregates = _aggregate_query_results(results)
+            analysis = self.groq.analyze_results(question, sql, aggregates, context=context)
 
             return {
                 'question': question,

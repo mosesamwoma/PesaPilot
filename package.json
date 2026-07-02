@@ -1,14 +1,13 @@
 {
   "name": "pesapilot",
   "version": "2.1.0",
-  "description": "AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in the cloud, and gives you real-time spending insights powered by Groq AI.",
+  "description": "AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in Supabase, and gives you real-time spending insights powered by Groq AI.",
   "main": "dist/whatsapp_bot.js",
   "directories": {
     "test": "tests"
   },
   "scripts": {
     "start": "node dist/whatsapp_bot.js",
-    "start:baileys": "node dist/whatsapp_bot.js",
     "start:wwebjs": "node whatsapp/whatsapp_bot.js",
     "dev": "nodemon --exec ts-node --esm whatsapp/whatsapp_bot.ts",
     "dev:wwebjs": "nodemon whatsapp/whatsapp_bot.js",
@@ -45,21 +44,21 @@
   "homepage": "https://github.com/mosesamwoma/PesaPilot#readme",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "6.7.10",
+    "@whiskeysockets/baileys": "^6.7.23",
     "axios": "^1.18.0",
     "dotenv": "^17.4.2",
     "node-cron": "^3.0.3",
-    "pino": "^9.3.2",
-    "puppeteer": "^22.0.0",
+    "pino": "^9.6.0",
+    "puppeteer": "^24.2.1",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.24.0"
+    "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
-    "@types/node": "^20.14.9",
+    "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/pino": "^7.0.5",
-    "nodemon": "^3.1.4",
+    "nodemon": "^3.1.7",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.4"
   }
 }

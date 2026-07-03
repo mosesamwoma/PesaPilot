@@ -5,13 +5,11 @@ db.sqlite3
 __pycache__/
 *.db
 *.pyc
-whatsapp.md
 node_modules/
 .wwebjs_auth/
 .webjs_auth_cache/
 2.300
 *.html
-Hosting.md
 mose/
 baileys_error.log
 .baileys_auth/

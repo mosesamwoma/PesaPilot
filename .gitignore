@@ -8,9 +8,7 @@ __pycache__/
 node_modules/
 .wwebjs_auth/
 .webjs_auth_cache/
-2.300
 *.html
-mose/
 baileys_error.log
 .baileys_auth/
 dist/

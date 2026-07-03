@@ -512,18 +512,12 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
     question_lower = question.lower().strip()
 
-    # ── HELP ──────────────────────────────────────────────────────────────
-    if question_lower == 'help':
-        return {'content': HELP_TEXT, 'sql': None, 'results': None, 'fig': None}
-
-    # ── DAILY / TODAY ─────────────────────────────────────────────────────
-    if 'daily' in question_lower or 'today' in question_lower:
-        return {'content': generate_daily_summary_text(analyzer), 'sql': None, 'results': None, 'fig': None}
-
-    # ── SUMMARY ───────────────────────────────────────────────────────────
-    if 'summary' in question_lower:
-        days = parse_days_from_question(question_lower, default=30)
-        return {'content': generate_summary_text(analyzer, days), 'sql': None, 'results': None, 'fig': None}
+    # NOTE: check order below is intentionally identical to whatsapp_api.py's
+    # /ask endpoint: budget → invest → forecast → chart → help → daily/today
+    # → summary → fallback. Do not reorder — question_lower substring checks
+    # overlap (e.g. 'daily trend' contains both a chart keyword and 'daily'),
+    # so whichever branch runs first wins, and the bot and dashboard must
+    # agree on which one that is.
 
     # ── BUDGET PLAN ───────────────────────────────────────────────────────
     if any(k in question_lower for k in BUDGET_KEYWORDS):
@@ -665,6 +659,19 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
             content = "❌ No data available yet. Add some transactions first."
 
         return {'content': content, 'sql': None, 'results': None, 'fig': fig}
+
+    # ── HELP ──────────────────────────────────────────────────────────────
+    if question_lower == 'help':
+        return {'content': HELP_TEXT, 'sql': None, 'results': None, 'fig': None}
+
+    # ── DAILY / TODAY ─────────────────────────────────────────────────────
+    if 'daily' in question_lower or 'today' in question_lower:
+        return {'content': generate_daily_summary_text(analyzer), 'sql': None, 'results': None, 'fig': None}
+
+    # ── SUMMARY ───────────────────────────────────────────────────────────
+    if 'summary' in question_lower:
+        days = parse_days_from_question(question_lower, default=30)
+        return {'content': generate_summary_text(analyzer, days), 'sql': None, 'results': None, 'fig': None}
 
     # ── FALLBACK: free-form question → analyzer.ask_question (SQL+AI) ─────
     result = analyzer.ask_question(question)

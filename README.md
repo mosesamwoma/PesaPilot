@@ -345,11 +345,9 @@ chmod +x redeploy.sh
 
 You'll be prompted for:
 
-```
-VPS username: mosesamwoma
-VPS host/IP: 153.75.247.17
-Remote project path [default: ~/PesaPilot]:   # press Enter to accept the default
-```
+- VPS username: `your-username`
+- VPS host/IP: `your.vps.ip.address`
+- Remote project path: press Enter to accept the default path (`~/PesaPilot`)
 
 Then for your SSH password (may be asked more than once, since sync, rebuild, and status checks each open a separate SSH connection).
 

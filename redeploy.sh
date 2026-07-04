@@ -50,6 +50,7 @@ rsync -avz --progress \
   --exclude '*.log' \
   --exclude '__pycache__' \
   --exclude '.pytest_cache' \
+  --exclude '.wwebjs_auth' \
   --exclude '.wwebjs_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
 

@@ -7,6 +7,15 @@ FROM python:3.10-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ----------------------------------------------------------------
+# Force UTF-8 everywhere (Python, Node, shell, logs) so emojis in
+# WhatsApp replies / AI responses / chart titles never get mangled
+# ----------------------------------------------------------------
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONIOENCODING=utf-8 \
+    PYTHONUTF8=1
+
+# ----------------------------------------------------------------
 # System deps: curl (healthcheck) + fontconfig (chart fonts) + Node.js 20.x
 # ----------------------------------------------------------------
 RUN apt-get update && apt-get install -y \

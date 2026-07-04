@@ -12,3 +12,11 @@ node_modules/
 baileys_error.log
 .baileys_auth/
 dist/
+
+# Real financial data — track the folder structure, never the contents
+data/raw/*
+data/processed/*
+data/sessions/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/sessions/.gitkeep

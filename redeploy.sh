@@ -43,6 +43,7 @@ rsync -avz --progress \
   --exclude 'node_modules' \
   --exclude 'venv' \
   --exclude 'dist' \
+  --exclude 'assets' \
   --exclude '.git' \
   --exclude 'sessions' \
   --exclude '.baileys_auth' \

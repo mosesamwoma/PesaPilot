@@ -43,7 +43,7 @@ PesaPilot ships with **two WhatsApp bot implementations**. They share the same F
 | **npm script** | `npm run dev:wwebjs` | `npm run dev` |
 | **Docker** | ❌ not used | ✅ default |
 
-> **Rule of thumb:** use `whatsapp_bot.js` when developing locally on your own machine. Use `whatsapp_bot.ts` (Baileys) for everything deployed — Docker, VPS, Railway, any server.
+> **Rule of thumb:** use `whatsapp_bot.js` when developing locally on your own machine. Use `whatsapp_bot.ts` (Baileys) for everything deployed — Docker, VPS, Railway, Raspberry Pi, any server. Baileys' low memory footprint (~80–120 MB, no Chromium) makes it well-suited to a Raspberry Pi (3B+ or newer recommended) running the Dockerized setup, giving you an always-on bot without paying for a VPS.
 
 ---
 

@@ -114,7 +114,7 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 ## 3. Create the database schema
 
 1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) → your project → **SQL Editor → New Query**
-2. Paste the contents of `scripts/init_db.sql`
+2. Paste the contents of `schema/init_db.sql`
 3. Click **Run**
 
 You should see: `PesaPilot DB ready ✅`

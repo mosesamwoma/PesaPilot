@@ -2,11 +2,17 @@
 
 AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction backup, stores it in Supabase, and lets you explore your spending — and get real Kenyan financial advice — through a Streamlit dashboard or by texting it on WhatsApp.
 
+![PesaPilot WhatsApp Bot Demo](assets/whatsapp.gif)
+
 ---
 
 ## Features
 
 - **Dashboard** — spending overview, daily trend, category breakdown, top merchants, heatmap, histogram, and AI-generated insights
+
+  ![Dashboard overview](assets/1.png)
+  ![Spending heatmap](assets/2.png)
+
 - **Forecast** — Prophet-powered 7-day and 30-day spending projections with confidence band, trend classification (Increasing / Decreasing / Stable), risk level (Low / Moderate / High), and a Groq plain-English summary
 - **Ask AI** — ask questions in plain English; Groq turns them into SQL, runs it, and explains the result grounded in your actual numbers
 - **Budget plans** — ask for a "budget plan" and get a KES-denominated needs/wants/savings split sized to your real spending
@@ -231,6 +237,8 @@ There is no `setup`, `load`, `ask`, or `dashboard` subcommand. For loading data 
 
 Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spending forward 7 or 30 days.
 
+![Forecast view](assets/3.png)
+
 **Minimum data required:** 14 days of spending history.
 
 **How it works:**
@@ -247,6 +255,8 @@ Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spendi
 ---
 
 ## What you can ask the bot
+
+![Ask AI view](assets/4.png)
 
 | You send | What happens |
 |---|---|
@@ -409,7 +419,7 @@ python -m pytest tests/ -v
 | Issue | Fix |
 |---|---|
 | `❌ .env file not found!` (from `python run.py`) | Copy `.env.example` to `.env` in the project root before running |
-| `run_query not found` / RPC errors | Run `scripts/init_db.sql` in the Supabase SQL Editor |
+| `run_query not found` / RPC errors | Run `schema/init_db.sql` in the Supabase SQL Editor |
 | `ModuleNotFoundError: No module named 'src'` | Run commands from the project root, not from inside `src/` or `whatsapp/` |
 | No transactions after loading XML | Confirm the file is an unmodified export from SMS Backup & Restore containing M-Pesa messages |
 | Port 8000 already in use | Set `WHATSAPP_API_PORT` to another port and update `API_URL` and `docker-compose.yml` to match |
@@ -424,7 +434,7 @@ python -m pytest tests/ -v
 | Groq rate limit / empty AI responses | Wait ~60s and retry; lower `LLM_MAX_TOKENS` if it happens often |
 | `streamlit: command not found` | Activate your virtualenv: `source venv/bin/activate` |
 | `balance` column empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
-| `pytest` fails on Supabase/Groq tests | Tests need real credentials and the schema from `scripts/init_db.sql` already applied |
+| `pytest` fails on Supabase/Groq tests | Tests need real credentials and the schema from `schema/init_db.sql` already applied |
 
 ---
 

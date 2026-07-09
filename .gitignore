@@ -18,3 +18,4 @@ data/sessions/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/sessions/.gitkeep
+assets/whatsapp.mp4

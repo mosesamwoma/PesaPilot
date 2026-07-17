@@ -272,10 +272,7 @@ def generate_daily_summary_text(analyzer: "MpesaAnalyzer") -> str:
 
 
 def generate_summary_text(analyzer: "MpesaAnalyzer", days: int) -> str:
-    # NOTE: mirrors whatsapp_api.py exactly — get_summary() doesn't take a
-    # `days` filter, so `days` is only used in the displayed averages below,
-    # not in the underlying query. Kept as-is for parity with the bot.
-    summary = analyzer.db.get_summary()
+    summary = analyzer.db.get_range_summary(days=days)
 
     if summary and summary.get('total_transactions', 0) > 0:
         spent = summary.get('total_spent', 0)

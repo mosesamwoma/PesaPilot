@@ -746,7 +746,7 @@ async def ask_question(request: QuestionRequest):
             days = parse_days_from_question(question_lower, default=30)
 
             logger.info(f"📊 Summary: {days}d")
-            summary = analyzer.db.get_summary()
+            summary = analyzer.db.get_range_summary(days=days)
 
             if summary and summary.get('total_transactions', 0) > 0:
                 spent = summary.get('total_spent', 0)

@@ -69,7 +69,7 @@ class MpesaAnalyzer:
         """Build a rich, human-readable context block from current financial data
         so the AI has the full picture instead of just the raw question."""
         try:
-            summary = self.db.get_summary() or {}
+            summary = self.db.get_range_summary(days=days) or {}
             category_data = self.db.get_spending_by_category(days=days) or []
             daily_trend = self.db.get_daily_trend(days=days) or []
             top_merchants = self.db.get_top_merchants(days=days, limit=5) or []

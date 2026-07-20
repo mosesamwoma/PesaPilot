@@ -14,7 +14,7 @@ self-contained and orchestrated by MpesaAnalyzer).
 import hashlib
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -331,7 +331,7 @@ def generate_forecast(transactions: List[Dict], horizon_days: int = 7) -> Dict:
         "historical_std_daily": round(historical_std_daily, 2),
         "trend": trend,
         "risk_level": risk_level,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     _cache.set(fingerprint, horizon_days, result)

@@ -55,7 +55,16 @@ RUN pip install --no-cache-dir --upgrade pip \
 # puppeteer/whatsapp-web.js get installed here too since they're still
 # in package.json for local dev, but they are NEVER invoked at runtime
 # in this image since only dist/whatsapp_bot.js gets executed)
+#
+# PUPPETEER_SKIP_DOWNLOAD=true is required here: puppeteer's postinstall
+# script otherwise tries to download a full Chrome binary, which fails
+# the build entirely on networks/CI runners that block that host. This
+# must be a real ENV var at build time — .env is never read by `docker
+# build`, and older var names like PUPPETEER_SKIP_CHROMIUM_DOWNLOAD are
+# ignored by current puppeteer versions.
 # ----------------------------------------------------------------
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 COPY package*.json tsconfig.json ./
 RUN npm install \
     && npm cache clean --force

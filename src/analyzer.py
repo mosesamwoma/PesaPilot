@@ -248,9 +248,15 @@ class MpesaAnalyzer:
             pass
 
         tx_type = tx.get('type', 'debit')
-        amount = tx.get('amount', 0)
+        amount = tx.get('amount', 0) or 0
         recipient = tx.get('recipient', 'Unknown')
-        balance = tx.get('balance', 0)
+        # tx.get('balance', 0) only falls back to 0 when the key is MISSING —
+        # _extract_balance() returns an explicit None when no "balance is Ksh..."
+        # phrase is found (e.g. airtime/bundle SMS), so the key IS present with
+        # value None and the default above is skipped. Formatting None with
+        # ':,.2f' raises TypeError, which crashed manual SMS entry for any
+        # message without a balance line. `or 0` catches that None case too.
+        balance = tx.get('balance', 0) or 0
         category = tx.get('merchant_category', 'other')
 
         if tx_type == 'credit':

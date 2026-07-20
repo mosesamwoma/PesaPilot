@@ -727,7 +727,7 @@ async def ask_question(request: QuestionRequest):
   • "90 days" / "All time" → Extended periods
 
 📱 **MANUAL SMS**:
-  • PIN-PASTE_SMS_HERE (e.g., 3749-UFMD8OKA...)
+  • PIN-PASTE_SMS_HERE (e.g., 1234-UFMD8OKA...)
 
 🔮 **FORECASTING**:
   • "Forecast" / "Forecast 7 days" → Next 7-day spending prediction

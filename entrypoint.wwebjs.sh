@@ -1,5 +1,6 @@
 #!/bin/bash
-# PesaPilot Entrypoint - Production Ready
+# PesaPilot Entrypoint - whatsapp-web.js - Production Ready
+# Works on any server: plain Docker, Docker Compose, VPS, bare-metal, Raspberry Pi.
 
 set -e
 
@@ -19,16 +20,12 @@ echo -e "${BLUE}═════════════════════�
 # ============================================================
 echo -e "${YELLOW}📋 Step 1: Detecting environment...${NC}"
 
-if [ -n "$RAILWAY_ENVIRONMENT" ] || [ -n "$RAILWAY_SERVICE_NAME" ]; then
-    ENVIRONMENT="railway"
-    echo -e "${BLUE}   Environment: Railway${NC}"
-else
-    ENVIRONMENT="docker"
-    echo -e "${BLUE}   Environment: Docker/Local${NC}"
+INTERNAL_IP=$(hostname -i 2>/dev/null | awk '{print $1}')
+if [ -z "$INTERNAL_IP" ]; then
+    INTERNAL_IP="127.0.0.1"
 fi
-
-INTERNAL_IP=$(hostname -i 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
 echo -e "${BLUE}   Internal IP: $INTERNAL_IP${NC}"
+echo -e "${BLUE}   Hostname: $(hostname 2>/dev/null || echo unknown)${NC}\n"
 
 # ============================================================
 # STEP 2: VALIDATE ENVIRONMENT VARIABLES
@@ -56,7 +53,7 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     for var in "${MISSING_VARS[@]}"; do
         echo -e "${RED}   - $var${NC}"
     done
-    echo -e "${RED}Update your environment variables and try again.${NC}"
+    echo -e "${RED}Set these in your .env file (or however you inject env vars) and try again.${NC}"
     exit 1
 fi
 
@@ -67,21 +64,15 @@ echo -e "${GREEN}✅ All required variables configured${NC}\n"
 # ============================================================
 echo -e "${YELLOW}🔗 Step 3: Configuring API URL...${NC}"
 
+# If API_URL is explicitly set (e.g. the bot and API run on different hosts/containers),
+# always respect it. Otherwise default to loopback, since both processes run in this
+# same container/host and talk to each other over localhost.
 if [ -n "$API_URL" ]; then
-    export API_URL=$API_URL
+    export API_URL="$API_URL"
     echo -e "${BLUE}   Using API_URL: $API_URL${NC}"
-elif [ "$ENVIRONMENT" = "railway" ]; then
-    if [ -n "$RAILWAY_PRIVATE_DOMAIN" ]; then
-        export API_URL="http://$RAILWAY_PRIVATE_DOMAIN:8000"
-    elif [ -n "$RAILWAY_SERVICE_NAME" ]; then
-        export API_URL="http://$RAILWAY_SERVICE_NAME.railway.internal:8000"
-    else
-        export API_URL="http://$INTERNAL_IP:8000"
-    fi
-    echo -e "${BLUE}   Railway API_URL: $API_URL${NC}"
 else
-    export API_URL="http://127.0.0.1:8000"
-    echo -e "${BLUE}   Local API_URL: $API_URL${NC}"
+    export API_URL="http://127.0.0.1:${API_PORT:-8000}"
+    echo -e "${BLUE}   Default API_URL: $API_URL${NC}"
 fi
 
 echo -e "${GREEN}✅ API_URL configured${NC}\n"
@@ -145,7 +136,7 @@ chmod -R 755 /app/data 2>/dev/null || true
 echo -e "${GREEN}✅ Permissions set${NC}\n"
 
 # ============================================================
-# STEP 6: START FASTAPI SERVER (FIXED)
+# STEP 6: START FASTAPI SERVER
 # ============================================================
 echo -e "${YELLOW}🐍 Step 6: Starting FastAPI server...${NC}"
 
@@ -160,7 +151,7 @@ if [ -f "/app/whatsapp/whatsapp_api.py" ]; then
     python -m whatsapp.whatsapp_api &
     API_PID=$!
     echo -e "${GREEN}✅ FastAPI started (PID: $API_PID)${NC}"
-    echo -e "${BLUE}   Listening on: http://0.0.0.0:8000${NC}\n"
+    echo -e "${BLUE}   Listening on: http://0.0.0.0:${API_PORT:-8000}${NC}\n"
 else
     echo -e "${RED}❌ whatsapp/whatsapp_api.py not found!${NC}"
     exit 1
@@ -173,7 +164,7 @@ echo -e "${BLUE}⏳ Waiting for API to initialize...${NC}"
 
 API_READY=false
 for i in {1..20}; do
-    if curl -f http://127.0.0.1:8000/health 2>/dev/null; then
+    if curl -f "http://127.0.0.1:${API_PORT:-8000}/health" 2>/dev/null; then
         API_READY=true
         echo -e "${GREEN}✅ API is healthy${NC}\n"
         break
@@ -192,7 +183,7 @@ done
 echo -e "${YELLOW}📱 Step 8: Starting WhatsApp Bot...${NC}\n"
 
 # Set environment for bot
-export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+export PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
 export API_URL=${API_URL}
 
 echo -e "${BLUE}   Bot will use API: $API_URL${NC}\n"
@@ -226,7 +217,7 @@ echo -e "${GREEN}🚀 PesaPilot is ONLINE and READY${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
 
 echo -e "${BLUE}📊 Running processes:${NC}"
-echo -e "${BLUE}   API:  http://0.0.0.0:8000${NC}"
+echo -e "${BLUE}   API:  http://0.0.0.0:${API_PORT:-8000}${NC}"
 echo -e "${BLUE}   Bot:  WhatsApp Web (Headless)${NC}"
 echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 
@@ -237,7 +228,7 @@ echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 # Function to handle shutdown gracefully
 cleanup() {
     echo -e "\n${YELLOW}🛑 Shutting down gracefully...${NC}"
-    
+
     # Kill API
     if kill -0 $API_PID 2>/dev/null; then
         echo -e "${BLUE}   Stopping FastAPI (PID: $API_PID)...${NC}"
@@ -245,7 +236,7 @@ cleanup() {
         wait $API_PID 2>/dev/null || true
         echo -e "${GREEN}   ✅ FastAPI stopped${NC}"
     fi
-    
+
     # Kill Bot
     if kill -0 $BOT_PID 2>/dev/null; then
         echo -e "${BLUE}   Stopping WhatsApp Bot (PID: $BOT_PID)...${NC}"
@@ -253,7 +244,7 @@ cleanup() {
         wait $BOT_PID 2>/dev/null || true
         echo -e "${GREEN}   ✅ WhatsApp Bot stopped${NC}"
     fi
-    
+
     echo -e "${GREEN}✅ Shutdown complete${NC}"
     exit 0
 }

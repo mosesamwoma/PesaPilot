@@ -1,18 +1,18 @@
-# PesaPilot — Puppeteer/Chromium variant, for Podman.
-#
-# This is a "for fun" sibling of docker-compose.yml — same shape, but
-# built from Containerfile.podman with Chromium-specific env/volumes
-# instead of Baileys ones. Not used for the shipped/production image.
+# ────────────────────────────────────────────────────────
+# Just for fun — Podman/Chromium variant, not used for shipping.
+# Same shape as docker-compose.yml, but built from Containerfile
+# with Chromium-specific env/volumes instead of Baileys ones.
+# ────────────────────────────────────────────────────────
 #
 # Run with either:
-#   podman-compose -f compose.podman.yaml up -d --build
-#   podman compose  -f compose.podman.yaml up -d --build   (podman 4+ built-in)
+#   podman-compose up -d --build
+#   podman compose  up -d --build   (podman 4+ built-in)
 
 services:
   pesapilot:
     build:
       context: .
-      dockerfile: Containerfile.podman
+      dockerfile: Containerfile
     container_name: pesapilot-local
     restart: unless-stopped
     ports:

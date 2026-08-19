@@ -1,0 +1,81 @@
+# PesaPilot — Puppeteer/Chromium variant, for Podman.
+#
+# This is a "for fun" sibling of docker-compose.yml — same shape, but
+# built from Containerfile.podman with Chromium-specific env/volumes
+# instead of Baileys ones. Not used for the shipped/production image.
+#
+# Run with either:
+#   podman-compose -f compose.podman.yaml up -d --build
+#   podman compose  -f compose.podman.yaml up -d --build   (podman 4+ built-in)
+
+services:
+  pesapilot:
+    build:
+      context: .
+      dockerfile: Containerfile.podman
+    container_name: pesapilot-local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # API Configuration
+      - API_URL=${API_URL:-http://127.0.0.1:8000}
+      - WHATSAPP_API_PORT=8000
+
+      # Supabase
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+
+      # Groq
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LLM_MODEL_FAST=${LLM_MODEL_FAST:-openai/gpt-oss-20b}
+      - LLM_MODEL_SMART=${LLM_MODEL_SMART:-openai/gpt-oss-120b}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.6}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-600}
+
+      # WhatsApp
+      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
+      - WHATSAPP_LID=${WHATSAPP_LID}
+      - WHATSAPP_PIN=${WHATSAPP_PIN}
+
+      # Puppeteer/Chromium — this is the whole reason this file exists
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+      # Auth storage path (inside the container) — code reads this exact var name
+      - WWEBJS_AUTH_PATH=/app/.wwebjs_auth
+
+      # Node
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=2048
+
+      # Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+      - PYTHONUTF8=1
+
+      # Locale (ensures emojis render correctly in logs / WhatsApp / dashboard)
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+
+      # Timezone
+      - TZ=Africa/Nairobi
+    volumes:
+      - ./data:/app/data:Z
+      - ./sessions-local:/app/.wwebjs_auth:Z
+    # /dev/shm defaults to 64MB in most container runtimes, which is too
+    # small for Chromium and causes random renderer crashes. shm_size
+    # bumps it — this is arguably more important than the --disable-dev-shm-usage
+    # flag the bot already passes to Chromium as a fallback.
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - pesapilot-network
+
+networks:
+  pesapilot-network:
+    driver: bridge

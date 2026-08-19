@@ -337,6 +337,75 @@ curl -X POST http://YOUR_VPS_IP:8000/ask \
 
 ---
 
+## Podman (Local / Just for Fun)
+
+> Not used for shipping. `Containerfile` and `compose.yaml` at the project root run the local **whatsapp-web.js** bot (Puppeteer/Chromium) under Podman — separate from `Dockerfile` / `docker-compose.yml`, which ship Baileys and stay the production path. Docker and Podman each default to their own filename, so both pairs sit in the root with no flags needed.
+
+`Containerfile` and `compose.yaml` already live in the project root — no need to reproduce them here.
+
+### Install
+
+```bash
+sudo dnf install podman podman-compose      # Fedora/RHEL
+sudo apt install podman podman-compose      # Debian/Ubuntu
+```
+
+### Build and run
+
+```bash
+podman-compose up -d --build
+podman-compose logs -f     # watch startup + QR code
+```
+
+Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**. Session is saved under `./sessions-local` — no rescan on normal restarts.
+
+### Management
+
+```bash
+podman-compose ps                # status
+podman-compose logs -f           # live logs
+podman-compose restart           # restart (session persists)
+podman-compose down              # stop and remove container
+podman-compose up -d --build     # rebuild after code change
+
+# Force a new QR scan (wipes the local session)
+podman-compose exec pesapilot rm -rf /app/.wwebjs_auth
+podman-compose restart
+podman-compose logs -f
+```
+
+### Bare `podman` commands (no compose file)
+
+```bash
+# Build
+podman build -t pesapilot .
+
+# Run
+podman run -d \
+  --name pesapilot \
+  --env-file .env \
+  -e PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+  -v ./sessions-local:/app/.wwebjs_auth:Z \
+  -v ./data:/app/data:Z \
+  --shm-size=1g \
+  -p 8000:8000 \
+  pesapilot
+
+# Everyday commands
+podman logs -f pesapilot
+podman stop pesapilot
+podman start pesapilot
+podman restart pesapilot
+podman rm pesapilot
+podman ps
+```
+
+### Fedora/RHEL note
+
+SELinux is enforced by default. The `:Z` suffix on the volume mounts (`./data:/app/data:Z`) tells Podman to relabel the bind-mounted folders so the container can read/write them — required on Fedora/RHEL, a harmless no-op on Debian/Ubuntu. If you see permission-denied errors on `./data` or `./sessions-local` from inside the container, this is the first thing to check.
+
+---
+
 ## Redeploying after a code change
 
 `redeploy.sh` (in the project root) syncs your local changes to the VPS and rebuilds/restarts the Docker container in one step. It doesn't hardcode any server details — you're prompted for them each run, so the script is safe to keep in a public/open-source repo.
@@ -427,6 +496,7 @@ python -m pytest tests/ -v
 | **Baileys:** QR never appears after wiping session | Check internet connectivity from the container: `docker compose exec pesapilot curl -I https://web.whatsapp.com` |
 | **whatsapp-web.js:** `Failed to launch the browser process` | Chromium is missing or `PUPPETEER_EXECUTABLE_PATH` is wrong — only relevant for local dev, not Docker |
 | **whatsapp-web.js:** `profile already in use` after a crash | Delete `.wwebjs_auth/` once, restart, and rescan the QR |
+| **Podman:** permission denied on `./data` or `./sessions-local` | Fedora/RHEL SELinux — confirm the `:Z` suffix is present on the volume mounts in `compose.yaml` |
 | WhatsApp session keeps logging out | Confirm the auth path (`./sessions` for Docker, `.baileys_auth/` locally) is not being wiped by your deploy process |
 | Charts not sending | Confirm `matplotlib` and `seaborn` are installed: `pip install matplotlib seaborn` |
 | Forecast shows "Not enough data" | You need at least 14 distinct days of debit transactions |

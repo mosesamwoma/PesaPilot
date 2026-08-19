@@ -21,7 +21,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **Anomalies** — unusually large transactions flagged by z-score
 - **WhatsApp Bot** — ask the same questions, get charts, get budget/investment advice, and log SMS manually, all from WhatsApp
 - **Daily summary** — a 9 PM scheduled job (Africa/Nairobi) sends an end-of-day spending digest to your WhatsApp
-- **Two-tier AI** — fast model (`llama-3.1-8b-instant`) for chat/insights, smarter model (`llama-3.3-70b-versatile`) for SQL generation, result analysis, and budget/investment advice
+- **Two-tier AI** — fast model (`openai/gpt-oss-20b`) for chat/insights, smarter model (`openai/gpt-oss-120b`) for SQL generation, result analysis, and budget/investment advice
 - **SQL safety guard** — every LLM-generated SQL query is validated (`SELECT`-only, no stacked statements, no DDL/DML keywords) before it touches the database
 - **Response caching** — in-memory TTL cache on all Groq calls, automatically invalidated whenever new transactions are inserted
 
@@ -100,8 +100,8 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 | `WHATSAPP_LID` | — | WhatsApp sometimes routes your number through an internal LID. Run the bot once, send a message, copy the value printed next to `From:` in the terminal, paste it here |
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot looks for the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | Port FastAPI listens on |
-| `LLM_MODEL_FAST` | `llama-3.1-8b-instant` | Groq model used for chat and dashboard insights (speed-sensitive) |
-| `LLM_MODEL_SMART` | `llama-3.3-70b-versatile` | Groq model used for SQL generation, result analysis, budget/investment advice (accuracy-sensitive) |
+| `LLM_MODEL_FAST` | `openai/gpt-oss-20b` | Groq model used for chat and dashboard insights (speed-sensitive) |
+| `LLM_MODEL_SMART` | `openai/gpt-oss-120b` | Groq model used for SQL generation, result analysis, budget/investment advice (accuracy-sensitive) |
 | `LLM_MODEL` | — | Legacy/back-compat: if set, overrides `LLM_MODEL_FAST` |
 | `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature |
 | `LLM_MAX_TOKENS` | `600` | Max tokens per Groq response |
@@ -391,8 +391,8 @@ This sits under a Kenya-specific system prompt (`src/groq_client.py`) that enfor
 
 | Model | Used for |
 |---|---|
-| `LLM_MODEL_FAST` (`llama-3.1-8b-instant`) | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
-| `LLM_MODEL_SMART` (`llama-3.3-70b-versatile`) | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
+| `LLM_MODEL_FAST` (`openai/gpt-oss-20b`) | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
+| `LLM_MODEL_SMART` (`openai/gpt-oss-120b`) | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
 
 **SQL safety guard:** all LLM-generated SQL is passed through `is_safe_select_sql()` before execution — it must start with `SELECT`, contain no stacked statements (`;`), and contain none of `DROP / DELETE / UPDATE / INSERT / ALTER / TRUNCATE / GRANT / REVOKE / EXEC / EXECUTE / CREATE / ATTACH / REPLACE / MERGE / CALL`. Anything that fails is rejected and never reaches Supabase.
 

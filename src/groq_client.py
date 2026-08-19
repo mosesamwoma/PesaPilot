@@ -153,8 +153,11 @@ class GroqClient:
         #   FAST  -> chat / generate_insights (speed matters, lower stakes)
         #   SMART -> budget_plan / investment_advice / analyze_results / generate_sql
         #            (numeric reasoning + advice quality matters more than latency)
-        self.model_fast = os.getenv('LLM_MODEL_FAST', 'llama-3.1-8b-instant')
-        self.model_smart = os.getenv('LLM_MODEL_SMART', 'llama-3.3-70b-versatile')
+        # NOTE: llama-3.1-8b-instant and llama-3.3-70b-versatile were deprecated
+        # by Groq (announced June 17, 2026). Defaults below use Groq's recommended
+        # replacements: openai/gpt-oss-20b (fast tier) and openai/gpt-oss-120b (smart tier).
+        self.model_fast = os.getenv('LLM_MODEL_FAST', 'openai/gpt-oss-20b')
+        self.model_smart = os.getenv('LLM_MODEL_SMART', 'openai/gpt-oss-120b')
 
         # Back-compat: if someone still sets LLM_MODEL, use it as the fast default
         legacy = os.getenv('LLM_MODEL')

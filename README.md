@@ -18,7 +18,8 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **Budget plans** — ask for a "budget plan" and get a KES-denominated needs/wants/savings split sized to your real spending
 - **Investment guidance** — ask "what should I invest in?" and get a Sacco / MMF / T-Bill recommendation sized to your actual free cash flow
 - **Transactions** — filterable, searchable transaction history
-- **Anomalies** — unusually large transactions flagged by z-score
+- **Smarter anomaly detection** — ML-based per-user patterns instead of z-score
+- **Budget goals with alerts** — proactive WhatsApp pings near/over budget
 - **WhatsApp Bot** — ask the same questions, get charts, get budget/investment advice, and log SMS manually, all from WhatsApp
 - **Daily summary** — a 9 PM scheduled job (Africa/Nairobi) sends an end-of-day spending digest to your WhatsApp
 - **Two-tier AI** — fast model (`openai/gpt-oss-20b`) for chat/insights, smarter model (`openai/gpt-oss-120b`) for SQL generation, result analysis, and budget/investment advice
@@ -513,8 +514,6 @@ python -m pytest tests/ -v
 - Multi-user support — currently hardcoded to one number/Supabase project
 - Bring back a data-loading entry point — `MpesaAnalyzer.load_transactions()` still works but has no CLI or dashboard UI in front of it
 - Other mobile money providers — Airtel Money, T-Kash via pluggable parsers
-- Smarter anomaly detection — ML-based per-user patterns instead of z-score
-- Budget goals with alerts — proactive WhatsApp pings near/over budget
 - Self-hosted/local LLM option — for privacy-conscious users
 - CI/CD pipeline — automated tests + Docker builds via GitHub Actions
 - Native mobile app — replaces local Streamlit dashboard

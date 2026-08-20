@@ -186,4 +186,4 @@ GROUP BY b.id, b.category, b.period, b.limit_amount, b.alert_threshold_pct;
 -- ------------------------------------------------------------
 -- 10. Confirm it worked
 -- ------------------------------------------------------------
-SELECT 'PesaPilot v2 schema ready ✅' as status;
+SELECT 'PesaPilot DB ready ✅' as status;

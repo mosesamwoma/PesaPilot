@@ -1,7 +1,7 @@
 # src/database.py
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional
 import pandas as pd
@@ -340,6 +340,166 @@ class SupabaseDB:
                 'top_category': 'N/A',
                 'avg_transaction': 0
             }
+
+    # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
+    def save_spending_baselines(self, baselines: List[Dict]) -> int:
+        """Upsert per-category stats into spending_baselines (one row per
+        merchant_category, unique on merchant_category)."""
+        if not baselines:
+            return 0
+        try:
+            records = [{**b, 'computed_at': datetime.now().isoformat()} for b in baselines]
+            self.client.table('spending_baselines').upsert(
+                records, on_conflict='merchant_category'
+            ).execute()
+            return len(records)
+        except Exception as e:
+            logger.error(f"save_spending_baselines failed: {e}")
+            return 0
+
+    def get_spending_baselines(self) -> List[Dict]:
+        try:
+            result = self.client.table('spending_baselines').select('*').execute()
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_spending_baselines failed: {e}")
+            return []
+
+    def save_anomalies(self, anomalies: List[Dict]) -> int:
+        """Upsert flagged transactions into the anomalies table, keyed on
+        (transaction_id, model) so re-running detection doesn't duplicate
+        rows or wipe out a human's `reviewed` flag on unchanged anomalies."""
+        if not anomalies:
+            return 0
+        try:
+            records = [
+                {
+                    'transaction_id': a['transaction_id'],
+                    'model': a.get('model', 'isolation_forest_v1'),
+                    'score': a.get('score'),
+                }
+                for a in anomalies
+            ]
+            self.client.table('anomalies').upsert(
+                records, on_conflict='transaction_id,model'
+            ).execute()
+            return len(records)
+        except Exception as e:
+            logger.error(f"save_anomalies failed: {e}")
+            return 0
+
+    def get_saved_anomalies(self, days: int = 90, limit: int = 20) -> List[Dict]:
+        """Return recently flagged anomalies joined with their transaction
+        details, highest score first. Fetched as two plain queries (anomaly
+        rows, then their parent transactions) and merged in Python — kept
+        deliberately simple to match how the rest of this class queries
+        Supabase, rather than relying on nested/embedded-resource select
+        syntax."""
+        try:
+            anomaly_result = (self.client.table('anomalies')
+                               .select('id, transaction_id, model, score, reviewed, created_at')
+                               .order('score', desc=True)
+                               .limit(limit)
+                               .execute())
+            anomaly_rows = anomaly_result.data or []
+            if not anomaly_rows:
+                return []
+
+            tx_ids = [r['transaction_id'] for r in anomaly_rows if r.get('transaction_id')]
+            if not tx_ids:
+                return []
+            since = (datetime.now() - timedelta(days=days)).isoformat()
+            tx_result = (self.client.table('transactions')
+                         .select('id, amount, recipient, merchant_category, timestamp, body')
+                         .in_('id', tx_ids)
+                         .gte('timestamp', since)
+                         .execute())
+            tx_by_id = {t['id']: t for t in (tx_result.data or [])}
+
+            merged = []
+            for a in anomaly_rows:
+                tx = tx_by_id.get(a.get('transaction_id'))
+                if not tx:
+                    continue  # transaction outside the `days` window, or since deleted
+                merged.append({**tx, **a})
+            return merged
+        except Exception as e:
+            logger.error(f"get_saved_anomalies failed: {e}")
+            return []
+    # ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────
+
+    # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────
+    def get_budgets(self, active_only: bool = True) -> List[Dict]:
+        try:
+            query = self.client.table('budgets').select('*')
+            if active_only:
+                query = query.eq('active', True)
+            result = query.execute()
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_budgets failed: {e}")
+            return []
+
+    def upsert_budget(self, category: str, limit_amount: float, period: str = 'monthly',
+                       alert_threshold_pct: int = 80) -> Optional[Dict]:
+        """Create or update a budget goal. Unique on (category, period), so
+        setting the same category+period again just updates the limit."""
+        try:
+            record = {
+                'category': category.strip().lower(),
+                'period': period.strip().lower(),
+                'limit_amount': limit_amount,
+                'alert_threshold_pct': alert_threshold_pct,
+                'active': True,
+                'updated_at': datetime.now().isoformat(),
+            }
+            result = self.client.table('budgets').upsert(
+                record, on_conflict='category,period'
+            ).execute()
+            return (result.data or [None])[0]
+        except Exception as e:
+            logger.error(f"upsert_budget failed: {e}")
+            return None
+
+    def get_budget_status(self) -> List[Dict]:
+        """Reads the budget_status VIEW (defined in schema/init_db.sql),
+        which computes spent_this_period live against each active budget."""
+        try:
+            result = self.client.table('budget_status').select('*').execute()
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_budget_status failed: {e}")
+            return []
+
+    def get_recent_budget_alerts(self, since_days: int = 45) -> List[Dict]:
+        """Pulls recently-sent alerts so the caller can build the
+        (budget_id, period_start, alert_level) de-duplication set without
+        re-querying per budget."""
+        since = (date.today() - timedelta(days=since_days)).isoformat()
+        try:
+            result = (self.client.table('budget_alerts')
+                      .select('budget_id, period_start, alert_level')
+                      .gte('period_start', since)
+                      .execute())
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_recent_budget_alerts failed: {e}")
+            return []
+
+    def record_budget_alert(self, budget_id: str, period_start: str, alert_level: str,
+                             amount_spent: float) -> bool:
+        try:
+            self.client.table('budget_alerts').upsert({
+                'budget_id': budget_id,
+                'period_start': period_start,
+                'alert_level': alert_level,
+                'amount_spent': amount_spent,
+            }, on_conflict='budget_id,period_start,alert_level').execute()
+            return True
+        except Exception as e:
+            logger.error(f"record_budget_alert failed: {e}")
+            return False
+    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
 
     def get_schema(self) -> str:
         return """

@@ -43,6 +43,29 @@ FORECAST_KEYWORDS = [
 ]
 # ── END FORECAST ───────────────────────────────────────────────────────────
 
+# ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────────
+ANOMALY_KEYWORDS = [
+    'anomaly', 'anomalies', 'unusual spending', 'unusual transaction', 'weird transaction',
+    'strange transaction', 'suspicious transaction', 'flagged transaction', 'odd spending',
+    'out of pattern', 'is anything unusual',
+]
+# ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────────
+
+# ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────────
+BUDGET_STATUS_KEYWORDS = [
+    'my budgets', 'budget status', 'how are my budgets', 'budget check',
+    'check my budget', 'am i over budget', 'am i within budget', 'budget progress',
+]
+# Matches things like: "set budget food 5000", "set budget for food to 5000",
+# "budget limit transport 3000 weekly", "set food budget 5,000"
+SET_BUDGET_PATTERN = re.compile(
+    r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
+    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>[\d,]+(?:\.\d+)?)\s*'
+    r'(?P<period>weekly|monthly)?',
+    re.IGNORECASE,
+)
+# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
+
 class QuestionRequest(BaseModel):
     question: str
 
@@ -59,6 +82,18 @@ class ParseSMSResponse(BaseModel):
     success: bool
     summary: str
     error: Optional[str] = None
+
+# ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────────
+class SetBudgetRequest(BaseModel):
+    category: str
+    limit_amount: float
+    period: str = 'monthly'
+    alert_threshold_pct: int = 80
+
+class BudgetAlertsResponse(BaseModel):
+    alerts: list
+    count: int
+# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
 
 def is_safe_question(question: str) -> bool:
     question_upper = question.upper()
@@ -486,6 +521,46 @@ async def daily_summary():
     daily cron job (9PM Africa/Nairobi) to push the summary proactively."""
     return {"summary": generate_daily_summary()}
 
+# ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────────
+@app.get("/budget-check", response_model=BudgetAlertsResponse)
+async def budget_check():
+    """Evaluates all active budgets against current spend and returns any
+    NEW near/over-budget alerts (already de-duplicated + recorded as sent).
+    Called by the WhatsApp bot's periodic cron job to proactively ping the
+    user — see setupBudgetCheck() in whatsapp_bot.ts."""
+    try:
+        alerts = analyzer.check_budget_alerts()
+        return BudgetAlertsResponse(alerts=alerts, count=len(alerts))
+    except Exception as e:
+        logger.error(f"budget_check endpoint error: {e}")
+        return BudgetAlertsResponse(alerts=[], count=0)
+
+@app.get("/budgets")
+async def list_budgets():
+    """Live status (spent vs limit, % used) for every active budget."""
+    return {"budgets": analyzer.get_budgets_overview()}
+
+@app.post("/budgets")
+async def create_budget(request: SetBudgetRequest):
+    result = analyzer.set_budget(
+        category=request.category,
+        limit_amount=request.limit_amount,
+        period=request.period,
+        alert_threshold_pct=request.alert_threshold_pct,
+    )
+    if not result.get('success'):
+        raise HTTPException(status_code=400, detail=result.get('error', 'Could not save budget'))
+    return result
+# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
+
+# ── SMARTER ANOMALY DETECTION (NEW) ──────────────────────────────────────────
+@app.get("/anomalies")
+async def list_anomalies(days: int = 90):
+    """ML-flagged unusual transactions (per-category IsolationForest, see
+    src/anomaly_detector.py) for the dashboard or external tools."""
+    return analyzer.get_smart_anomalies(days=days, force_refresh=False)
+# ── END SMARTER ANOMALY DETECTION ────────────────────────────────────────────
+
 @app.get("/health")
 async def health():
     return {
@@ -515,6 +590,50 @@ async def ask_question(request: QuestionRequest):
         BUDGET_KEYWORDS = ['budget plan', 'budget', 'how should i budget', 'monthly plan', 'allocate my money', 'allocate income']
         INVEST_KEYWORDS = ['invest', 'investment', 'where to invest', 'grow my money', 'grow savings', 'mmf', 'money market fund',
                             'treasury bill', 't-bill', 'sacco', 'put my money']
+
+        # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────
+        # Checked BEFORE the generic BUDGET_KEYWORDS block below, since "set
+        # budget food 5000" would otherwise just be caught by the word
+        # "budget" and routed to the generic budget-PLAN advice instead.
+        if question_lower.startswith('set budget') or question_lower.startswith('budget limit'):
+            match = SET_BUDGET_PATTERN.search(question)
+            if match:
+                category = match.group('category').strip().lower()
+                amount = float(match.group('amount').replace(',', ''))
+                period = (match.group('period') or 'monthly').lower()
+                logger.info(f"🎯 SET BUDGET: {category} KES {amount} ({period})")
+                result = analyzer.set_budget(category, amount, period=period)
+                if result.get('success'):
+                    analysis = (
+                        f"🎯 Budget set: {category.title()} — KES {amount:,.0f} per {period}.\n"
+                        f"I'll ping you here if you get close to or go over it."
+                    )
+                else:
+                    analysis = f"❌ Couldn't set that budget: {result.get('error', 'unknown error')}"
+                return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+            else:
+                analysis = "❌ Couldn't read that. Try: \"set budget food 5000\" or \"set budget transport 3000 weekly\""
+                return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+
+        if any(k in question_lower for k in BUDGET_STATUS_KEYWORDS):
+            logger.info("🎯 BUDGET STATUS")
+            status_rows = analyzer.get_budgets_overview()
+            if not status_rows:
+                analysis = "📭 No budgets set yet. Try: \"set budget food 5000\" to create one."
+            else:
+                lines = ["🎯 **Your Budgets**\n"]
+                for row in status_rows:
+                    limit = float(row.get('limit_amount') or 0)
+                    spent = float(row.get('spent_this_period') or 0)
+                    pct = (spent / limit * 100) if limit else 0
+                    icon = "🔴" if pct >= 100 else "🟡" if pct >= float(row.get('alert_threshold_pct') or 80) else "🟢"
+                    lines.append(
+                        f"{icon} {str(row.get('category', '')).title()} ({row.get('period', 'monthly')}): "
+                        f"KES {spent:,.0f} / {limit:,.0f} ({pct:.0f}%)"
+                    )
+                analysis = "\n".join(lines)
+            return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
+        # ── END BUDGET GOALS + ALERTS ──────────────────────────────────────
 
         if any(k in question_lower for k in BUDGET_KEYWORDS):
             logger.info("📋 BUDGET PLAN")
@@ -555,6 +674,28 @@ async def ask_question(request: QuestionRequest):
 
             return AnalysisResponse(question=request.question, analysis=analysis, chart=chart_img)
         # ── END FORECAST ───────────────────────────────────────────────────
+
+        # ── SMARTER ANOMALY DETECTION (NEW) ──────────────────────────────────
+        if any(k in question_lower for k in ANOMALY_KEYWORDS):
+            logger.info("🕵️ ML ANOMALY DETECTION")
+            anomaly_days = parse_days_from_question(question_lower, default=90)
+            result = analyzer.get_smart_anomalies(days=anomaly_days, force_refresh=False)
+            flagged = result.get('anomalies', [])
+
+            chart_img = None
+            if flagged:
+                df = pd.DataFrame(flagged)
+                chart_img = generate_bar_chart(
+                    df, 'recipient', 'amount',
+                    title=f"🕵️ Unusual Transactions (last {anomaly_days}d)"
+                )
+                header = f"🕵️ **{len(flagged)} Unusual Transaction(s) Found (last {anomaly_days} days)**\n\n"
+            else:
+                header = f"✅ **No Unusual Transactions (last {anomaly_days} days)**\n\n"
+
+            analysis = clean_response(header + result.get('insight', ''))
+            return AnalysisResponse(question=request.question, analysis=analysis, chart=chart_img)
+        # ── END SMARTER ANOMALY DETECTION ────────────────────────────────────
 
         chart_keywords = {
             'bar': ('💰 Spending by Category', 'merchant_category', 'total_amount'),
@@ -734,6 +875,16 @@ async def ask_question(request: QuestionRequest):
   • "Forecast 30 days" → Next 30-day spending prediction
   • "Spending prediction" → Same as "forecast"
   • Returns predicted amount, trend, risk level + AI summary
+
+🕵️ **ANOMALY DETECTION**:
+  • "Anomalies" / "Unusual spending" → ML-flagged unusual transactions
+  • Learns YOUR normal pattern per category, not a generic threshold
+
+🎯 **BUDGET GOALS**:
+  • "Set budget food 5000" → Monthly food budget of KES 5,000
+  • "Set budget transport 3000 weekly" → Weekly transport budget
+  • "My budgets" / "Budget status" → Current spend vs each limit
+  • I'll proactively ping you here if you get close to or go over
 
 ✨ Just ask naturally! Charts & analysis are smart."""
             return AnalysisResponse(question=request.question, analysis=help_text)

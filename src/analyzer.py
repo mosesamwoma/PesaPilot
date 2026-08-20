@@ -4,6 +4,8 @@ from typing import Dict, List, Optional
 from src.database import SupabaseDB
 from src.groq_client import GroqClient
 from src import forecasting
+from src import anomaly_detector
+from src import budget_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +223,113 @@ class MpesaAnalyzer:
             'horizon_30': self.get_forecast(horizon_days=30),
         }
     # ── END FORECAST ───────────────────────────────────────────────────────
+
+    # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
+    def get_smart_anomalies(self, days: int = 90, force_refresh: bool = False) -> Dict:
+        """Run the per-category ML anomaly model (src/anomaly_detector.py)
+        over recent transactions, persist the results (baselines + flagged
+        transactions) so the dashboard doesn't need to recompute them on
+        every load, and return a Groq-narrated summary alongside the raw
+        list. Set force_refresh=True to re-run detection even if a cached
+        version exists (e.g. after new transactions land)."""
+        cache_key = f'smart_anomalies_{days}'
+        if not force_refresh and cache_key in self._cache:
+            return self._cache[cache_key]
+
+        try:
+            transactions = self.db.get_transactions(days=days, limit=5000)
+
+            baselines = anomaly_detector.compute_baselines(transactions)
+            if baselines:
+                self.db.save_spending_baselines(baselines)
+
+            flagged = anomaly_detector.detect_anomalies(transactions)
+            if flagged:
+                self.db.save_anomalies(flagged)
+
+            # Re-read from the DB (rather than using `flagged` directly) so
+            # the response reflects any human `reviewed` flags already set,
+            # and stays consistent with what the dashboard queries.
+            saved = self.db.get_saved_anomalies(days=days, limit=20)
+            insight = self.groq.generate_anomaly_insights(saved) if saved else ""
+
+            result = {
+                'anomalies': saved,
+                'baselines': baselines,
+                'count': len(saved),
+                'insight': insight or "No unusual transactions detected in your recent spending — everything looks consistent with your normal pattern. ✅",
+            }
+            self._cache[cache_key] = result
+            return result
+        except Exception as e:
+            logger.error(f"get_smart_anomalies failed: {e}")
+            return {
+                'anomalies': [],
+                'baselines': [],
+                'count': 0,
+                'insight': "Could not run anomaly detection right now. Please try again later.",
+            }
+    # ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────
+
+    # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────
+    def set_budget(self, category: str, limit_amount: float, period: str = 'monthly',
+                    alert_threshold_pct: int = 80) -> Dict:
+        """Create or update a budget goal for a category."""
+        budget = self.db.upsert_budget(category, limit_amount, period, alert_threshold_pct)
+        self._cache.clear()
+        if not budget:
+            return {'success': False, 'error': f"Could not save budget for {category}"}
+        return {'success': True, 'budget': budget}
+
+    def get_budgets_overview(self) -> List[Dict]:
+        """Live status (spent vs limit, % used) for every active budget —
+        used by the dashboard and by 'my budgets' WhatsApp queries."""
+        return self.db.get_budget_status()
+
+    def check_budget_alerts(self) -> List[Dict]:
+        """Evaluate every active budget against the current period's spend
+        and return the WhatsApp-ready messages for any NEW breach (near or
+        over budget) that hasn't already been sent this period. Recording
+        an alert as sent happens here, so calling this twice in a row
+        won't double-ping the user for the same breach.
+
+        Returns a list of {category, alert_level, message} dicts, empty if
+        nothing new needs to be sent.
+        """
+        try:
+            status_rows = self.db.get_budget_status()
+            if not status_rows:
+                return []
+
+            recent = self.db.get_recent_budget_alerts(since_days=45)
+            already_alerted = {
+                (r['budget_id'], r['period_start'], r['alert_level']) for r in recent
+            }
+
+            due = budget_monitor.evaluate_budgets(status_rows, already_alerted)
+            if not due:
+                return []
+
+            results = []
+            for alert in due:
+                message = self.groq.budget_alert_message(alert)
+                sent = self.db.record_budget_alert(
+                    budget_id=alert['budget_id'],
+                    period_start=alert['period_start'],
+                    alert_level=alert['alert_level'],
+                    amount_spent=alert['amount_spent'],
+                )
+                if sent:
+                    results.append({
+                        'category': alert['category'],
+                        'alert_level': alert['alert_level'],
+                        'message': message,
+                    })
+            return results
+        except Exception as e:
+            logger.error(f"check_budget_alerts failed: {e}")
+            return []
+    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
 
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
         """Parse a single M-Pesa SMS text and insert it into the database.

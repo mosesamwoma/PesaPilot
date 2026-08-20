@@ -33,3 +33,4 @@ apscheduler>=3.10.1
 # ML & Forecasting
 prophet>=1.1.7
 cmdstanpy>=1.2.0
+scikit-learn>=1.4.0

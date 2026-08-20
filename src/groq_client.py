@@ -307,3 +307,62 @@ You are explaining a {horizon}-day spending FORECAST produced by a statistical m
         )
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
     # ── END FORECAST ───────────────────────────────────────────────────────
+
+    # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
+    def generate_anomaly_insights(self, anomalies: list) -> str:
+        """Explain a batch of ML-flagged unusual transactions (from
+        src/anomaly_detector.py's per-category IsolationForest, not a
+        global z-score) in plain language. `anomalies` items look like:
+        {amount, recipient, merchant_category, timestamp, score, model}."""
+        if not anomalies:
+            return ""
+        system = KENYA_SYSTEM_PROMPT + """
+
+You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC USER compared to their own normal spending pattern in that same category — not compared to other people. Apply Rules 1-7 wherever they fit. For each item, name the amount, recipient/category, and briefly why it stands out relative to their usual pattern in that category. Don't be alarmist — some flagged transactions are perfectly legitimate one-offs (a big one-time purchase, a rare emergency). End with one practical next step (e.g. review it, or ignore if expected). Max 180 words. No database/SQL/model/technical language — never say "IsolationForest", "z-score", or "outlier model" by name."""
+        lines = [
+            f"KES {a.get('amount', 0):,.0f} to {a.get('recipient', 'Unknown')} "
+            f"({a.get('merchant_category', 'other')}) on {a.get('timestamp', '')} "
+            f"— unusualness score {a.get('score', 0)}"
+            for a in anomalies[:6]
+        ]
+        user = "Flagged transactions:\n" + "\n".join(lines)
+        return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
+    # ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────
+
+    # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────
+    def budget_alert_message(self, alert: dict) -> str:
+        """Turn one due budget alert (see src/budget_monitor.py) into a
+        short, proactive WhatsApp ping. Kept short since this is pushed
+        unprompted, not asked for."""
+        category = str(alert.get('category', 'this category')).title()
+        spent = alert.get('amount_spent', 0)
+        limit = alert.get('limit_amount', 0)
+        pct = alert.get('pct_used', 0)
+        level = alert.get('alert_level', 'warning')
+        period = alert.get('period', 'monthly')
+
+        system = KENYA_SYSTEM_PROMPT + """
+
+You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the user did not ask for this right now, so respect their time. Apply Rules 1-7 where they fit but keep it SHORT: 2-4 sentences max, not a full breakdown. State the category, amount spent vs limit, and percentage clearly. If alert_level is 'over', be direct but not judgmental — suggest one concrete way to course-correct for the rest of the period. If alert_level is 'warning' (near budget), be encouraging — a friendly heads-up, not a scolding. End with one short next step. No headers, no bullet lists — just 2-4 warm sentences."""
+        user = (
+            f"Category: {category}\n"
+            f"Period: {period}\n"
+            f"Spent so far: KES {spent:,.0f}\n"
+            f"Budget limit: KES {limit:,.0f}\n"
+            f"Percentage used: {pct}%\n"
+            f"Alert level: {'OVER budget' if level == 'over' else 'Approaching budget limit'}"
+        )
+        result = self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
+        if result:
+            return result
+
+        # Fallback if the LLM call fails — a budget alert should never
+        # silently disappear just because Groq timed out.
+        icon = "🚨" if level == "over" else "⚠️"
+        verb = "gone over" if level == "over" else "is close to"
+        return (
+            f"{icon} Budget check: your {category} spending {verb} its {period} limit — "
+            f"KES {spent:,.0f} of KES {limit:,.0f} ({pct}%)."
+        )
+    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
+    # ── END FORECAST ───────────────────────────────────────────────────────

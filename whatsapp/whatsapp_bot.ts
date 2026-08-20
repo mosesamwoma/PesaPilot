@@ -39,6 +39,19 @@ interface DailySummaryResponse {
     summary: string;
 }
 
+// ── BUDGET GOALS + ALERTS (NEW) ─────────────────────────────────────────
+interface BudgetAlert {
+    category: string;
+    alert_level: 'warning' | 'over';
+    message: string;
+}
+
+interface BudgetAlertsResponse {
+    alerts: BudgetAlert[];
+    count: number;
+}
+// ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
+
 interface ParseSMSResponse {
     success: boolean;
     summary: string;
@@ -567,6 +580,56 @@ function setupDailySummary(): void {
 }
 
 setupDailySummary();
+
+// ──────────────────────────────────────────────────────────────
+// BUDGET ALERT CRON — proactive near/over-budget pings, every 2 hours
+// ──────────────────────────────────────────────────────────────
+// (NEW) Runs on top of the daily summary cron above. Every 2 hours it asks
+// the API which budgets have crossed their alert threshold or gone over
+// this period, and — unlike the daily summary — only messages the user
+// when there's actually something new to say (the API itself handles
+// de-duplication via the budget_alerts table, so this job is safe to run
+// often without ever double-pinging for the same breach).
+
+function setupBudgetCheck(): void {
+    const mainNumericGlobal = stripSuffix(config.mainNumber);
+    const BUDGET_ALERT_JID = config.mainNumber.includes('@')
+        ? config.mainNumber
+        : `${mainNumericGlobal}@s.whatsapp.net`;
+
+    cron.schedule('0 */2 * * *', async () => {
+        console.log('\n⏰ Running scheduled budget check job...');
+        if (!currentSock || !isConnected) {
+            console.warn('⚠️  Skipped: bot is not currently connected.\n');
+            return;
+        }
+        try {
+            const response = await callApi<BudgetAlertsResponse>('/budget-check');
+            const alerts = response?.alerts || [];
+
+            if (alerts.length === 0) {
+                console.log('✅ Budget check: nothing new to report.\n');
+                return;
+            }
+
+            for (const alert of alerts) {
+                const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
+                await currentSock.sendMessage(BUDGET_ALERT_JID, {
+                    text: `${icon} ${alert.message}`,
+                });
+                await sleep(500); // small gap between back-to-back alerts
+            }
+            console.log(`✅ Sent ${alerts.length} budget alert(s)\n`);
+        } catch (error) {
+            const err = error as Error;
+            console.error(`❌ Budget check cron error: ${err.message}\n`);
+        }
+    }, { timezone: 'Africa/Nairobi' });
+
+    console.log('📅 Budget check scheduled every 2 hours (Africa/Nairobi)\n');
+}
+
+setupBudgetCheck();
 
 // ──────────────────────────────────────────────────────────────
 // SHUTDOWN HANDLERS

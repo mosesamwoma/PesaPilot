@@ -1,12 +1,27 @@
 -- ============================================================
--- PesaPilot Database Schema
--- Run this in Supabase SQL Editor: https://supabase.com/dashboard
+-- 3. Create the database schema
+-- ============================================================
+-- 1. Go to https://supabase.com/dashboard, select your project,
+--    then open SQL Editor -> New Query.
+-- 2. Paste the contents of this file into the SQL Editor.
+-- 3. Click Run.
+--
+-- You should see: PesaPilot DB ready ✅
 -- ============================================================
 
--- 1. Main transactions table
-CREATE TABLE IF NOT EXISTS transactions (
-    id SERIAL PRIMARY KEY,
-    transaction_id TEXT UNIQUE,
+-- Needed for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ------------------------------------------------------------
+-- 1. transactions
+-- Core table. `id` is a UUID — the safe, unique identifier used
+-- everywhere else (this is your "unique transaction ID").
+-- `transaction_id` is the M-Pesa-provided code, used to prevent
+-- the same SMS being inserted twice.
+-- ------------------------------------------------------------
+CREATE TABLE transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transaction_id TEXT UNIQUE NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     balance DECIMAL(12,2),
     type TEXT NOT NULL,
@@ -20,14 +35,86 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- 2. Indexes
-CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp);
-CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
-CREATE INDEX IF NOT EXISTS idx_transactions_amount ON transactions(amount);
-CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_category);
-CREATE INDEX IF NOT EXISTS idx_transactions_recipient ON transactions(recipient);
+CREATE INDEX idx_transactions_timestamp ON transactions(timestamp);
+CREATE INDEX idx_transactions_type ON transactions(type);
+CREATE INDEX idx_transactions_amount ON transactions(amount);
+CREATE INDEX idx_transactions_merchant ON transactions(merchant_category);
+CREATE INDEX idx_transactions_recipient ON transactions(recipient);
 
--- 3. RPC function so Python can run arbitrary SELECT queries
+-- ------------------------------------------------------------
+-- 2. budgets
+-- One row per category you want to set a spending limit on.
+-- ------------------------------------------------------------
+CREATE TABLE budgets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category TEXT NOT NULL,
+    period TEXT NOT NULL DEFAULT 'monthly',
+    limit_amount DECIMAL(12,2) NOT NULL,
+    alert_threshold_pct INT NOT NULL DEFAULT 80,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(category, period)
+);
+
+CREATE INDEX idx_budgets_category ON budgets(category);
+
+-- ------------------------------------------------------------
+-- 3. budget_alerts
+-- Log of alerts already sent, so the WhatsApp bot never pings
+-- you twice for the same budget breach in the same period.
+-- ------------------------------------------------------------
+CREATE TABLE budget_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
+    period_start DATE NOT NULL,
+    alert_level TEXT NOT NULL,
+    amount_spent DECIMAL(12,2) NOT NULL,
+    sent_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(budget_id, period_start, alert_level)
+);
+
+CREATE INDEX idx_budget_alerts_budget ON budget_alerts(budget_id);
+
+-- ------------------------------------------------------------
+-- 4. spending_baselines
+-- One row per merchant_category, holding stats used to judge
+-- what's "normal" for THAT category specifically — this is what
+-- makes anomaly detection personalized instead of one global
+-- threshold across every kind of spending.
+-- ------------------------------------------------------------
+CREATE TABLE spending_baselines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_category TEXT NOT NULL UNIQUE,
+    mean_amount DECIMAL(12,2),
+    std_amount DECIMAL(12,2),
+    median_amount DECIMAL(12,2),
+    mad_amount DECIMAL(12,2),
+    sample_size INT,
+    computed_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ------------------------------------------------------------
+-- 5. anomalies
+-- Flagged unusual transactions, saved so they don't need to be
+-- recalculated every time the dashboard loads.
+-- ------------------------------------------------------------
+CREATE TABLE anomalies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transaction_id UUID REFERENCES transactions(id) ON DELETE CASCADE,
+    model TEXT NOT NULL DEFAULT 'category_mad',
+    score DECIMAL(6,3),
+    reviewed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(transaction_id, model)
+);
+
+CREATE INDEX idx_anomalies_tx ON anomalies(transaction_id);
+CREATE INDEX idx_anomalies_model ON anomalies(model);
+
+-- ------------------------------------------------------------
+-- 6. run_query — lets the Python backend run SELECT-only queries
+-- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION run_query(query TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -36,7 +123,6 @@ AS $$
 DECLARE
     result JSONB;
 BEGIN
-    -- Safety: only allow SELECT
     IF UPPER(TRIM(query)) NOT LIKE 'SELECT%' THEN
         RAISE EXCEPTION 'Only SELECT queries are allowed';
     END IF;
@@ -45,7 +131,9 @@ BEGIN
 END;
 $$;
 
--- 4. Daily summary view
+-- ------------------------------------------------------------
+-- 7. daily_summary — spend/income totals per day
+-- ------------------------------------------------------------
 CREATE OR REPLACE VIEW daily_summary AS
 SELECT
     DATE(timestamp) as date,
@@ -59,7 +147,9 @@ FROM transactions
 GROUP BY DATE(timestamp)
 ORDER BY date DESC;
 
--- 5. Category summary view
+-- ------------------------------------------------------------
+-- 8. category_summary — spend/income totals per category
+-- ------------------------------------------------------------
 CREATE OR REPLACE VIEW category_summary AS
 SELECT
     merchant_category,
@@ -72,5 +162,28 @@ FROM transactions
 GROUP BY merchant_category
 ORDER BY total_amount DESC;
 
--- 6. Verify setup
-SELECT 'PesaPilot DB ready ✅' as status;
+-- ------------------------------------------------------------
+-- 9. budget_status — how much you've spent this period vs. limit
+-- ------------------------------------------------------------
+CREATE OR REPLACE VIEW budget_status AS
+SELECT
+    b.id as budget_id,
+    b.category,
+    b.period,
+    b.limit_amount,
+    b.alert_threshold_pct,
+    COALESCE(SUM(t.amount) FILTER (
+        WHERE t.type != 'credit'
+        AND t.timestamp >= date_trunc(
+            CASE WHEN b.period = 'weekly' THEN 'week' ELSE 'month' END, NOW()
+        )
+    ), 0) as spent_this_period
+FROM budgets b
+LEFT JOIN transactions t ON t.merchant_category = b.category
+WHERE b.active = TRUE
+GROUP BY b.id, b.category, b.period, b.limit_amount, b.alert_threshold_pct;
+
+-- ------------------------------------------------------------
+-- 10. Confirm it worked
+-- ------------------------------------------------------------
+SELECT 'PesaPilot v2 schema ready ✅' as status;

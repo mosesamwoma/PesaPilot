@@ -45,6 +45,7 @@ rsync -avz --progress \
   --exclude 'dist' \
   --exclude 'Containerfile' \
   --exclude 'compose.yaml' \
+  --exclude '.containerignore' \
   --exclude 'assets' \
   --exclude '.git' \
   --exclude 'sessions' \
@@ -57,7 +58,7 @@ rsync -avz --progress \
   --exclude '.wwebjs_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
 
-ssh "$VPS_USER@$VPS_HOST" "rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yaml"
+ssh "$VPS_USER@$VPS_HOST" "rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yaml $VPS_PATH/.containerignore"
 
 # ── Step 2: rebuild / restart on the VPS ───────────────────────────────────
 if [ "$DO_BUILD" = true ]; then

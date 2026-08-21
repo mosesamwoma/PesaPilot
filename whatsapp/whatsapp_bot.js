@@ -135,6 +135,7 @@ const startupWatchdog = setTimeout(() => {
     }
 }, STARTUP_TIMEOUT_MS);
 startupWatchdog.unref();
+let isReady = false;
 
 // ──────────────────────────────────────────────────────────────
 // EVENT HANDLERS
@@ -163,6 +164,7 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
     startupResolved = true;
+    isReady = true;
     console.log('\n╔═══════════════════════════════════════════════════════╗');
     console.log('║              ✅ BOT IS ONLINE!                        ║');
     console.log('╚═══════════════════════════════════════════════════════╝');
@@ -286,6 +288,7 @@ client.on('message', async (message) => {
 });
 
 client.on('disconnected', (reason) => {
+    isReady = false;
     console.log(`\n⚠️ Disconnected: ${reason}`);
     console.log('🔄 Attempting to reconnect...\n');
 });
@@ -298,6 +301,10 @@ const DAILY_SUMMARY_CHAT_ID = MAIN_NUMBER.includes('@') ? MAIN_NUMBER : `${mainN
 
 cron.schedule('0 21 * * *', async () => {
     console.log('\n⏰ Running scheduled daily summary job (21:00 Africa/Nairobi)...');
+    if (!isReady) {
+        console.warn('⚠️  Skipped: bot is not currently connected.\n');
+        return;
+    }
     try {
         const response = await axios.get(`${API_URL}/daily-summary`, { timeout: 20000 });
         const summaryText = response?.data?.summary || '⚠️ Could not generate summary.';
@@ -309,6 +316,37 @@ cron.schedule('0 21 * * *', async () => {
 }, { timezone: 'Africa/Nairobi' });
 
 console.log('📅 Daily summary scheduled for 9:00 PM Africa/Nairobi every day\n');
+
+// ──────────────────────────────────────────────────────────────
+// BUDGET ALERT CRON — proactive near/over-budget pings, every 2 hours
+// ──────────────────────────────────────────────────────────────
+cron.schedule('0 */2 * * *', async () => {
+    console.log('\n⏰ Running scheduled budget check job...');
+    if (!isReady) {
+        console.warn('⚠️  Skipped: bot is not currently connected.\n');
+        return;
+    }
+    try {
+        const response = await axios.get(`${API_URL}/budget-check`, { timeout: 20000 });
+        const alerts = response?.data?.alerts || [];
+
+        if (alerts.length === 0) {
+            console.log('✅ Budget check: nothing new to report.\n');
+            return;
+        }
+
+        for (const alert of alerts) {
+            const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
+            await client.sendMessage(DAILY_SUMMARY_CHAT_ID, `${icon} ${alert.message}`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        console.log(`✅ Sent ${alerts.length} budget alert(s)\n`);
+    } catch (error) {
+        console.error(`❌ Budget check cron error: ${error.message}\n`);
+    }
+}, { timezone: 'Africa/Nairobi' });
+
+console.log('📅 Budget check scheduled every 2 hours (Africa/Nairobi)\n');
 
 function splitMessage(text, maxLength) {
     if (text.length <= maxLength) return [text];

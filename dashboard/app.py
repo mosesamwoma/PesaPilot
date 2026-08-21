@@ -105,6 +105,29 @@ BUDGET_KEYWORDS = ['budget plan', 'budget', 'how should i budget', 'monthly plan
 INVEST_KEYWORDS = ['invest', 'investment', 'where to invest', 'grow my money', 'grow savings', 'mmf', 'money market fund',
                     'treasury bill', 't-bill', 'sacco', 'put my money']
 
+# ── SMARTER ANOMALY DETECTION (kept in sync with whatsapp/whatsapp_api.py) ──
+ANOMALY_KEYWORDS = [
+    'anomaly', 'anomalies', 'unusual spending', 'unusual transaction', 'weird transaction',
+    'strange transaction', 'suspicious transaction', 'flagged transaction', 'odd spending',
+    'out of pattern', 'is anything unusual',
+]
+# ── END SMARTER ANOMALY DETECTION ────────────────────────────────────────────
+
+# ── BUDGET GOALS + ALERTS (kept in sync with whatsapp/whatsapp_api.py) ──────
+BUDGET_STATUS_KEYWORDS = [
+    'my budgets', 'budget status', 'how are my budgets', 'budget check',
+    'check my budget', 'am i over budget', 'am i within budget', 'budget progress',
+]
+# Matches things like: "set budget food 5000", "set budget for food to 5000",
+# "budget limit transport 3000 weekly", "set food budget 5,000"
+SET_BUDGET_PATTERN = re.compile(
+    r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
+    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>[\d,]+(?:\.\d+)?)\s*'
+    r'(?P<period>weekly|monthly)?',
+    re.IGNORECASE,
+)
+# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
+
 CATEGORY_SYNONYMS = {
     'food': ['food', 'groceries', 'grocery', 'eating', 'restaurant', 'eats', 'lunch', 'dinner', 'kibanda', 'mama mboga'],
     'transport': ['transport', 'fare', 'matatu', 'uber', 'bolt', 'taxi', 'fuel', 'petrol', 'boda'],
@@ -180,6 +203,17 @@ HELP_TEXT = """🤖 **PesaPilot v2.1 - Your AI Financial Assistant**
   • "Forecast 30 days" → Next 30-day spending prediction
   • "Spending prediction" → Same as "forecast"
   • Returns predicted amount, trend, risk level + AI summary
+
+🕵️ **ANOMALY DETECTION**:
+  • "Anomalies" / "Unusual spending" → ML-flagged unusual transactions
+  • Learns YOUR normal pattern per category, not a generic threshold
+  • Also browsable on the 🕵️ Anomalies page in the sidebar
+
+🎯 **BUDGET GOALS**:
+  • "Set budget food 5000" → Monthly food budget of KES 5,000
+  • "Set budget transport 3000 weekly" → Weekly transport budget
+  • "My budgets" / "Budget status" → Current spend vs each limit
+  • Manage budgets anytime on the 🎯 Budgets page in the sidebar
 
 ✨ Just ask naturally! Charts & analysis are smart."""
 
@@ -510,11 +544,55 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
     question_lower = question.lower().strip()
 
     # NOTE: check order below is intentionally identical to whatsapp_api.py's
-    # /ask endpoint: budget → invest → forecast → chart → help → daily/today
-    # → summary → fallback. Do not reorder — question_lower substring checks
-    # overlap (e.g. 'daily trend' contains both a chart keyword and 'daily'),
-    # so whichever branch runs first wins, and the bot and dashboard must
-    # agree on which one that is.
+    # /ask endpoint: set-budget → budget-status → budget-plan → invest →
+    # forecast → anomaly → chart → help → daily/today → summary → fallback.
+    # Do not reorder — question_lower substring checks overlap (e.g. 'daily
+    # trend' contains both a chart keyword and 'daily'), so whichever branch
+    # runs first wins, and the bot and dashboard must agree on which one
+    # that is.
+
+    # ── BUDGET GOALS + ALERTS: set a budget ─────────────────────────────────
+    # Checked BEFORE BUDGET_KEYWORDS below, since "set budget food 5000"
+    # would otherwise just be caught by the word "budget" and routed to the
+    # generic budget-PLAN advice instead.
+    if question_lower.startswith('set budget') or question_lower.startswith('budget limit'):
+        logger.info("🎯 SET BUDGET")
+        match = SET_BUDGET_PATTERN.search(question)
+        if match:
+            category = match.group('category').strip().lower()
+            amount = float(match.group('amount').replace(',', ''))
+            period = (match.group('period') or 'monthly').lower()
+            result = analyzer.set_budget(category, amount, period=period)
+            if result.get('success'):
+                content = (
+                    f"🎯 Budget set: {category.title()} — KES {amount:,.0f} per {period}.\n"
+                    f"Check the 🎯 Budgets page anytime to see progress."
+                )
+            else:
+                content = f"❌ Couldn't set that budget: {result.get('error', 'unknown error')}"
+        else:
+            content = "❌ Couldn't read that. Try: \"set budget food 5000\" or \"set budget transport 3000 weekly\""
+        return {'content': clean_response(content), 'sql': None, 'results': None, 'fig': None}
+
+    # ── BUDGET GOALS + ALERTS: check status ─────────────────────────────────
+    if any(k in question_lower for k in BUDGET_STATUS_KEYWORDS):
+        logger.info("🎯 BUDGET STATUS")
+        status_rows = analyzer.get_budgets_overview()
+        if not status_rows:
+            content = "📭 No budgets set yet. Try: \"set budget food 5000\" to create one, or use the 🎯 Budgets page."
+        else:
+            lines = ["🎯 **Your Budgets**\n"]
+            for row in status_rows:
+                limit = float(row.get('limit_amount') or 0)
+                spent = float(row.get('spent_this_period') or 0)
+                pct = (spent / limit * 100) if limit else 0
+                icon = "🔴" if pct >= 100 else "🟡" if pct >= float(row.get('alert_threshold_pct') or 80) else "🟢"
+                lines.append(
+                    f"{icon} {str(row.get('category', '')).title()} ({row.get('period', 'monthly')}): "
+                    f"KES {spent:,.0f} / {limit:,.0f} ({pct:.0f}%)"
+                )
+            content = "\n".join(lines)
+        return {'content': clean_response(content), 'sql': None, 'results': None, 'fig': None}
 
     # ── BUDGET PLAN ───────────────────────────────────────────────────────
     if any(k in question_lower for k in BUDGET_KEYWORDS):
@@ -555,6 +633,28 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         ai_summary = forecast_data.get('insight', '')
         content = clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else ""))
         return {'content': content, 'sql': None, 'results': None, 'fig': fig}
+
+    # ── SMARTER ANOMALY DETECTION ────────────────────────────────────────────
+    if any(k in question_lower for k in ANOMALY_KEYWORDS):
+        logger.info("🕵️ ML ANOMALY DETECTION")
+        anomaly_days = parse_days_from_question(question_lower, default=90)
+        result = analyzer.get_smart_anomalies(days=anomaly_days, force_refresh=False)
+        flagged = result.get('anomalies', [])
+
+        fig = None
+        if flagged:
+            df = pd.DataFrame(flagged)
+            fig = chat_bar_chart(
+                df, 'recipient', 'amount',
+                title=f"🕵️ Unusual Transactions (last {anomaly_days}d)"
+            )
+            header = f"🕵️ **{len(flagged)} Unusual Transaction(s) Found (last {anomaly_days} days)**\n\n"
+        else:
+            header = f"✅ **No Unusual Transactions (last {anomaly_days} days)**\n\n"
+
+        content = clean_response(header + result.get('insight', ''))
+        return {'content': content, 'sql': None, 'results': None, 'fig': fig}
+    # ── END SMARTER ANOMALY DETECTION ────────────────────────────────────────
 
     # ── CHARTS ────────────────────────────────────────────────────────────
     chart_type = None
@@ -695,7 +795,7 @@ def main() -> None:
         st.markdown("*Your M-Pesa Financial Advisor*")
         st.divider()
 
-        page: str = st.radio("Navigate", ["📊 Dashboard", "🔮 Forecast", "💬 Ask AI", "📋 Transactions", "⚠️ Anomalies"])
+        page: str = st.radio("Navigate", ["📊 Dashboard", "🔮 Forecast", "🎯 Budgets", "💬 Ask AI", "📋 Transactions", "🕵️ Anomalies"])
         st.divider()
 
         days: int = st.slider("Analysis period (days)", 7, 180, 30)
@@ -711,7 +811,6 @@ def main() -> None:
     summary: dict[str, Any] = data.get('summary', {})
     category_data: list[dict[str, Any]] = data.get('spending_by_category', [])
     daily_trend: list[dict[str, Any]] = data.get('daily_trend', [])
-    anomalies: list[dict[str, Any]] = data.get('anomalies', [])
     top_merchants: list[dict[str, Any]] = data.get('top_merchants', [])
     recent_txs: list[dict[str, Any]] = data.get('recent_transactions', [])
     insights: str = data.get('insights', '')
@@ -976,6 +1075,84 @@ def main() -> None:
 
             st.caption(f"Based on {forecast_data.get('history_days', 0)} days of spending history")
 
+    # ── BUDGETS (NEW) ──────────────────────────────────────────────────────
+    elif page == "🎯 Budgets":
+        st.title("🎯 Budget Goals")
+        st.caption("Set spending limits per category and track progress live")
+
+        budgets: list[dict[str, Any]] = analyzer.get_budgets_overview()
+
+        st.subheader("Current Budgets")
+        if budgets:
+            for row in budgets:
+                limit_amt = float(row.get('limit_amount') or 0)
+                spent_amt = float(row.get('spent_this_period') or 0)
+                pct = (spent_amt / limit_amt * 100) if limit_amt else 0
+                threshold = float(row.get('alert_threshold_pct') or 80)
+                icon = "🔴" if pct >= 100 else "🟡" if pct >= threshold else "🟢"
+
+                bc1, bc2 = st.columns([3, 1])
+                with bc1:
+                    st.markdown(
+                        f"**{icon} {str(row.get('category', '')).title()}** "
+                        f"({row.get('period', 'monthly')}) — "
+                        f"KES {spent_amt:,.0f} / {limit_amt:,.0f} ({pct:.0f}%)"
+                    )
+                    st.progress(min(pct / 100, 1.0))
+                with bc2:
+                    st.caption(f"Alert at {threshold:.0f}%")
+                st.markdown("")
+        else:
+            st.info("No budgets set yet. Create one below.")
+
+        st.divider()
+
+        st.subheader("Set / Update a Budget")
+        st.caption("Setting a budget for a category + period you've already used updates its limit.")
+        with st.form("set_budget_form", clear_on_submit=True):
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                category_input: str = st.selectbox(
+                    "Category", list(CATEGORY_SYNONYMS.keys()),
+                    format_func=lambda c: c.title(),
+                )
+            with fc2:
+                limit_input: float = st.number_input("Monthly/weekly limit (KES)", min_value=0.0, step=500.0)
+            with fc3:
+                period_input: str = st.selectbox("Period", ["monthly", "weekly"])
+            threshold_input: int = st.slider("Alert threshold (%)", min_value=50, max_value=100, value=80, step=5)
+
+            submitted = st.form_submit_button("💾 Save Budget", use_container_width=True)
+            if submitted:
+                if limit_input <= 0:
+                    st.error("Enter a limit greater than 0.")
+                else:
+                    result = analyzer.set_budget(
+                        category_input, limit_input, period=period_input,
+                        alert_threshold_pct=threshold_input,
+                    )
+                    if result.get('success'):
+                        st.success(f"Budget saved: {category_input.title()} — KES {limit_input:,.0f} per {period_input}.")
+                        st.rerun()
+                    else:
+                        st.error(f"Could not save budget: {result.get('error', 'unknown error')}")
+
+        st.divider()
+        st.subheader("Check for New Alerts")
+        st.caption(
+            "The WhatsApp bot checks this automatically every 2 hours and pings you when a budget "
+            "crosses its threshold. Use this button to check right now instead of waiting."
+        )
+        if st.button("🔔 Check Now", use_container_width=True):
+            with st.spinner("Checking budgets..."):
+                new_alerts: list[dict[str, Any]] = analyzer.check_budget_alerts()
+            if new_alerts:
+                for alert in new_alerts:
+                    icon = "🚨" if alert.get('alert_level') == 'over' else "⚠️"
+                    st.warning(f"{icon} {alert.get('message', '')}")
+            else:
+                st.success("✅ Nothing new to report — no budgets have newly crossed their threshold.")
+
     # ── ASK AI ─────────────────────────────────────────────────────────────
     elif page == "💬 Ask AI":
         st.title("💬 Ask PesaPilot")
@@ -989,6 +1166,8 @@ def main() -> None:
             "Give me a budget plan",
             "What should I invest in?",
             "Forecast my spending",
+            "Any unusual spending?",
+            "My budgets",
             "Bar chart",
             "help",
         ]
@@ -1063,24 +1242,49 @@ def main() -> None:
         else:
             st.info("No transactions found. Load your M-Pesa XML backup to get started.")
 
-    # ── ANOMALIES ───────────────────────────────────────────────────────────
-    elif page == "⚠️ Anomalies":
-        st.title("⚠️ Unusual Transactions")
-        st.caption("Transactions significantly above your normal spending pattern")
+    # ── ANOMALIES (ML-based, matches whatsapp_api.py's /anomalies) ──────────
+    elif page == "🕵️ Anomalies":
+        st.title("🕵️ Unusual Transactions")
+        st.caption(
+            "ML-flagged transactions that stand out from YOUR OWN normal pattern in that "
+            "category — not compared to other people. Some flagged items are perfectly "
+            "legitimate one-offs (a big one-time purchase, a rare emergency)."
+        )
 
-        if anomalies:
-            for a in anomalies[:20]:
-                score: float = float(a.get('zscore', 0))
+        anom_days: int = st.slider("Lookback period (days)", 14, 180, 90, key="anomaly_days_slider")
+        force_refresh: bool = st.button("🔄 Re-run detection now", use_container_width=False)
+
+        with st.spinner("Scanning your spending pattern..."):
+            smart_result: dict[str, Any] = analyzer.get_smart_anomalies(days=anom_days, force_refresh=force_refresh)
+
+        flagged_txs: list[dict[str, Any]] = smart_result.get('anomalies', [])
+        insight_text: str = smart_result.get('insight', '')
+
+        if insight_text:
+            st.markdown(f"""
+            <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
+            💡 {insight_text.replace(chr(10), '<br>')}
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown("")
+
+        if flagged_txs:
+            st.subheader(f"{len(flagged_txs)} Flagged Transaction(s)")
+            for a in flagged_txs[:20]:
+                score = float(a.get('score', 0))
+                model_used = a.get('model', '')
+                model_label = "learned pattern" if 'isolation' in model_used else "statistical check"
                 st.markdown(f"""
                 <div class="anomaly-badge">
-                    ⚠️ <strong>{a.get('recipient', 'Unknown')}</strong> — KES {float(a.get('amount', 0)):,.2f}
+                    🕵️ <strong>{a.get('recipient', 'Unknown')}</strong> — KES {float(a.get('amount', 0)):,.2f}
+                    &nbsp;·&nbsp; {str(a.get('merchant_category', 'other')).title()}
                     &nbsp;·&nbsp; {str(a.get('timestamp', ''))[:16]}
-                    &nbsp;·&nbsp; z-score: {score:.1f}x above normal
+                    &nbsp;·&nbsp; unusualness score: {score:.1f} ({model_label})
                 </div>
                 """, unsafe_allow_html=True)
                 st.markdown("")
         else:
-            st.success("✅ No unusual transactions detected in your history.")
+            st.success(f"✅ No unusual transactions detected in the last {anom_days} days.")
 
 
 if __name__ == "__main__":

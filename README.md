@@ -139,21 +139,15 @@ This creates the `transactions` table, indexes, a `run_query(text)` RPC function
 
 ---
 
-## 5. Load your data
+## 5. Parse and load your data
 
-There is **no CLI command and no dashboard button** for bulk-loading an SMS backup — `run.py` only starts services (see [Run locally](#6-run-locally)), and the dashboard has no "Load Data" page. The parsing/loading logic still exists in `MpesaAnalyzer.load_transactions()`, so load your backup with a one-off script:
+Parse the SMS backup, save a cleaned CSV copy, and upsert the M-Pesa transactions into Supabase:
 
 ```bash
-python -c "
-from src.analyzer import MpesaAnalyzer
-count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml')
-print(f'Loaded {count} transactions')
-"
+python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml', 'data/processed/mpesa_transactions.csv'); print(f'Loaded {count} transactions')"
 ```
 
-Re-running on the same or updated file is safe — transactions are upserted on `transaction_id`, so duplicates are silently skipped.
-
-Once transactions exist in Supabase, the only way to add more afterward is one at a time, via the WhatsApp bot's manual SMS entry (`PIN-PASTE_SMS_HERE`) or the `/parse-sms` API endpoint — both call `MpesaAnalyzer.parse_and_insert_sms()`, the single-message counterpart to the bulk loader above.
+Replace `your-sms-backup.xml` with the name of your XML file. The cleaned CSV is saved to `data/processed/mpesa_transactions.csv`, and the parsed transactions are stored in Supabase. Re-running the command is safe because records are upserted by `transaction_id`.
 
 ---
 
@@ -512,7 +506,6 @@ python -m pytest tests/ -v
 ## Future Improvements
 
 - Multi-user support — currently hardcoded to one number/Supabase project
-- Bring back a data-loading entry point — `MpesaAnalyzer.load_transactions()` still works but has no CLI or dashboard UI in front of it
 - Other mobile money providers — Airtel Money, T-Kash via pluggable parsers
 - Self-hosted/local LLM option — for privacy-conscious users
 - CI/CD pipeline — automated tests + Docker builds via GitHub Actions

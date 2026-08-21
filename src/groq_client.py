@@ -165,35 +165,72 @@ class GroqClient:
             self.model_fast = legacy
 
         self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))
-        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 600))
+
+        # NOTE ON TRUNCATED OUTPUT (budget plans / investment advice getting
+        # cut off mid-sentence):
+        # openai/gpt-oss-20b and openai/gpt-oss-120b are REASONING models.
+        # By default Groq has them emit a hidden "reasoning" pass before the
+        # visible answer, and that reasoning is billed against the SAME
+        # max_tokens budget as the answer itself. At the old default of 600
+        # tokens, the model could burn most (or all) of the budget on
+        # reasoning for a 4-part structured answer (budget_plan /
+        # investment_advice), leaving the visible reply cut off partway
+        # through. Fixes:
+        #   1. Raise the default token budget so there's headroom for both
+        #      the reasoning pass and the full visible answer.
+        #   2. Ask Groq for low reasoning effort on these calls, since we
+        #      don't need deep chain-of-thought for templated financial
+        #      advice — this keeps most of the budget for the actual answer.
+        #   3. Log (and no longer silently swallow) truncated responses so
+        #      this is visible in the logs instead of just "half an answer".
+        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 1536))
+        self.reasoning_effort = os.getenv('LLM_REASONING_EFFORT', 'low')
 
     # ------------------------------------------------------------------
     # Internal: raw API call (no caching here — callers decide TTL)
     # ------------------------------------------------------------------
-    def _chat(self, system: str, user: str, model: str = None, timeout: int = 20) -> str:
+    def _chat(self, system: str, user: str, model: str = None, timeout: int = 20,
+              max_tokens: int = None) -> str:
+        resolved_model = model or self.model_fast
         try:
             resp = self.client.chat.completions.create(
-                model=model or self.model_fast,
+                model=resolved_model,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                max_tokens=max_tokens or self.max_tokens,
+                reasoning_effort=self.reasoning_effort,
                 messages=[
                     {'role': 'system', 'content': system},
                     {'role': 'user',   'content': user},
                 ]
             )
-            return resp.choices[0].message.content.strip()
+            choice = resp.choices[0]
+            content = (choice.message.content or "").strip()
+
+            if choice.finish_reason == 'length':
+                # The model ran out of tokens before finishing — this is the
+                # exact failure mode behind "output gets cut off". Log it
+                # loudly so it's diagnosable instead of silently shipping a
+                # half-finished answer.
+                logger.warning(
+                    f"Groq response TRUNCATED (finish_reason=length, "
+                    f"model={resolved_model}, max_tokens={max_tokens or self.max_tokens}, "
+                    f"chars_returned={len(content)})"
+                )
+
+            return content
         except Exception as e:
-            logger.error(f"Groq API error (model={model or self.model_fast}): {e}")
+            logger.error(f"Groq API error (model={resolved_model}): {e}")
             return ""
 
     # ------------------------------------------------------------------
     # Internal: cache-aware wrapper
     # ------------------------------------------------------------------
-    def _cached_chat(self, system: str, user: str, ttl: int, model: str = None) -> str:
+    def _cached_chat(self, system: str, user: str, ttl: int, model: str = None,
+                      max_tokens: int = None) -> str:
         cached = _cache.get(system, user)
         if cached is not None:
             return cached
-        response = self._chat(system, user, model=model)
+        response = self._chat(system, user, model=model, max_tokens=max_tokens)
         if response:                          # only cache successful responses
             _cache.set(system, user, response, ttl=ttl)
         return response
@@ -246,7 +283,7 @@ You are answering a question backed by pre-computed aggregate numbers from real 
         user_parts.append(f"Question: {question}")
         user_parts.append(f"Aggregated results: {aggregates}")
         user = "\n\n".join(user_parts)
-        return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_smart)
+        return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_smart, max_tokens=1200)
 
     def generate_insights(self, summary: dict, extra_context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -274,7 +311,7 @@ The user wants a concrete budget plan. Using their real spending context if give
 4. One concrete place to put the savings bucket (Sacco, MMF, or T-Bill) with a rough expected return.
 Apply Rules 1-7. Max 220 words. Use headers/bullets, no SQL/database language."""
         user = f"Financial context:\n{context}" if context else "No transaction context available — give a general but practical Kenyan budget framework, and ask one clarifying question about their income at the end."
-        return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart)
+        return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart, max_tokens=1800)
 
     def investment_advice(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -286,7 +323,7 @@ The user is asking where to invest or grow savings. Using their real financial c
 4. End with one encouraging, concrete next step they can do this week.
 Never mention Fuliza or name a specific bank/provider. Apply Rules 1-7. Max 220 words. No database/SQL language."""
         user = f"Financial context:\n{context}" if context else "No transaction context available — ask one quick question about their monthly surplus, then give a general Kenyan investment framework (MMF, T-Bills, Sacco) anyway."
-        return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart)
+        return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart, max_tokens=1800)
 
     # ── FORECAST (NEW) ─────────────────────────────────────────────────────
     def generate_forecast_insights(self, forecast_data: dict) -> str:

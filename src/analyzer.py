@@ -67,21 +67,23 @@ class MpesaAnalyzer:
         self.groq = GroqClient()
         self._cache: Dict = {}
 
-    def build_context_string(self, days: int = 30) -> str:
+    def build_context_string(self, days: Optional[int] = None) -> str:
         """Build a rich, human-readable context block from current financial data
-        so the AI has the full picture instead of just the raw question."""
+        so the AI has the full picture instead of just the raw question.
+        days=None (the default) pulls the user's entire transaction history."""
         try:
             summary = self.db.get_range_summary(days=days) or {}
             category_data = self.db.get_spending_by_category(days=days) or []
             daily_trend = self.db.get_daily_trend(days=days) or []
-            top_merchants = self.db.get_top_merchants(days=days, limit=5) or []
+            top_merchants = self.db.get_top_merchants(days=days, limit=None) or []
             anomalies = self.db.get_anomalies(days=days) or []
 
             total_spent = summary.get('total_spent', 0) or 0
             lines = []
 
+            period_label = f"last {days} days" if days is not None else "full history"
             lines.append(
-                f"Summary (last {days} days): {summary.get('total_transactions', 0)} transactions, "
+                f"Summary ({period_label}): {summary.get('total_transactions', 0)} transactions, "
                 f"Total Spent KES {total_spent:,.0f}, "
                 f"Total Received KES {summary.get('total_received', 0):,.0f}, "
                 f"Balance KES {summary.get('balance', 0):,.0f}."
@@ -119,11 +121,14 @@ class MpesaAnalyzer:
             logger.error(f"build_context_string failed: {e}")
             return ""
 
-    def ask_question(self, question: str, days: int = 90) -> Dict:
+    def ask_question(self, question: str, days: Optional[int] = None, row_limit: Optional[int] = None) -> Dict:
+        """days=None and row_limit=None (the defaults) give the question full,
+        unrestricted access to the user's entire transaction history — no
+        artificial date window or row cap."""
         try:
             context = self.build_context_string(days=days)
             schema = self.db.get_schema()
-            sql = self.groq.generate_sql(question, schema)
+            sql = self.groq.generate_sql(question, schema, days=days, row_limit=row_limit)
             logger.info(f"Generated SQL: {sql}")
 
             if not sql or not sql.upper().startswith('SELECT'):
@@ -156,7 +161,7 @@ class MpesaAnalyzer:
                 'error': str(e),
             }
 
-    def get_dashboard_data(self, days: int = 30, force_refresh: bool = False) -> Dict:
+    def get_dashboard_data(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
         cache_key = f'dashboard_{days}'
         if not force_refresh and cache_key in self._cache:
             return self._cache[cache_key]
@@ -165,9 +170,9 @@ class MpesaAnalyzer:
             summary = self.db.get_range_summary(days=days)
             category_spend = self.db.get_spending_by_category(days=days)
             daily_trend = self.db.get_daily_trend(days=days)
-            anomalies = self.db.get_anomalies()
-            top_merchants = self.db.get_top_merchants(days=days)
-            recent_txs = self.db.get_transactions(days=days, limit=50)
+            anomalies = self.db.get_anomalies(days=days)
+            top_merchants = self.db.get_top_merchants(days=days, limit=None)
+            recent_txs = self.db.get_transactions(days=days, limit=None)
             context = self.build_context_string(days=days)
             insights = self.groq.generate_insights(summary, extra_context=context) if summary else ""
 
@@ -192,7 +197,7 @@ class MpesaAnalyzer:
         horizon, aggregating the existing transaction history into daily totals,
         plus a Groq-generated natural-language summary of the projection."""
         try:
-            transactions = self.db.get_transactions(days=forecasting.TRAIN_HISTORY_DAYS, limit=5000)
+            transactions = self.db.get_transactions(days=forecasting.TRAIN_HISTORY_DAYS, limit=None)
             result = forecasting.generate_forecast(transactions, horizon_days=horizon_days)
 
             if not result.get('sufficient_data'):
@@ -225,7 +230,7 @@ class MpesaAnalyzer:
     # ── END FORECAST ───────────────────────────────────────────────────────
 
     # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
-    def get_smart_anomalies(self, days: int = 90, force_refresh: bool = False) -> Dict:
+    def get_smart_anomalies(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
         """Run the per-category ML anomaly model (src/anomaly_detector.py)
         over recent transactions, persist the results (baselines + flagged
         transactions) so the dashboard doesn't need to recompute them on
@@ -237,7 +242,7 @@ class MpesaAnalyzer:
             return self._cache[cache_key]
 
         try:
-            transactions = self.db.get_transactions(days=days, limit=5000)
+            transactions = self.db.get_transactions(days=days, limit=None)
 
             baselines = anomaly_detector.compute_baselines(transactions)
             if baselines:
@@ -250,7 +255,7 @@ class MpesaAnalyzer:
             # Re-read from the DB (rather than using `flagged` directly) so
             # the response reflects any human `reviewed` flags already set,
             # and stays consistent with what the dashboard queries.
-            saved = self.db.get_saved_anomalies(days=days, limit=20)
+            saved = self.db.get_saved_anomalies(days=days, limit=None)
             insight = self.groq.generate_anomaly_insights(saved) if saved else ""
 
             result = {

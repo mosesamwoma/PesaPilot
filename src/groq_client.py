@@ -251,7 +251,17 @@ class GroqClient:
     # ------------------------------------------------------------------
     # API methods
     # ------------------------------------------------------------------
-    def generate_sql(self, question: str, schema: str) -> str:
+    def generate_sql(self, question: str, schema: str, days: int = None, row_limit: int = None) -> str:
+        """days=None and row_limit=None (the defaults) give the generated query
+        access to the user's ENTIRE transaction history with no row cap."""
+        date_rule = (
+            f"- Filter to the last {days} days" if days is not None
+            else "- No default date filter — query the full transaction history unless the question specifies a time range"
+        )
+        limit_rule = (
+            f"- Limit {row_limit} rows" if row_limit is not None
+            else "- Do not add an arbitrary LIMIT — return every matching row unless the question asks for a specific top-N"
+        )
         system = f"""You are a PostgreSQL expert. Generate ONE SQL SELECT query.
 
 Schema:
@@ -259,9 +269,9 @@ Schema:
 
 Rules:
 - Return ONLY SQL, no markdown
-- Filter to last 90 days
+{date_rule}
 - Exclude type='credit' for spending
-- Limit 100 rows"""
+{limit_rule}"""
         sql = self._cached_chat(system, question, ttl=TTL_SQL, model=self.model_smart)
         sql = sql.replace('```sql', '').replace('```', '').strip()
 

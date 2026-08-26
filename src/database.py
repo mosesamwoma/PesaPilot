@@ -50,19 +50,35 @@ class SupabaseDB:
             logger.error(f"Query failed: {e}")
             return []
 
-    def get_transactions(self, days: int = 30, limit: int = 1000) -> List[Dict]:
-        since = (datetime.now() - timedelta(days=days)).isoformat()
+    def get_transactions(self, days: Optional[int] = None, limit: Optional[int] = None) -> List[Dict]:
+        """days=None returns full history (no date filter). limit=None returns
+        every matching row, paginated past Supabase/PostgREST's default page
+        size so large accounts aren't silently truncated."""
         try:
-            result = (self.client.table('transactions')
-                      .select('*')
-                      .gte('timestamp', since)
-                      .order('timestamp', desc=True)
-                      .limit(limit)
-                      .execute())
-            return result.data or []
+            query = self.client.table('transactions').select('*').order('timestamp', desc=True)
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                query = query.gte('timestamp', since)
+            if limit is not None:
+                return (query.limit(limit).execute().data or [])
+            return self._fetch_all(query)
         except Exception as e:
             logger.error(f"get_transactions failed: {e}")
             return []
+
+    def _fetch_all(self, query, page_size: int = 1000) -> List[Dict]:
+        """Page through a PostgREST query with .range() until exhausted, so
+        callers asking for 'all' data actually get all of it instead of being
+        capped at one page (Supabase's default/max page size is 1000 rows)."""
+        rows: List[Dict] = []
+        start = 0
+        while True:
+            page = query.range(start, start + page_size - 1).execute().data or []
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            start += page_size
+        return rows
 
     def get_summary(self) -> Dict:
         try:
@@ -150,18 +166,17 @@ class SupabaseDB:
             logger.error(f"_get_latest_balance failed: {e}")
             return 0.0
 
-    def get_range_summary(self, days: int = 30) -> Dict:
-        """Returns a summary scoped to the last N days, plus the latest known
-        account balance. Used by the Streamlit dashboard so 'Last {days} days'
-        actually reflects that window instead of all-time totals."""
-        since = (datetime.now() - timedelta(days=days)).isoformat()
+    def get_range_summary(self, days: Optional[int] = None) -> Dict:
+        """Returns a summary scoped to the last N days, or the full account
+        history when days=None, plus the latest known account balance."""
         try:
-            result = (self.client.table('transactions')
-                      .select('amount, type, balance, timestamp')
-                      .gte('timestamp', since)
-                      .order('timestamp', desc=True)
-                      .execute())
-            data = result.data or []
+            query = (self.client.table('transactions')
+                     .select('amount, type, balance, timestamp')
+                     .order('timestamp', desc=True))
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                query = query.gte('timestamp', since)
+            data = self._fetch_all(query)
             df = pd.DataFrame(data)
 
             latest_balance = 0.0
@@ -196,14 +211,13 @@ class SupabaseDB:
             logger.error(f"get_range_summary failed: {e}")
             return {}
 
-    def get_spending_by_category(self, days: int = 30) -> List[Dict]:
-        since = (datetime.now() - timedelta(days=days)).isoformat()
+    def get_spending_by_category(self, days: Optional[int] = None) -> List[Dict]:
         try:
-            result = (self.client.table('transactions')
-                      .select('merchant_category, amount, type')
-                      .gte('timestamp', since)
-                      .execute())
-            data = result.data or []
+            query = self.client.table('transactions').select('merchant_category, amount, type')
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                query = query.gte('timestamp', since)
+            data = self._fetch_all(query)
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -218,15 +232,15 @@ class SupabaseDB:
             logger.error(f"get_spending_by_category failed: {e}")
             return []
 
-    def get_daily_trend(self, days: int = 30) -> List[Dict]:
-        since = (datetime.now() - timedelta(days=days)).isoformat()
+    def get_daily_trend(self, days: Optional[int] = None) -> List[Dict]:
         try:
-            result = (self.client.table('transactions')
-                      .select('timestamp, amount, type')
-                      .gte('timestamp', since)
-                      .order('timestamp')
-                      .execute())
-            data = result.data or []
+            query = (self.client.table('transactions')
+                     .select('timestamp, amount, type')
+                     .order('timestamp'))
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                query = query.gte('timestamp', since)
+            data = self._fetch_all(query)
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -244,15 +258,15 @@ class SupabaseDB:
             logger.error(f"get_daily_trend failed: {e}")
             return []
 
-    def get_top_merchants(self, days: int = 30, limit: int = 10) -> List[Dict]:
-        since = (datetime.now() - timedelta(days=days)).isoformat()
+    def get_top_merchants(self, days: Optional[int] = None, limit: Optional[int] = 10) -> List[Dict]:
         try:
-            result = (self.client.table('transactions')
-                      .select('recipient, amount, type')
-                      .gte('timestamp', since)
-                      .neq('type', 'credit')
-                      .execute())
-            data = result.data or []
+            query = (self.client.table('transactions')
+                     .select('recipient, amount, type')
+                     .neq('type', 'credit'))
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                query = query.gte('timestamp', since)
+            data = self._fetch_all(query)
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -260,16 +274,17 @@ class SupabaseDB:
                    .agg(['sum', 'count'])
                    .reset_index()
                    .rename(columns={'sum': 'total_amount', 'count': 'transactions'})
-                   .sort_values('total_amount', ascending=False)
-                   .head(limit))
+                   .sort_values('total_amount', ascending=False))
+            if limit is not None:
+                top = top.head(limit)
             return top.to_dict(orient='records')
         except Exception as e:
             logger.error(f"get_top_merchants failed: {e}")
             return []
 
-    def get_anomalies(self, threshold: float = 2.5, days: int = 90) -> List[Dict]:
+    def get_anomalies(self, threshold: float = 2.5, days: Optional[int] = None) -> List[Dict]:
         try:
-            txs = self.get_transactions(days=days, limit=5000)
+            txs = self.get_transactions(days=days, limit=None)
             df = pd.DataFrame(txs)
             if df.empty or 'amount' not in df.columns:
                 return []
@@ -285,15 +300,14 @@ class SupabaseDB:
             logger.error(f"get_anomalies failed: {e}")
             return []
 
-    def get_insights(self, days: int = 30) -> Dict:
-        """Generate insights for today or specified period"""
+    def get_insights(self, days: Optional[int] = None) -> Dict:
+        """Generate insights for a specified period, or all-time when days=None."""
         try:
-            since = (datetime.now() - timedelta(days=days)).isoformat()
-            result = (self.client.table('transactions')
-                      .select('*')
-                      .gte('timestamp', since)
-                      .execute())
-            data = result.data or []
+            query = self.client.table('transactions').select('*')
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                query = query.gte('timestamp', since)
+            data = self._fetch_all(query)
             
             if not data:
                 return {
@@ -388,7 +402,7 @@ class SupabaseDB:
             logger.error(f"save_anomalies failed: {e}")
             return 0
 
-    def get_saved_anomalies(self, days: int = 90, limit: int = 20) -> List[Dict]:
+    def get_saved_anomalies(self, days: Optional[int] = None, limit: Optional[int] = None) -> List[Dict]:
         """Return recently flagged anomalies joined with their transaction
         details, highest score first. Fetched as two plain queries (anomaly
         rows, then their parent transactions) and merged in Python — kept
@@ -396,24 +410,26 @@ class SupabaseDB:
         Supabase, rather than relying on nested/embedded-resource select
         syntax."""
         try:
-            anomaly_result = (self.client.table('anomalies')
-                               .select('id, transaction_id, model, score, reviewed, created_at')
-                               .order('score', desc=True)
-                               .limit(limit)
-                               .execute())
-            anomaly_rows = anomaly_result.data or []
+            anomaly_query = (self.client.table('anomalies')
+                              .select('id, transaction_id, model, score, reviewed, created_at')
+                              .order('score', desc=True))
+            if limit is not None:
+                anomaly_rows = anomaly_query.limit(limit).execute().data or []
+            else:
+                anomaly_rows = self._fetch_all(anomaly_query)
             if not anomaly_rows:
                 return []
 
             tx_ids = [r['transaction_id'] for r in anomaly_rows if r.get('transaction_id')]
             if not tx_ids:
                 return []
-            since = (datetime.now() - timedelta(days=days)).isoformat()
-            tx_result = (self.client.table('transactions')
-                         .select('id, amount, recipient, merchant_category, timestamp, body')
-                         .in_('id', tx_ids)
-                         .gte('timestamp', since)
-                         .execute())
+            tx_query = (self.client.table('transactions')
+                        .select('id, amount, recipient, merchant_category, timestamp, body')
+                        .in_('id', tx_ids))
+            if days is not None:
+                since = (datetime.now() - timedelta(days=days)).isoformat()
+                tx_query = tx_query.gte('timestamp', since)
+            tx_result = tx_query.execute()
             tx_by_id = {t['id']: t for t in (tx_result.data or [])}
 
             merged = []

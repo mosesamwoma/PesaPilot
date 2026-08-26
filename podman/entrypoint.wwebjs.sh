@@ -183,7 +183,7 @@ done
 echo -e "${YELLOW}📱 Step 8: Starting WhatsApp Bot...${NC}\n"
 
 # Set environment for bot
-export PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
+export PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/google-chrome-stable}
 export API_URL=${API_URL}
 
 echo -e "${BLUE}   Bot will use API: $API_URL${NC}\n"

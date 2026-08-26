@@ -1,12 +1,12 @@
 # ────────────────────────────────────────────────────────
-# Just for fun — Podman/Chromium variant, not used for shipping.
+# Just for fun — Podman/Google Chrome variant, not used for shipping.
 # Same shape as docker-compose.yml, but built from podman/Containerfile
-# with Chromium-specific env/volumes instead of Baileys ones.
+# with Google Chrome-specific env/volumes instead of Baileys ones.
 # ────────────────────────────────────────────────────────
 #
 # Run with either:
-#   podman-compose up -d --build
-#   podman compose  up -d --build   (podman 4+ built-in)
+#   podman-compose -f podman/podman-compose.yaml up -d --build
+#   podman compose -f podman/podman-compose.yaml up -d --build   (podman 4+ built-in)
 
 services:
   pesapilot:
@@ -38,8 +38,8 @@ services:
       - WHATSAPP_LID=${WHATSAPP_LID}
       - WHATSAPP_PIN=${WHATSAPP_PIN}
 
-      # Puppeteer/Chromium — this is the whole reason this file exists
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      # Puppeteer/Google Chrome — this is the whole reason this file exists
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
       # Auth storage path (inside the container) — code reads this exact var name
       - WWEBJS_AUTH_PATH=/app/.wwebjs_auth
@@ -63,9 +63,9 @@ services:
       - ../data:/app/data:Z
       - ../sessions-local:/app/.wwebjs_auth:Z
     # /dev/shm defaults to 64MB in most container runtimes, which is too
-    # small for Chromium and causes random renderer crashes. shm_size
+    # small for Google Chrome and causes random renderer crashes. shm_size
     # bumps it — this is arguably more important than the --disable-dev-shm-usage
-    # flag the bot already passes to Chromium as a fallback.
+    # flag the bot already passes to Chrome as a fallback.
     shm_size: 1g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]

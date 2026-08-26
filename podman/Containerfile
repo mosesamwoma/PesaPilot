@@ -1,6 +1,6 @@
 # ────────────────────────────────────────────────────────
-# Just for fun — Podman/Chromium variant, not used for shipping.
-# Same PesaPilot bot, built with a real headless Chromium instead
+# Just for fun — Podman/Google Chrome variant, not used for shipping.
+# Same PesaPilot bot, built with a real headless Google Chrome instead
 # of Baileys, so it runs via whatsapp-web.js under Podman.
 # ────────────────────────────────────────────────────────
 #
@@ -20,17 +20,21 @@ RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     gnupg \
+    wget \
     fontconfig \
     fonts-noto-color-emoji \
     fonts-dejavu \
-    chromium \
+    && wget -q -O /usr/share/keyrings/google-chrome.gpg https://dl.google.com/linux/linux_signing_key.pub \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && fc-cache -fv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN node --version && npm --version && chromium --version
+RUN node --version && npm --version && google-chrome-stable --version
 
 WORKDIR /app
 
@@ -57,6 +61,6 @@ RUN mkdir -p data/raw data/processed data/sessions \
     && chmod -R 777 data
 
 ENV NODE_ENV=production
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
 ENTRYPOINT ["./entrypoint.sh"]

@@ -11,7 +11,7 @@ const WHATSAPP_LID = process.env.WHATSAPP_LID;
 const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
 const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
-const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
 if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     console.error('\n❌ ERROR: Missing required .env variables:');
@@ -28,7 +28,7 @@ console.log(`✅ Phone Number : configured`);
 console.log(`✅ LID          : configured`);
 console.log(`✅ PIN          : configured`);
 console.log(`🔗 API URL      : ${API_URL}`);
-console.log(`🌐 Chromium     : ${CHROMIUM_PATH}`);
+console.log(`🌐 Chrome       : ${CHROME_PATH}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
 // ──────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ const client = new Client({
     }),
     puppeteer: {
         headless: true,
-        executablePath: CHROMIUM_PATH,
+        executablePath: CHROME_PATH,
         protocolTimeout: 180000,
         timeout: 180000,
         args: [

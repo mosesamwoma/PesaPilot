@@ -43,9 +43,6 @@ rsync -avz --progress \
   --exclude 'node_modules' \
   --exclude 'venv' \
   --exclude 'dist' \
-  --exclude 'Containerfile' \
-  --exclude 'compose.yaml' \
-  --exclude '.containerignore' \
   --exclude 'podman/' \
   --exclude 'assets' \
   --exclude '.git' \

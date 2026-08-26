@@ -59,11 +59,16 @@ BUDGET_STATUS_KEYWORDS = [
 # Matches things like: "set budget food 5000", "set budget for food to 5000",
 # "budget limit transport 3000 weekly", "set food budget 5,000"
 SET_BUDGET_PATTERN = re.compile(
-    r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
-    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>[\d,]+(?:\.\d+)?)\s*'
-    r'(?P<period>weekly|monthly)?',
+    r'(?:'
+        r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
+        r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>[\d,]+(?:\.\d+)?)'
+        r'|'
+        r'set\s+(?P<category2>[a-zA-Z ]+?)\s+budget\s*'
+        r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount2>[\d,]+(?:\.\d+)?)'
+    r')\s*(?P<period>weekly|monthly)?',
     re.IGNORECASE,
 )
+_HAS_DIGIT = re.compile(r'\d')
 # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
 
 class QuestionRequest(BaseModel):
@@ -386,15 +391,15 @@ def generate_histogram_chart(df: pd.DataFrame, value_col: str, title: str = "�
 
 def parse_days_from_question(question_lower: str, default: int = 30) -> int:
     """Read an explicit time window out of natural language. Falls back to `default`."""
-    if 'all time' in question_lower or 'year' in question_lower or '365' in question_lower:
+    if 'all time' in question_lower or 'year' in question_lower or re.search(r'\b365\b', question_lower):
         return 365
-    if '180' in question_lower or '6 months' in question_lower:
+    if re.search(r'\b180\b', question_lower) or '6 months' in question_lower:
         return 180
-    if '90' in question_lower or '3 months' in question_lower:
+    if re.search(r'\b90\b', question_lower) or '3 months' in question_lower:
         return 90
-    if '60' in question_lower:
+    if re.search(r'\b60\b', question_lower):
         return 60
-    if 'week' in question_lower or '7 days' in question_lower:
+    if re.search(r'\bweek\b', question_lower) or '7 days' in question_lower:
         return 7
     if '14 days' in question_lower or 'two weeks' in question_lower:
         return 14
@@ -595,11 +600,13 @@ async def ask_question(request: QuestionRequest):
         # Checked BEFORE the generic BUDGET_KEYWORDS block below, since "set
         # budget food 5000" would otherwise just be caught by the word
         # "budget" and routed to the generic budget-PLAN advice instead.
-        if question_lower.startswith('set budget') or question_lower.startswith('budget limit'):
+        if (question_lower.startswith('set budget') or question_lower.startswith('budget limit')
+                or (question_lower.startswith('set ') and 'budget' in question_lower
+                    and _HAS_DIGIT.search(question_lower))):
             match = SET_BUDGET_PATTERN.search(question)
             if match:
-                category = match.group('category').strip().lower()
-                amount = float(match.group('amount').replace(',', ''))
+                category = (match.group('category') or match.group('category2')).strip().lower()
+                amount = float((match.group('amount') or match.group('amount2')).replace(',', ''))
                 period = (match.group('period') or 'monthly').lower()
                 logger.info(f"🎯 SET BUDGET: {category} KES {amount} ({period})")
                 result = analyzer.set_budget(category, amount, period=period)

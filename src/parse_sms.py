@@ -211,7 +211,7 @@ class MpesaParser:
         return m.group(1) if m else None
 
     def _extract_transaction_id(self, body: str) -> str:
-        m = re.search(r'\b([A-Z0-9]{10})\b', body)
+        m = re.search(r'\b([A-Z][A-Z0-9]{9})\b', body)
         return m.group(1) if m else None
 
     def _categorize(self, body: str, recipient: str) -> str:

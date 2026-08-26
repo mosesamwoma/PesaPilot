@@ -334,9 +334,9 @@ curl -X POST http://YOUR_VPS_IP:8000/ask \
 
 ## Podman (Local / Just for Fun)
 
-> Not used for shipping. `Containerfile` and `compose.yaml` at the project root run the local **whatsapp-web.js** bot (Puppeteer/Chromium) under Podman — separate from `Dockerfile` / `docker-compose.yml`, which ship Baileys and stay the production path. Docker and Podman each default to their own filename, so both pairs sit in the root with no flags needed.
+> Not used for shipping. The files in `podman/` run the local **whatsapp-web.js** bot (Puppeteer/Chromium) under Podman — separate from `Dockerfile` / `docker-compose.yml`, which ship Baileys and stay the production path.
 
-`Containerfile` and `compose.yaml` already live in the project root — no need to reproduce them here.
+The Podman files live in `podman/` so the production Docker files can remain at the project root.
 
 ### Install
 
@@ -348,8 +348,8 @@ sudo apt install podman podman-compose      # Debian/Ubuntu
 ### Build and run
 
 ```bash
-podman-compose up -d --build
-podman-compose logs -f     # watch startup + QR code
+podman-compose -f podman/compose.yaml up -d --build
+podman-compose -f podman/compose.yaml logs -f     # watch startup + QR code
 ```
 
 Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**. Session is saved under `./sessions-local` — no rescan on normal restarts.
@@ -357,23 +357,23 @@ Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**. Session
 ### Management
 
 ```bash
-podman-compose ps                # status
-podman-compose logs -f           # live logs
-podman-compose restart           # restart (session persists)
-podman-compose down              # stop and remove container
-podman-compose up -d --build     # rebuild after code change
+podman-compose -f podman/compose.yaml ps                # status
+podman-compose -f podman/compose.yaml logs -f           # live logs
+podman-compose -f podman/compose.yaml restart           # restart (session persists)
+podman-compose -f podman/compose.yaml down              # stop and remove container
+podman-compose -f podman/compose.yaml up -d --build     # rebuild after code change
 
 # Force a new QR scan (wipes the local session)
-podman-compose exec pesapilot rm -rf /app/.wwebjs_auth
-podman-compose restart
-podman-compose logs -f
+podman-compose -f podman/compose.yaml exec pesapilot rm -rf /app/.wwebjs_auth
+podman-compose -f podman/compose.yaml restart
+podman-compose -f podman/compose.yaml logs -f
 ```
 
 ### Bare `podman` commands (no compose file)
 
 ```bash
 # Build
-podman build -t pesapilot .
+podman build --ignorefile podman/.containerignore -f podman/Containerfile -t pesapilot .
 
 # Run
 podman run -d \

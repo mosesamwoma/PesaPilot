@@ -34,7 +34,7 @@ RUN node --version && npm --version && chromium --version
 
 WORKDIR /app
 
-COPY entrypoint.wwebjs.sh /app/entrypoint.sh
+COPY podman/entrypoint.wwebjs.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 COPY requirements.txt .

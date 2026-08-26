@@ -46,6 +46,7 @@ rsync -avz --progress \
   --exclude 'Containerfile' \
   --exclude 'compose.yaml' \
   --exclude '.containerignore' \
+  --exclude 'podman/' \
   --exclude 'assets' \
   --exclude '.git' \
   --exclude 'sessions' \
@@ -53,12 +54,11 @@ rsync -avz --progress \
   --exclude 'whatsapp-sessions' \
   --exclude '*.log' \
   --exclude '__pycache__' \
-  --exclude '.pytest_cache' \
   --exclude '.wwebjs_auth' \
   --exclude '.wwebjs_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
 
-ssh "$VPS_USER@$VPS_HOST" "rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yaml $VPS_PATH/.containerignore"
+ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yaml $VPS_PATH/.containerignore"
 
 # ── Step 2: rebuild / restart on the VPS ───────────────────────────────────
 if [ "$DO_BUILD" = true ]; then

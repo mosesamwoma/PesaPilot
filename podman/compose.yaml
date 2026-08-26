@@ -1,6 +1,6 @@
 # ────────────────────────────────────────────────────────
 # Just for fun — Podman/Chromium variant, not used for shipping.
-# Same shape as docker-compose.yml, but built from Containerfile
+# Same shape as docker-compose.yml, but built from podman/Containerfile
 # with Chromium-specific env/volumes instead of Baileys ones.
 # ────────────────────────────────────────────────────────
 #
@@ -11,8 +11,8 @@
 services:
   pesapilot:
     build:
-      context: .
-      dockerfile: Containerfile
+      context: ..
+      dockerfile: podman/Containerfile
     container_name: pesapilot-local
     restart: unless-stopped
     ports:
@@ -60,8 +60,8 @@ services:
       # Timezone
       - TZ=Africa/Nairobi
     volumes:
-      - ./data:/app/data:Z
-      - ./sessions-local:/app/.wwebjs_auth:Z
+      - ../data:/app/data:Z
+      - ../sessions-local:/app/.wwebjs_auth:Z
     # /dev/shm defaults to 64MB in most container runtimes, which is too
     # small for Chromium and causes random renderer crashes. shm_size
     # bumps it — this is arguably more important than the --disable-dev-shm-usage

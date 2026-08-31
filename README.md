@@ -348,8 +348,8 @@ sudo apt install podman podman-compose      # Debian/Ubuntu
 ### Build and run
 
 ```bash
-podman-compose -f podman/podman-compose.yaml up -d --build
-podman-compose -f podman/podman-compose.yaml logs -f     # watch startup + QR code
+podman-compose -f podman/compose.yml up -d --build
+podman-compose -f podman/compose.yml logs -f     # watch startup + QR code
 ```
 
 Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**. Session is saved under `./sessions-local` — no rescan on normal restarts.
@@ -357,16 +357,16 @@ Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**. Session
 ### Management
 
 ```bash
-podman-compose -f podman/podman-compose.yaml ps                # status
-podman-compose -f podman/podman-compose.yaml logs -f           # live logs
-podman-compose -f podman/podman-compose.yaml restart           # restart (session persists)
-podman-compose -f podman/podman-compose.yaml down              # stop and remove container
-podman-compose -f podman/podman-compose.yaml up -d --build     # rebuild after code change
+podman-compose -f podman/compose.yml ps                # status
+podman-compose -f podman/compose.yml logs -f           # live logs
+podman-compose -f podman/compose.yml restart           # restart (session persists)
+podman-compose -f podman/compose.yml down              # stop and remove container
+podman-compose -f podman/compose.yml up -d --build     # rebuild after code change
 
 # Force a new QR scan (wipes the local session)
-podman-compose -f podman/podman-compose.yaml exec pesapilot rm -rf /app/.wwebjs_auth
-podman-compose -f podman/podman-compose.yaml restart
-podman-compose -f podman/podman-compose.yaml logs -f
+podman-compose -f podman/compose.yml exec pesapilot rm -rf /app/.wwebjs_auth
+podman-compose -f podman/compose.yml restart
+podman-compose -f podman/compose.yml logs -f
 ```
 
 ### Bare `podman` commands (no compose file)
@@ -491,7 +491,7 @@ python -m pytest tests/ -v
 | **Baileys:** QR never appears after wiping session | Check internet connectivity from the container: `docker compose exec pesapilot curl -I https://web.whatsapp.com` |
 | **whatsapp-web.js:** `Failed to launch the browser process` | Google Chrome is missing or `PUPPETEER_EXECUTABLE_PATH` is wrong — only relevant for local dev, not Docker |
 | **whatsapp-web.js:** `profile already in use` after a crash | Delete `.wwebjs_auth/` once, restart, and rescan the QR |
-| **Podman:** permission denied on `./data` or `./sessions-local` | Fedora/RHEL SELinux — confirm the `:Z` suffix is present on the volume mounts in `podman-compose.yaml` |
+| **Podman:** permission denied on `./data` or `./sessions-local` | Fedora/RHEL SELinux — confirm the `:Z` suffix is present on the volume mounts in `podman/compose.yml` |
 | WhatsApp session keeps logging out | Confirm the auth path (`./sessions` for Docker, `.baileys_auth/` locally) is not being wiped by your deploy process |
 | Charts not sending | Confirm `matplotlib` and `seaborn` are installed: `pip install matplotlib seaborn` |
 | Forecast shows "Not enough data" | You need at least 14 distinct days of debit transactions |

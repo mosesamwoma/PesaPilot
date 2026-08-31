@@ -5,8 +5,8 @@
 # ────────────────────────────────────────────────────────
 #
 # Run with either:
-#   podman-compose -f podman/podman-compose.yaml up -d --build
-#   podman compose -f podman/podman-compose.yaml up -d --build   (podman 4+ built-in)
+#   podman-compose -f podman/compose.yml up -d --build
+#   podman compose -f podman/compose.yml up -d --build   (podman 4+ built-in)
 
 services:
   pesapilot:

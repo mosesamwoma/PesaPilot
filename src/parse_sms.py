@@ -219,8 +219,11 @@ class MpesaParser:
         return m.group(1) if m else None
 
     def _extract_transaction_id(self, body: str) -> str:
-        m = re.search(r'\b([A-Z][A-Z0-9]{9})\b', body)
-        return m.group(1) if m else None
+        m = re.search(r'\b([A-Z0-9]{10,})\b', body)
+        if not m:
+            return None
+        tx_id = m.group(1)
+        return tx_id if tx_id and tx_id.upper() != 'M-PESA' else None
 
     def _categorize(self, body: str, recipient: str) -> str:
         text = (body + ' ' + (recipient or '')).lower()

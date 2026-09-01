@@ -69,6 +69,14 @@ class MpesaParser:
             recipient = self._extract_recipient(body)
             balance = self._extract_balance(body)
             tx_id = self._extract_transaction_id(body)
+            if tx_id is None:
+                # Cancellation notices and a few other Safaricom system SMS
+                # carry no M-Pesa code at all — 'transaction_id' is NOT NULL
+                # UNIQUE in the DB, so a row with no ID can't be stored or
+                # deduped. Skip it here rather than let a single null value
+                # fail the whole insert batch it lands in downstream.
+                logger.debug(f"Skipping SMS with no transaction ID: {body[:60]!r}")
+                return None
             phone = self._extract_phone(body) or address
             category = self._categorize(body, recipient)
             timestamp = self._parse_timestamp(raw_date, readable_date)

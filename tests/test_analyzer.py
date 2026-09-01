@@ -27,8 +27,8 @@ def test_groq_chat(groq):
     assert len(response) > 0
 
 def test_groq_generate_sql(groq):
-    from src.database import SupabaseDB
-    schema = SupabaseDB().get_schema()
+    from src.database import PostgresDB
+    schema = PostgresDB().get_schema()
     sql = groq.generate_sql("How much did I spend on food?", schema)
     assert isinstance(sql, str)
     assert sql.upper().startswith("SELECT"), f"Expected SELECT, got: {sql[:50]}"

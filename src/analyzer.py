@@ -1,7 +1,7 @@
 # src/analyzer.py
 import logging
 from typing import Dict, List, Optional
-from src.database import SupabaseDB
+from src.database import PostgresDB
 from src.groq_client import GroqClient
 from src import forecasting
 from src import anomaly_detector
@@ -63,7 +63,7 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
 
 class MpesaAnalyzer:
     def __init__(self):
-        self.db = SupabaseDB()
+        self.db = PostgresDB()
         self.groq = GroqClient()
         self._cache: Dict = {}
 

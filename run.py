@@ -91,7 +91,10 @@ def main():
 
 📊 Dashboard:  {BLUE}http://localhost:8501{RESET}
 🔗 API:        {BLUE}http://localhost:8000{RESET}
-📱 WhatsApp:   {BLUE}Online & Connected{RESET}
+
+{YELLOW}To start WhatsApp bot separately:{RESET}
+  npm run dev              # Baileys (recommended for production)
+  npm run dev:wwebjs       # whatsapp-web.js (local dev)
 
 {YELLOW}Commands:{RESET}
   • Press Ctrl+C to stop all services

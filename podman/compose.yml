@@ -22,9 +22,8 @@ services:
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
 
-      # Supabase
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
+      # PostgreSQL (self-hosted)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://pesapilot_user:StrongPassword123!@db:5432/pesapilot}
 
       # Groq
       - GROQ_API_KEY=${GROQ_API_KEY}

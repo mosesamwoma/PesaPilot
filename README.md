@@ -1,6 +1,6 @@
 # PesaPilot
 
-AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction backup, stores it in Supabase, and lets you explore your spending — and get real Kenyan financial advice — through a Streamlit dashboard or by texting it on WhatsApp.
+AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction backup, stores it in a self-hosted PostgreSQL database, and lets you explore your spending — and get real Kenyan financial advice — through a Streamlit dashboard or by texting it on WhatsApp.
 
 ![PesaPilot WhatsApp Bot Demo](assets/whatsapp.gif)
 
@@ -32,7 +32,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 
 ## WhatsApp Bot — Two Modes
 
-PesaPilot ships with **two WhatsApp bot implementations**. They share the same FastAPI backend and Supabase database — only the WhatsApp connection layer differs.
+PesaPilot ships with **two WhatsApp bot implementations**. They share the same FastAPI backend and self-hosted PostgreSQL database — only the WhatsApp connection layer differs.
 
 | | `whatsapp_bot.js` | `whatsapp_bot.ts` |
 |---|---|---|
@@ -52,7 +52,7 @@ PesaPilot ships with **two WhatsApp bot implementations**. They share the same F
 
 - Python 3.10+
 - Node.js 20+ (`package.json` requires `>=20.0.0`)
-- A [Supabase](https://supabase.com) project (free tier works)
+- A self-hosted PostgreSQL server (local or VPS)
 - A [Groq](https://console.groq.com) API key (free tier works)
 - Docker + Docker Compose for VPS/production deployment
 - A spare WhatsApp-capable SIM to run the bot on (you message it from your main number)
@@ -88,8 +88,7 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 
 | Variable | Where to get it |
 |---|---|
-| `SUPABASE_URL` | supabase.com → Settings → API |
-| `SUPABASE_KEY` | supabase.com → Settings → API |
+| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:password@127.0.0.1:5432/pesapilot` |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `WHATSAPP_MAIN_NUMBER` | Your main number e.g. `254712345678` (country code, no `+`) — the number you text the bot **from** |
 | `WHATSAPP_PIN` | Any 4-digit number you choose e.g. `1234` — used for manual SMS entry |
@@ -120,13 +119,23 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 
 ## 3. Create the database schema
 
-1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) → your project → **SQL Editor → New Query**
-2. Paste the contents of `schema/init_db.sql`
-3. Click **Run**
+1. Connect to your PostgreSQL server as a superuser or admin user.
+2. Create the database and user if needed:
 
-You should see: `PesaPilot DB ready ✅`
+```bash
+sudo -u postgres psql
+CREATE USER pesapilot_user WITH PASSWORD 'StrongPassword123!';
+CREATE DATABASE pesapilot OWNER pesapilot_user;
+\q
+```
 
-This creates the `transactions` table, indexes, a `run_query(text)` RPC function (only `SELECT` is ever allowed through it), and two read-only views (`daily_summary`, `category_summary`).
+3. Import the schema:
+
+```bash
+psql "postgresql://pesapilot_user:StrongPassword123!@127.0.0.1:5432/pesapilot" < schema/init_db.sql
+```
+
+This creates the `transactions` table, indexes, and supporting tables required by the app.
 
 ---
 
@@ -141,13 +150,13 @@ This creates the `transactions` table, indexes, a `run_query(text)` RPC function
 
 ## 5. Parse and load your data
 
-Parse the SMS backup, save a cleaned CSV copy, and upsert the M-Pesa transactions into Supabase:
+Parse the SMS backup, save a cleaned CSV copy, and upsert the M-Pesa transactions into PostgreSQL:
 
 ```bash
 python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml', 'data/processed/mpesa_transactions.csv'); print(f'Loaded {count} transactions')"
 ```
 
-Replace `your-sms-backup.xml` with the name of your XML file. The cleaned CSV is saved to `data/processed/mpesa_transactions.csv`, and the parsed transactions are stored in Supabase. Re-running the command is safe because records are upserted by `transaction_id`.
+Replace `your-sms-backup.xml` with the name of your XML file. The cleaned CSV is saved to `data/processed/mpesa_transactions.csv`, and the parsed transactions are stored in PostgreSQL. Re-running the command is safe because records are upserted by `transaction_id`.
 
 ---
 

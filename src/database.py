@@ -123,12 +123,24 @@ class PostgresDB:
         if df.empty:
             return 0
         records = df.where(pd.notnull(df), None).to_dict(orient='records')
+        valid_records = []
         for rec in records:
+            if rec is None:
+                continue
             for k, v in rec.items():
                 if isinstance(v, float) and pd.isna(v):
                     rec[k] = None
                 if hasattr(v, 'isoformat'):
                     rec[k] = v.isoformat()
+            tx_id = rec.get('transaction_id')
+            if tx_id is None or str(tx_id).strip() == '':
+                logger.warning(f"Skipping transaction with no ID: {rec.get('body')[:80] if rec.get('body') else rec}")
+                continue
+            rec['transaction_id'] = str(tx_id).strip()
+            valid_records.append(rec)
+
+        if not valid_records:
+            return 0
 
         columns = ['transaction_id', 'amount', 'balance', 'type', 'recipient',
                    'merchant_category', 'phone', 'body', 'timestamp',
@@ -142,8 +154,8 @@ class PostgresDB:
         """
 
         inserted = 0
-        for i in range(0, len(records), batch_size):
-            batch = records[i:i + batch_size]
+        for i in range(0, len(valid_records), batch_size):
+            batch = valid_records[i:i + batch_size]
             values = [
                 (
                     rec.get('transaction_id'),
@@ -166,10 +178,6 @@ class PostgresDB:
                 logger.info(f"Inserted batch {i // batch_size + 1}, total: {inserted}")
             except Exception as e:
                 logger.error(f"Batch insert failed, retrying rows individually: {e}")
-                # One bad row (e.g. a null transaction_id, a bad type) fails
-                # the whole batched INSERT, which would otherwise silently
-                # drop every good row in the batch alongside it. Retry one
-                # row at a time so only the actually-bad rows are lost.
                 for row in values:
                     try:
                         self._execute_values(sql, [row])
@@ -196,14 +204,23 @@ class PostgresDB:
     def get_transactions(self, days: Optional[int] = 30, limit: int = 1000) -> List[Dict]:
         since = _since(days)
         try:
+            if since is None:
+                return self._fetch_all(
+                    """
+                    SELECT * FROM transactions
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
             return self._fetch_all(
                 """
                 SELECT * FROM transactions
-                WHERE %s::timestamp IS NULL OR timestamp >= %s
+                WHERE timestamp >= %s
                 ORDER BY timestamp DESC
                 LIMIT %s
                 """,
-                (since, since, limit),
+                (since, limit),
             )
         except Exception as e:
             logger.error(f"get_transactions failed: {e}")
@@ -293,14 +310,22 @@ class PostgresDB:
     def get_range_summary(self, days: Optional[int] = 30) -> Dict:
         since = _since(days)
         try:
-            data = self._fetch_all(
-                """
-                SELECT amount, type, balance, timestamp FROM transactions
-                WHERE %s::timestamp IS NULL OR timestamp >= %s
-                ORDER BY timestamp DESC
-                """,
-                (since, since),
-            )
+            if since is None:
+                data = self._fetch_all(
+                    """
+                    SELECT amount, type, balance, timestamp FROM transactions
+                    ORDER BY timestamp DESC
+                    """
+                )
+            else:
+                data = self._fetch_all(
+                    """
+                    SELECT amount, type, balance, timestamp FROM transactions
+                    WHERE timestamp >= %s
+                    ORDER BY timestamp DESC
+                    """,
+                    (since,),
+                )
             df = pd.DataFrame(data)
 
             latest_balance = 0.0
@@ -338,13 +363,20 @@ class PostgresDB:
     def get_spending_by_category(self, days: Optional[int] = 30) -> List[Dict]:
         since = _since(days)
         try:
-            data = self._fetch_all(
-                """
-                SELECT merchant_category, amount, type FROM transactions
-                WHERE %s::timestamp IS NULL OR timestamp >= %s
-                """,
-                (since, since),
-            )
+            if since is None:
+                data = self._fetch_all(
+                    """
+                    SELECT merchant_category, amount, type FROM transactions
+                    """
+                )
+            else:
+                data = self._fetch_all(
+                    """
+                    SELECT merchant_category, amount, type FROM transactions
+                    WHERE timestamp >= %s
+                    """,
+                    (since,),
+                )
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -362,14 +394,22 @@ class PostgresDB:
     def get_daily_trend(self, days: Optional[int] = 30) -> List[Dict]:
         since = _since(days)
         try:
-            data = self._fetch_all(
-                """
-                SELECT timestamp, amount, type FROM transactions
-                WHERE %s::timestamp IS NULL OR timestamp >= %s
-                ORDER BY timestamp
-                """,
-                (since, since),
-            )
+            if since is None:
+                data = self._fetch_all(
+                    """
+                    SELECT timestamp, amount, type FROM transactions
+                    ORDER BY timestamp
+                    """
+                )
+            else:
+                data = self._fetch_all(
+                    """
+                    SELECT timestamp, amount, type FROM transactions
+                    WHERE timestamp >= %s
+                    ORDER BY timestamp
+                    """,
+                    (since,),
+                )
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -390,13 +430,21 @@ class PostgresDB:
     def get_top_merchants(self, days: Optional[int] = 30, limit: int = 10) -> List[Dict]:
         since = _since(days)
         try:
-            data = self._fetch_all(
-                """
-                SELECT recipient, amount, type FROM transactions
-                WHERE (%s::timestamp IS NULL OR timestamp >= %s) AND type != 'credit'
-                """,
-                (since, since),
-            )
+            if since is None:
+                data = self._fetch_all(
+                    """
+                    SELECT recipient, amount, type FROM transactions
+                    WHERE type != 'credit'
+                    """
+                )
+            else:
+                data = self._fetch_all(
+                    """
+                    SELECT recipient, amount, type FROM transactions
+                    WHERE timestamp >= %s AND type != 'credit'
+                    """,
+                    (since,),
+                )
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -432,10 +480,13 @@ class PostgresDB:
     def get_insights(self, days: Optional[int] = 30) -> Dict:
         try:
             since = _since(days)
-            data = self._fetch_all(
-                "SELECT * FROM transactions WHERE %s::timestamp IS NULL OR timestamp >= %s",
-                (since, since),
-            )
+            if since is None:
+                data = self._fetch_all("SELECT * FROM transactions")
+            else:
+                data = self._fetch_all(
+                    "SELECT * FROM transactions WHERE timestamp >= %s",
+                    (since,),
+                )
 
             if not data:
                 return {
@@ -567,14 +618,24 @@ class PostgresDB:
             if not tx_ids:
                 return []
             since = _since(days)
-            tx_rows = self._fetch_all(
-                """
-                SELECT id, amount, recipient, merchant_category, timestamp, body
-                FROM transactions
-                WHERE id = ANY(%s::uuid[]) AND (%s::timestamp IS NULL OR timestamp >= %s)
-                """,
-                (tx_ids, since, since),
-            )
+            if since is None:
+                tx_rows = self._fetch_all(
+                    """
+                    SELECT id, amount, recipient, merchant_category, timestamp, body
+                    FROM transactions
+                    WHERE id = ANY(%s::uuid[])
+                    """,
+                    (tx_ids,),
+                )
+            else:
+                tx_rows = self._fetch_all(
+                    """
+                    SELECT id, amount, recipient, merchant_category, timestamp, body
+                    FROM transactions
+                    WHERE id = ANY(%s::uuid[]) AND timestamp >= %s
+                    """,
+                    (tx_ids, since),
+                )
             tx_by_id = {t['id']: t for t in tx_rows}
 
             merged = []

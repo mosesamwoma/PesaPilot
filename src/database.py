@@ -1,17 +1,3 @@
-# src/database.py
-"""
-Plain PostgreSQL data layer (psycopg2), replacing the old Supabase client.
-
-Connects with a normal `DATABASE_URL` connection string to ANY Postgres
-instance — self-hosted, Docker, RDS, Neon, Railway, or Supabase's own
-Postgres if you still want to point at it (Supabase is just Postgres
-under the hood; this file no longer talks to its REST/RPC layer at all).
-
-Every public method keeps the exact same name/signature/return shape it
-had before (list of dicts / dict), so nothing in analyzer.py,
-budget_monitor.py, anomaly_detector.py, whatsapp_api.py, or dashboard/app.py
-needs to change.
-"""
 import os
 import re
 import logging
@@ -31,12 +17,6 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────
-# Make psycopg2 hand back plain Python types instead of driver-native
-# ones, so every downstream pandas/numpy call (analyzer.py, forecasting.py,
-# anomaly_detector.py) keeps working exactly as it did against the old
-# Supabase/PostgREST client, which always returned JSON-safe values.
-# ─────────────────────────────────────────────────────────────
 _DEC2FLOAT = psycopg2.extensions.new_type(
     psycopg2.extensions.DECIMAL.values, 'DEC2FLOAT',
     lambda value, curs: float(value) if value is not None else None,
@@ -45,8 +25,6 @@ psycopg2.extensions.register_type(_DEC2FLOAT)
 
 
 def _serialize_value(v):
-    """Belt-and-suspenders conversion on top of the typecaster above —
-    covers Decimal/datetime/UUID no matter how a value reaches us."""
     if isinstance(v, Decimal):
         return float(v)
     if isinstance(v, (datetime, date)):
@@ -60,14 +38,14 @@ def _serialize_row(row: dict) -> dict:
     return {k: _serialize_value(v) for k, v in row.items()}
 
 
-# ─────────────────────────────────────────────────────────────
-# SQL safety guard for execute_query() — this is a defense-in-depth
-# checkpoint. src/groq_client.py's is_safe_select_sql() already rejects
-# unsafe SQL before it's ever handed to this class, but now that we talk
-# directly to Postgres (no Supabase anon-key/RLS layer in between), this
-# is the actual last line of defense before a query touches the database,
-# so it re-checks rather than trusting the caller.
-# ─────────────────────────────────────────────────────────────
+def _since(days: Optional[int]) -> Optional[datetime]:
+    """Convert a `days` window into a cutoff datetime. days=None means
+    'full history' (used throughout analyzer.py, e.g. build_context_string
+    and ask_question default to days=None), so this returns None rather
+    than passing None into timedelta(), which raises TypeError."""
+    return datetime.now() - timedelta(days=days) if days is not None else None
+
+
 _FORBIDDEN_SQL_KEYWORDS = re.compile(
     r'\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE|'
     r'EXEC|EXECUTE|CREATE|ATTACH|REPLACE|MERGE|CALL)\b',
@@ -84,19 +62,11 @@ class PostgresDB:
                 "postgresql://user:password@host:5432/dbname"
             )
         try:
-            # minconn=1 keeps a warm connection ready; maxconn=10 comfortably
-            # covers FastAPI + Streamlit + the budget-alert cron hitting the
-            # DB concurrently without exhausting Postgres's connection limit.
             self._pool = pg_pool.ThreadedConnectionPool(1, 10, dsn=dsn)
         except Exception as e:
             raise ValueError(f"Could not connect to Postgres at DATABASE_URL: {e}")
         logger.info("Postgres connection pool initialized")
 
-    # ------------------------------------------------------------------
-    # Internal helpers — every public method below goes through one of
-    # these, so connection checkout/commit/rollback/return-to-pool is
-    # handled in exactly one place.
-    # ------------------------------------------------------------------
     def _fetch_all(self, sql: str, params: tuple = None) -> List[Dict]:
         conn = self._pool.getconn()
         try:
@@ -126,7 +96,6 @@ class PostgresDB:
             self._pool.putconn(conn)
 
     def _execute(self, sql: str, params: tuple = None) -> None:
-        """Run a write statement (INSERT/UPDATE/UPSERT) with no result set."""
         conn = self._pool.getconn()
         try:
             with conn.cursor() as cur:
@@ -150,9 +119,6 @@ class PostgresDB:
         finally:
             self._pool.putconn(conn)
 
-    # ------------------------------------------------------------------
-    # Transactions
-    # ------------------------------------------------------------------
     def insert_transactions(self, df: pd.DataFrame, batch_size: int = 100) -> int:
         if df.empty:
             return 0
@@ -213,11 +179,6 @@ class PostgresDB:
         return inserted
 
     def execute_query(self, sql: str) -> List[Dict]:
-        """Execute an LLM-generated SELECT query (already validated once by
-        groq_client.is_safe_select_sql before it reaches here). Re-checks
-        and wraps with a hard LIMIT, since this now runs with the DB
-        connection's full privileges rather than behind Supabase's
-        anon-key/RLS boundary — see the module-level note above."""
         cleaned = (sql or "").strip().rstrip(';')
         if not cleaned.upper().startswith('SELECT') or ';' in cleaned:
             logger.warning(f"execute_query rejected unsafe SQL: {cleaned[:100]!r}")
@@ -232,17 +193,17 @@ class PostgresDB:
             logger.error(f"Query failed: {e}")
             return []
 
-    def get_transactions(self, days: int = 30, limit: int = 1000) -> List[Dict]:
-        since = datetime.now() - timedelta(days=days)
+    def get_transactions(self, days: Optional[int] = 30, limit: int = 1000) -> List[Dict]:
+        since = _since(days)
         try:
             return self._fetch_all(
                 """
                 SELECT * FROM transactions
-                WHERE timestamp >= %s
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
                 ORDER BY timestamp DESC
                 LIMIT %s
                 """,
-                (since, limit),
+                (since, since, limit),
             )
         except Exception as e:
             logger.error(f"get_transactions failed: {e}")
@@ -269,17 +230,8 @@ class PostgresDB:
             return {}
 
     def get_today_summary(self) -> Dict:
-        """Returns a summary scoped to TODAY only (Africa/Nairobi calendar day),
-        plus the latest known account balance. Used by the 9PM daily summary cron."""
         try:
             nairobi = ZoneInfo("Africa/Nairobi")
-            # `timestamp` is stored as a naive column holding Nairobi
-            # wall-clock time (see parse_sms.py — SMS timestamps are parsed
-            # and saved as-is, with no timezone conversion). The cutoff
-            # must therefore stay naive Nairobi time too — converting it to
-            # UTC first (as the old code did) shifted the "today" boundary
-            # back by Kenya's UTC+3 offset, silently pulling in the last 3
-            # hours of yesterday's transactions.
             since = datetime.now(nairobi).replace(
                 hour=0, minute=0, second=0, microsecond=0, tzinfo=None
             )
@@ -327,8 +279,6 @@ class PostgresDB:
             return {}
 
     def _get_latest_balance(self) -> float:
-        """Fallback: fetch the balance from the single most recent transaction,
-        regardless of date, in case today has no transactions yet."""
         try:
             row = self._fetch_one(
                 "SELECT balance FROM transactions ORDER BY timestamp DESC LIMIT 1"
@@ -340,19 +290,16 @@ class PostgresDB:
             logger.error(f"_get_latest_balance failed: {e}")
             return 0.0
 
-    def get_range_summary(self, days: int = 30) -> Dict:
-        """Returns a summary scoped to the last N days, plus the latest known
-        account balance. Used by the Streamlit dashboard so 'Last {days} days'
-        actually reflects that window instead of all-time totals."""
-        since = datetime.now() - timedelta(days=days)
+    def get_range_summary(self, days: Optional[int] = 30) -> Dict:
+        since = _since(days)
         try:
             data = self._fetch_all(
                 """
                 SELECT amount, type, balance, timestamp FROM transactions
-                WHERE timestamp >= %s
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
                 ORDER BY timestamp DESC
                 """,
-                (since,),
+                (since, since),
             )
             df = pd.DataFrame(data)
 
@@ -388,15 +335,15 @@ class PostgresDB:
             logger.error(f"get_range_summary failed: {e}")
             return {}
 
-    def get_spending_by_category(self, days: int = 30) -> List[Dict]:
-        since = datetime.now() - timedelta(days=days)
+    def get_spending_by_category(self, days: Optional[int] = 30) -> List[Dict]:
+        since = _since(days)
         try:
             data = self._fetch_all(
                 """
                 SELECT merchant_category, amount, type FROM transactions
-                WHERE timestamp >= %s
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
                 """,
-                (since,),
+                (since, since),
             )
             df = pd.DataFrame(data)
             if df.empty:
@@ -412,16 +359,16 @@ class PostgresDB:
             logger.error(f"get_spending_by_category failed: {e}")
             return []
 
-    def get_daily_trend(self, days: int = 30) -> List[Dict]:
-        since = datetime.now() - timedelta(days=days)
+    def get_daily_trend(self, days: Optional[int] = 30) -> List[Dict]:
+        since = _since(days)
         try:
             data = self._fetch_all(
                 """
                 SELECT timestamp, amount, type FROM transactions
-                WHERE timestamp >= %s
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
                 ORDER BY timestamp
                 """,
-                (since,),
+                (since, since),
             )
             df = pd.DataFrame(data)
             if df.empty:
@@ -440,15 +387,15 @@ class PostgresDB:
             logger.error(f"get_daily_trend failed: {e}")
             return []
 
-    def get_top_merchants(self, days: int = 30, limit: int = 10) -> List[Dict]:
-        since = datetime.now() - timedelta(days=days)
+    def get_top_merchants(self, days: Optional[int] = 30, limit: int = 10) -> List[Dict]:
+        since = _since(days)
         try:
             data = self._fetch_all(
                 """
                 SELECT recipient, amount, type FROM transactions
-                WHERE timestamp >= %s AND type != 'credit'
+                WHERE (%s::timestamp IS NULL OR timestamp >= %s) AND type != 'credit'
                 """,
-                (since,),
+                (since, since),
             )
             df = pd.DataFrame(data)
             if df.empty:
@@ -464,7 +411,7 @@ class PostgresDB:
             logger.error(f"get_top_merchants failed: {e}")
             return []
 
-    def get_anomalies(self, threshold: float = 2.5, days: int = 90) -> List[Dict]:
+    def get_anomalies(self, threshold: float = 2.5, days: Optional[int] = 90) -> List[Dict]:
         try:
             txs = self.get_transactions(days=days, limit=5000)
             df = pd.DataFrame(txs)
@@ -482,13 +429,12 @@ class PostgresDB:
             logger.error(f"get_anomalies failed: {e}")
             return []
 
-    def get_insights(self, days: int = 30) -> Dict:
-        """Generate insights for today or specified period"""
+    def get_insights(self, days: Optional[int] = 30) -> Dict:
         try:
-            since = datetime.now() - timedelta(days=days)
+            since = _since(days)
             data = self._fetch_all(
-                "SELECT * FROM transactions WHERE timestamp >= %s",
-                (since,),
+                "SELECT * FROM transactions WHERE %s::timestamp IS NULL OR timestamp >= %s",
+                (since, since),
             )
 
             if not data:
@@ -537,10 +483,7 @@ class PostgresDB:
                 'avg_transaction': 0
             }
 
-    # ── SMARTER ANOMALY DETECTION ────────────────────────────────────────
     def save_spending_baselines(self, baselines: List[Dict]) -> int:
-        """Upsert per-category stats into spending_baselines (one row per
-        merchant_category, unique on merchant_category)."""
         if not baselines:
             return 0
         sql = """
@@ -583,10 +526,6 @@ class PostgresDB:
             return []
 
     def save_anomalies(self, anomalies: List[Dict]) -> int:
-        """Upsert flagged transactions into the anomalies table, keyed on
-        (transaction_id, model) so re-running detection doesn't duplicate
-        rows. Only `score` is updated on conflict, so a human's `reviewed`
-        flag on an unchanged anomaly is never touched."""
         if not anomalies:
             return 0
         sql = """
@@ -610,12 +549,7 @@ class PostgresDB:
             logger.error(f"save_anomalies failed: {e}")
             return 0
 
-    def get_saved_anomalies(self, days: int = 90, limit: int = 20) -> List[Dict]:
-        """Return recently flagged anomalies joined with their transaction
-        details, highest score first. Run as two plain queries (anomaly
-        rows, then their parent transactions) and merged in Python, kept
-        deliberately simple rather than a single JOIN so it reads the same
-        way it always has."""
+    def get_saved_anomalies(self, days: Optional[int] = 90, limit: int = 20) -> List[Dict]:
         try:
             anomaly_rows = self._fetch_all(
                 """
@@ -632,14 +566,14 @@ class PostgresDB:
             tx_ids = [r['transaction_id'] for r in anomaly_rows if r.get('transaction_id')]
             if not tx_ids:
                 return []
-            since = datetime.now() - timedelta(days=days)
+            since = _since(days)
             tx_rows = self._fetch_all(
                 """
                 SELECT id, amount, recipient, merchant_category, timestamp, body
                 FROM transactions
-                WHERE id = ANY(%s::uuid[]) AND timestamp >= %s
+                WHERE id = ANY(%s::uuid[]) AND (%s::timestamp IS NULL OR timestamp >= %s)
                 """,
-                (tx_ids, since),
+                (tx_ids, since, since),
             )
             tx_by_id = {t['id']: t for t in tx_rows}
 
@@ -647,15 +581,13 @@ class PostgresDB:
             for a in anomaly_rows:
                 tx = tx_by_id.get(a.get('transaction_id'))
                 if not tx:
-                    continue  # transaction outside the `days` window, or since deleted
+                    continue
                 merged.append({**tx, **a})
             return merged
         except Exception as e:
             logger.error(f"get_saved_anomalies failed: {e}")
             return []
-    # ── END SMARTER ANOMALY DETECTION ────────────────────────────────────
 
-    # ── BUDGET GOALS + ALERTS ──────────────────────────────────────────
     def get_budgets(self, active_only: bool = True) -> List[Dict]:
         try:
             if active_only:
@@ -667,8 +599,6 @@ class PostgresDB:
 
     def upsert_budget(self, category: str, limit_amount: float, period: str = 'monthly',
                        alert_threshold_pct: int = 80) -> Optional[Dict]:
-        """Create or update a budget goal. Unique on (category, period), so
-        setting the same category+period again just updates the limit."""
         sql = """
             INSERT INTO budgets (category, period, limit_amount, alert_threshold_pct, active, updated_at)
             VALUES (%s, %s, %s, %s, TRUE, %s)
@@ -692,8 +622,6 @@ class PostgresDB:
             return None
 
     def get_budget_status(self) -> List[Dict]:
-        """Reads the budget_status VIEW (defined in schema/init_db.sql),
-        which computes spent_this_period live against each active budget."""
         try:
             return self._fetch_all("SELECT * FROM budget_status")
         except Exception as e:
@@ -701,9 +629,6 @@ class PostgresDB:
             return []
 
     def get_recent_budget_alerts(self, since_days: int = 45) -> List[Dict]:
-        """Pulls recently-sent alerts so the caller can build the
-        (budget_id, period_start, alert_level) de-duplication set without
-        re-querying per budget."""
         since = date.today() - timedelta(days=since_days)
         try:
             return self._fetch_all(
@@ -732,7 +657,6 @@ class PostgresDB:
         except Exception as e:
             logger.error(f"record_budget_alert failed: {e}")
             return False
-    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────
 
     def get_schema(self) -> str:
         return """

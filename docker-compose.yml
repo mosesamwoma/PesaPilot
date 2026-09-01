@@ -1,10 +1,34 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: pesapilot-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
+      - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
+    volumes:
+      - pesapilot-db-data:/var/lib/postgresql/data
+      - ./schema/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pesapilot} -d ${POSTGRES_DB:-pesapilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pesapilot-network
+
   pesapilot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: pesapilot-bot
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
@@ -12,9 +36,8 @@ services:
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
 
-      # Supabase
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
+      # Database — points at the "db" service above, not localhost
+      - DATABASE_URL=${DATABASE_URL:-postgresql://pesapilot:pesapilot@db:5432/pesapilot}
 
       # Groq
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -63,3 +86,6 @@ services:
 networks:
   pesapilot-network:
     driver: bridge
+
+volumes:
+  pesapilot-db-data:

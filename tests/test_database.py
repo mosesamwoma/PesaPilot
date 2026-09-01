@@ -1,18 +1,17 @@
-# tests/test_database.py
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-from src.database import SupabaseDB
+from src.database import PostgresDB
 
 @pytest.fixture(scope='module')
 def db():
-    return SupabaseDB()
+    return PostgresDB()
 
 def test_connection(db):
-    """Supabase client initializes without error"""
-    assert db.client is not None
+    """Postgres connection pool initializes without error"""
+    assert db._pool is not None
 
 def test_get_schema(db):
     schema = db.get_schema()

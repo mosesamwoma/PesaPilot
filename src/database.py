@@ -1,24 +1,123 @@
-# src/database.py
 import os
+import re
 import logging
+import uuid
+from decimal import Decimal
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional
+
 import pandas as pd
-from supabase import create_client, Client
+import psycopg2
+import psycopg2.extensions
+from psycopg2 import pool as pg_pool
+from psycopg2.extras import execute_values, RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-class SupabaseDB:
+_DEC2FLOAT = psycopg2.extensions.new_type(
+    psycopg2.extensions.DECIMAL.values, 'DEC2FLOAT',
+    lambda value, curs: float(value) if value is not None else None,
+)
+psycopg2.extensions.register_type(_DEC2FLOAT)
+
+
+def _serialize_value(v):
+    if isinstance(v, Decimal):
+        return float(v)
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    if isinstance(v, uuid.UUID):
+        return str(v)
+    return v
+
+
+def _serialize_row(row: dict) -> dict:
+    return {k: _serialize_value(v) for k, v in row.items()}
+
+
+def _since(days: Optional[int]) -> Optional[datetime]:
+    """Convert a `days` window into a cutoff datetime. days=None means
+    'full history' (used throughout analyzer.py, e.g. build_context_string
+    and ask_question default to days=None), so this returns None rather
+    than passing None into timedelta(), which raises TypeError."""
+    return datetime.now() - timedelta(days=days) if days is not None else None
+
+
+_FORBIDDEN_SQL_KEYWORDS = re.compile(
+    r'\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE|'
+    r'EXEC|EXECUTE|CREATE|ATTACH|REPLACE|MERGE|CALL)\b',
+    re.IGNORECASE
+)
+
+
+class PostgresDB:
     def __init__(self):
-        url = os.getenv('SUPABASE_URL')
-        key = os.getenv('SUPABASE_KEY')
-        if not url or not key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
-        self.client: Client = create_client(url, key)
-        logger.info("Supabase client initialized")
+        dsn = os.getenv('DATABASE_URL')
+        if not dsn:
+            raise ValueError(
+                "DATABASE_URL must be set, e.g. "
+                "postgresql://user:password@host:5432/dbname"
+            )
+        try:
+            self._pool = pg_pool.ThreadedConnectionPool(1, 10, dsn=dsn)
+        except Exception as e:
+            raise ValueError(f"Could not connect to Postgres at DATABASE_URL: {e}")
+        logger.info("Postgres connection pool initialized")
+
+    def _fetch_all(self, sql: str, params: tuple = None) -> List[Dict]:
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            conn.commit()
+            return [_serialize_row(dict(r)) for r in rows]
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._pool.putconn(conn)
+
+    def _fetch_one(self, sql: str, params: tuple = None) -> Optional[Dict]:
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+            conn.commit()
+            return _serialize_row(dict(row)) if row else None
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._pool.putconn(conn)
+
+    def _execute(self, sql: str, params: tuple = None) -> None:
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._pool.putconn(conn)
+
+    def _execute_values(self, sql: str, values: list) -> None:
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._pool.putconn(conn)
 
     def insert_transactions(self, df: pd.DataFrame, batch_size: int = 100) -> int:
         if df.empty:
@@ -31,59 +130,88 @@ class SupabaseDB:
                 if hasattr(v, 'isoformat'):
                     rec[k] = v.isoformat()
 
+        columns = ['transaction_id', 'amount', 'balance', 'type', 'recipient',
+                   'merchant_category', 'phone', 'body', 'timestamp',
+                   'readable_date', 'raw_date']
+        update_cols = [c for c in columns if c != 'transaction_id']
+        sql = f"""
+            INSERT INTO transactions ({', '.join(columns)})
+            VALUES %s
+            ON CONFLICT (transaction_id) DO UPDATE SET
+                {', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)}
+        """
+
         inserted = 0
         for i in range(0, len(records), batch_size):
-            batch = records[i:i+batch_size]
+            batch = records[i:i + batch_size]
+            values = [
+                (
+                    rec.get('transaction_id'),
+                    float(rec['amount']) if rec.get('amount') is not None else None,
+                    float(rec['balance']) if rec.get('balance') is not None else None,
+                    rec.get('type'),
+                    rec.get('recipient'),
+                    rec.get('merchant_category'),
+                    rec.get('phone'),
+                    rec.get('body'),
+                    rec.get('timestamp'),
+                    rec.get('readable_date'),
+                    rec.get('raw_date'),
+                )
+                for rec in batch
+            ]
             try:
-                self.client.table('transactions').upsert(batch, on_conflict='transaction_id').execute()
+                self._execute_values(sql, values)
                 inserted += len(batch)
-                logger.info(f"Inserted batch {i//batch_size + 1}, total: {inserted}")
+                logger.info(f"Inserted batch {i // batch_size + 1}, total: {inserted}")
             except Exception as e:
-                logger.error(f"Batch insert failed: {e}")
+                logger.error(f"Batch insert failed, retrying rows individually: {e}")
+                # One bad row (e.g. a null transaction_id, a bad type) fails
+                # the whole batched INSERT, which would otherwise silently
+                # drop every good row in the batch alongside it. Retry one
+                # row at a time so only the actually-bad rows are lost.
+                for row in values:
+                    try:
+                        self._execute_values(sql, [row])
+                        inserted += 1
+                    except Exception as row_err:
+                        logger.error(f"Skipping bad row {row[0]!r}: {row_err}")
         return inserted
 
     def execute_query(self, sql: str) -> List[Dict]:
+        cleaned = (sql or "").strip().rstrip(';')
+        if not cleaned.upper().startswith('SELECT') or ';' in cleaned:
+            logger.warning(f"execute_query rejected unsafe SQL: {cleaned[:100]!r}")
+            return []
+        if _FORBIDDEN_SQL_KEYWORDS.search(cleaned):
+            logger.warning(f"execute_query rejected SQL with forbidden keyword: {cleaned[:100]!r}")
+            return []
+        wrapped = f"SELECT * FROM ({cleaned}) AS _llm_query LIMIT 500"
         try:
-            result = self.client.rpc('run_query', {'query': sql}).execute()
-            return result.data or []
+            return self._fetch_all(wrapped)
         except Exception as e:
             logger.error(f"Query failed: {e}")
             return []
 
-    def get_transactions(self, days: Optional[int] = None, limit: Optional[int] = None) -> List[Dict]:
-        """days=None returns full history (no date filter). limit=None returns
-        every matching row, paginated past Supabase/PostgREST's default page
-        size so large accounts aren't silently truncated."""
+    def get_transactions(self, days: Optional[int] = 30, limit: int = 1000) -> List[Dict]:
+        since = _since(days)
         try:
-            query = self.client.table('transactions').select('*').order('timestamp', desc=True)
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                query = query.gte('timestamp', since)
-            if limit is not None:
-                return (query.limit(limit).execute().data or [])
-            return self._fetch_all(query)
+            return self._fetch_all(
+                """
+                SELECT * FROM transactions
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+                """,
+                (since, since, limit),
+            )
         except Exception as e:
             logger.error(f"get_transactions failed: {e}")
             return []
 
-    def _fetch_all(self, query, page_size: int = 1000) -> List[Dict]:
-        """Page through a PostgREST query with .range() until exhausted, so
-        callers asking for 'all' data actually get all of it instead of being
-        capped at one page (Supabase's default/max page size is 1000 rows)."""
-        rows: List[Dict] = []
-        start = 0
-        while True:
-            page = query.range(start, start + page_size - 1).execute().data or []
-            rows.extend(page)
-            if len(page) < page_size:
-                break
-            start += page_size
-        return rows
-
     def get_summary(self) -> Dict:
         try:
-            result = self.client.table('transactions').select('amount, type').execute()
-            data = result.data or []
+            data = self._fetch_all("SELECT amount, type FROM transactions")
             df = pd.DataFrame(data)
             if df.empty:
                 return {}
@@ -102,19 +230,20 @@ class SupabaseDB:
             return {}
 
     def get_today_summary(self) -> Dict:
-        """Returns a summary scoped to TODAY only (Africa/Nairobi calendar day),
-        plus the latest known account balance. Used by the 9PM daily summary cron."""
         try:
             nairobi = ZoneInfo("Africa/Nairobi")
-            start_of_day_nairobi = datetime.now(nairobi).replace(hour=0, minute=0, second=0, microsecond=0)
-            since = start_of_day_nairobi.astimezone(ZoneInfo("UTC")).isoformat()
+            since = datetime.now(nairobi).replace(
+                hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+            )
 
-            result = (self.client.table('transactions')
-                      .select('amount, type, balance, timestamp')
-                      .gte('timestamp', since)
-                      .order('timestamp', desc=True)
-                      .execute())
-            data = result.data or []
+            data = self._fetch_all(
+                """
+                SELECT amount, type, balance, timestamp FROM transactions
+                WHERE timestamp >= %s
+                ORDER BY timestamp DESC
+                """,
+                (since,),
+            )
             df = pd.DataFrame(data)
 
             latest_balance = 0.0
@@ -150,33 +279,28 @@ class SupabaseDB:
             return {}
 
     def _get_latest_balance(self) -> float:
-        """Fallback: fetch the balance from the single most recent transaction,
-        regardless of date, in case today has no transactions yet."""
         try:
-            result = (self.client.table('transactions')
-                      .select('balance')
-                      .order('timestamp', desc=True)
-                      .limit(1)
-                      .execute())
-            data = result.data or []
-            if data and data[0].get('balance') is not None:
-                return float(data[0]['balance'])
+            row = self._fetch_one(
+                "SELECT balance FROM transactions ORDER BY timestamp DESC LIMIT 1"
+            )
+            if row and row.get('balance') is not None:
+                return float(row['balance'])
             return 0.0
         except Exception as e:
             logger.error(f"_get_latest_balance failed: {e}")
             return 0.0
 
-    def get_range_summary(self, days: Optional[int] = None) -> Dict:
-        """Returns a summary scoped to the last N days, or the full account
-        history when days=None, plus the latest known account balance."""
+    def get_range_summary(self, days: Optional[int] = 30) -> Dict:
+        since = _since(days)
         try:
-            query = (self.client.table('transactions')
-                     .select('amount, type, balance, timestamp')
-                     .order('timestamp', desc=True))
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                query = query.gte('timestamp', since)
-            data = self._fetch_all(query)
+            data = self._fetch_all(
+                """
+                SELECT amount, type, balance, timestamp FROM transactions
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
+                ORDER BY timestamp DESC
+                """,
+                (since, since),
+            )
             df = pd.DataFrame(data)
 
             latest_balance = 0.0
@@ -211,13 +335,16 @@ class SupabaseDB:
             logger.error(f"get_range_summary failed: {e}")
             return {}
 
-    def get_spending_by_category(self, days: Optional[int] = None) -> List[Dict]:
+    def get_spending_by_category(self, days: Optional[int] = 30) -> List[Dict]:
+        since = _since(days)
         try:
-            query = self.client.table('transactions').select('merchant_category, amount, type')
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                query = query.gte('timestamp', since)
-            data = self._fetch_all(query)
+            data = self._fetch_all(
+                """
+                SELECT merchant_category, amount, type FROM transactions
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
+                """,
+                (since, since),
+            )
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -232,15 +359,17 @@ class SupabaseDB:
             logger.error(f"get_spending_by_category failed: {e}")
             return []
 
-    def get_daily_trend(self, days: Optional[int] = None) -> List[Dict]:
+    def get_daily_trend(self, days: Optional[int] = 30) -> List[Dict]:
+        since = _since(days)
         try:
-            query = (self.client.table('transactions')
-                     .select('timestamp, amount, type')
-                     .order('timestamp'))
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                query = query.gte('timestamp', since)
-            data = self._fetch_all(query)
+            data = self._fetch_all(
+                """
+                SELECT timestamp, amount, type FROM transactions
+                WHERE %s::timestamp IS NULL OR timestamp >= %s
+                ORDER BY timestamp
+                """,
+                (since, since),
+            )
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -258,15 +387,16 @@ class SupabaseDB:
             logger.error(f"get_daily_trend failed: {e}")
             return []
 
-    def get_top_merchants(self, days: Optional[int] = None, limit: Optional[int] = 10) -> List[Dict]:
+    def get_top_merchants(self, days: Optional[int] = 30, limit: int = 10) -> List[Dict]:
+        since = _since(days)
         try:
-            query = (self.client.table('transactions')
-                     .select('recipient, amount, type')
-                     .neq('type', 'credit'))
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                query = query.gte('timestamp', since)
-            data = self._fetch_all(query)
+            data = self._fetch_all(
+                """
+                SELECT recipient, amount, type FROM transactions
+                WHERE (%s::timestamp IS NULL OR timestamp >= %s) AND type != 'credit'
+                """,
+                (since, since),
+            )
             df = pd.DataFrame(data)
             if df.empty:
                 return []
@@ -274,17 +404,16 @@ class SupabaseDB:
                    .agg(['sum', 'count'])
                    .reset_index()
                    .rename(columns={'sum': 'total_amount', 'count': 'transactions'})
-                   .sort_values('total_amount', ascending=False))
-            if limit is not None:
-                top = top.head(limit)
+                   .sort_values('total_amount', ascending=False)
+                   .head(limit))
             return top.to_dict(orient='records')
         except Exception as e:
             logger.error(f"get_top_merchants failed: {e}")
             return []
 
-    def get_anomalies(self, threshold: float = 2.5, days: Optional[int] = None) -> List[Dict]:
+    def get_anomalies(self, threshold: float = 2.5, days: Optional[int] = 90) -> List[Dict]:
         try:
-            txs = self.get_transactions(days=days, limit=None)
+            txs = self.get_transactions(days=days, limit=5000)
             df = pd.DataFrame(txs)
             if df.empty or 'amount' not in df.columns:
                 return []
@@ -300,15 +429,14 @@ class SupabaseDB:
             logger.error(f"get_anomalies failed: {e}")
             return []
 
-    def get_insights(self, days: Optional[int] = None) -> Dict:
-        """Generate insights for a specified period, or all-time when days=None."""
+    def get_insights(self, days: Optional[int] = 30) -> Dict:
         try:
-            query = self.client.table('transactions').select('*')
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                query = query.gte('timestamp', since)
-            data = self._fetch_all(query)
-            
+            since = _since(days)
+            data = self._fetch_all(
+                "SELECT * FROM transactions WHERE %s::timestamp IS NULL OR timestamp >= %s",
+                (since, since),
+            )
+
             if not data:
                 return {
                     'total_spent': 0,
@@ -318,24 +446,24 @@ class SupabaseDB:
                     'top_category': 'N/A',
                     'avg_transaction': 0
                 }
-            
+
             df = pd.DataFrame(data)
             debits = df[df['type'].isin(['debit', 'payment', 'withdrawal', 'transfer', 'airtime'])]
             credits = df[df['type'] == 'credit']
-            
+
             total_spent = float(debits['amount'].sum()) if not debits.empty else 0
             total_received = float(credits['amount'].sum()) if not credits.empty else 0
-            
+
             top_merchant = 'N/A'
             if not debits.empty and 'recipient' in debits.columns:
                 top_merchant = debits.groupby('recipient')['amount'].sum().idxmax()
-            
+
             top_category = 'N/A'
             if not debits.empty and 'merchant_category' in debits.columns:
                 top_category = debits.groupby('merchant_category')['amount'].sum().idxmax()
-            
+
             avg_transaction = float(debits['amount'].mean()) if not debits.empty else 0
-            
+
             return {
                 'total_spent': total_spent,
                 'total_received': total_received,
@@ -355,173 +483,186 @@ class SupabaseDB:
                 'avg_transaction': 0
             }
 
-    # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
     def save_spending_baselines(self, baselines: List[Dict]) -> int:
-        """Upsert per-category stats into spending_baselines (one row per
-        merchant_category, unique on merchant_category)."""
         if not baselines:
             return 0
+        sql = """
+            INSERT INTO spending_baselines
+                (merchant_category, mean_amount, std_amount, median_amount, mad_amount, sample_size, computed_at)
+            VALUES %s
+            ON CONFLICT (merchant_category) DO UPDATE SET
+                mean_amount = EXCLUDED.mean_amount,
+                std_amount = EXCLUDED.std_amount,
+                median_amount = EXCLUDED.median_amount,
+                mad_amount = EXCLUDED.mad_amount,
+                sample_size = EXCLUDED.sample_size,
+                computed_at = EXCLUDED.computed_at
+        """
+        now = datetime.now()
         try:
-            records = [{**b, 'computed_at': datetime.now().isoformat()} for b in baselines]
-            self.client.table('spending_baselines').upsert(
-                records, on_conflict='merchant_category'
-            ).execute()
-            return len(records)
+            values = [
+                (
+                    b.get('merchant_category'),
+                    b.get('mean_amount'),
+                    b.get('std_amount'),
+                    b.get('median_amount'),
+                    b.get('mad_amount'),
+                    b.get('sample_size'),
+                    now,
+                )
+                for b in baselines
+            ]
+            self._execute_values(sql, values)
+            return len(values)
         except Exception as e:
             logger.error(f"save_spending_baselines failed: {e}")
             return 0
 
     def get_spending_baselines(self) -> List[Dict]:
         try:
-            result = self.client.table('spending_baselines').select('*').execute()
-            return result.data or []
+            return self._fetch_all("SELECT * FROM spending_baselines")
         except Exception as e:
             logger.error(f"get_spending_baselines failed: {e}")
             return []
 
     def save_anomalies(self, anomalies: List[Dict]) -> int:
-        """Upsert flagged transactions into the anomalies table, keyed on
-        (transaction_id, model) so re-running detection doesn't duplicate
-        rows or wipe out a human's `reviewed` flag on unchanged anomalies."""
         if not anomalies:
             return 0
+        sql = """
+            INSERT INTO anomalies (transaction_id, model, score)
+            VALUES %s
+            ON CONFLICT (transaction_id, model) DO UPDATE SET
+                score = EXCLUDED.score
+        """
         try:
-            records = [
-                {
-                    'transaction_id': a['transaction_id'],
-                    'model': a.get('model', 'isolation_forest_v1'),
-                    'score': a.get('score'),
-                }
+            values = [
+                (
+                    a['transaction_id'],
+                    a.get('model', 'isolation_forest_v1'),
+                    a.get('score'),
+                )
                 for a in anomalies
             ]
-            self.client.table('anomalies').upsert(
-                records, on_conflict='transaction_id,model'
-            ).execute()
-            return len(records)
+            self._execute_values(sql, values)
+            return len(values)
         except Exception as e:
             logger.error(f"save_anomalies failed: {e}")
             return 0
 
-    def get_saved_anomalies(self, days: Optional[int] = None, limit: Optional[int] = None) -> List[Dict]:
-        """Return recently flagged anomalies joined with their transaction
-        details, highest score first. Fetched as two plain queries (anomaly
-        rows, then their parent transactions) and merged in Python — kept
-        deliberately simple to match how the rest of this class queries
-        Supabase, rather than relying on nested/embedded-resource select
-        syntax."""
+    def get_saved_anomalies(self, days: Optional[int] = 90, limit: int = 20) -> List[Dict]:
         try:
-            anomaly_query = (self.client.table('anomalies')
-                              .select('id, transaction_id, model, score, reviewed, created_at')
-                              .order('score', desc=True))
-            if limit is not None:
-                anomaly_rows = anomaly_query.limit(limit).execute().data or []
-            else:
-                anomaly_rows = self._fetch_all(anomaly_query)
+            anomaly_rows = self._fetch_all(
+                """
+                SELECT id, transaction_id, model, score, reviewed, created_at
+                FROM anomalies
+                ORDER BY score DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
             if not anomaly_rows:
                 return []
 
             tx_ids = [r['transaction_id'] for r in anomaly_rows if r.get('transaction_id')]
             if not tx_ids:
                 return []
-            tx_query = (self.client.table('transactions')
-                        .select('id, amount, recipient, merchant_category, timestamp, body')
-                        .in_('id', tx_ids))
-            if days is not None:
-                since = (datetime.now() - timedelta(days=days)).isoformat()
-                tx_query = tx_query.gte('timestamp', since)
-            tx_result = tx_query.execute()
-            tx_by_id = {t['id']: t for t in (tx_result.data or [])}
+            since = _since(days)
+            tx_rows = self._fetch_all(
+                """
+                SELECT id, amount, recipient, merchant_category, timestamp, body
+                FROM transactions
+                WHERE id = ANY(%s::uuid[]) AND (%s::timestamp IS NULL OR timestamp >= %s)
+                """,
+                (tx_ids, since, since),
+            )
+            tx_by_id = {t['id']: t for t in tx_rows}
 
             merged = []
             for a in anomaly_rows:
                 tx = tx_by_id.get(a.get('transaction_id'))
                 if not tx:
-                    continue  # transaction outside the `days` window, or since deleted
+                    continue
                 merged.append({**tx, **a})
             return merged
         except Exception as e:
             logger.error(f"get_saved_anomalies failed: {e}")
             return []
-    # ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────
 
-    # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────
     def get_budgets(self, active_only: bool = True) -> List[Dict]:
         try:
-            query = self.client.table('budgets').select('*')
             if active_only:
-                query = query.eq('active', True)
-            result = query.execute()
-            return result.data or []
+                return self._fetch_all("SELECT * FROM budgets WHERE active = TRUE")
+            return self._fetch_all("SELECT * FROM budgets")
         except Exception as e:
             logger.error(f"get_budgets failed: {e}")
             return []
 
     def upsert_budget(self, category: str, limit_amount: float, period: str = 'monthly',
                        alert_threshold_pct: int = 80) -> Optional[Dict]:
-        """Create or update a budget goal. Unique on (category, period), so
-        setting the same category+period again just updates the limit."""
+        sql = """
+            INSERT INTO budgets (category, period, limit_amount, alert_threshold_pct, active, updated_at)
+            VALUES (%s, %s, %s, %s, TRUE, %s)
+            ON CONFLICT (category, period) DO UPDATE SET
+                limit_amount = EXCLUDED.limit_amount,
+                alert_threshold_pct = EXCLUDED.alert_threshold_pct,
+                active = TRUE,
+                updated_at = EXCLUDED.updated_at
+            RETURNING *
+        """
         try:
-            record = {
-                'category': category.strip().lower(),
-                'period': period.strip().lower(),
-                'limit_amount': limit_amount,
-                'alert_threshold_pct': alert_threshold_pct,
-                'active': True,
-                'updated_at': datetime.now().isoformat(),
-            }
-            result = self.client.table('budgets').upsert(
-                record, on_conflict='category,period'
-            ).execute()
-            return (result.data or [None])[0]
+            return self._fetch_one(sql, (
+                category.strip().lower(),
+                period.strip().lower(),
+                limit_amount,
+                alert_threshold_pct,
+                datetime.now(),
+            ))
         except Exception as e:
             logger.error(f"upsert_budget failed: {e}")
             return None
 
     def get_budget_status(self) -> List[Dict]:
-        """Reads the budget_status VIEW (defined in schema/init_db.sql),
-        which computes spent_this_period live against each active budget."""
         try:
-            result = self.client.table('budget_status').select('*').execute()
-            return result.data or []
+            return self._fetch_all("SELECT * FROM budget_status")
         except Exception as e:
             logger.error(f"get_budget_status failed: {e}")
             return []
 
     def get_recent_budget_alerts(self, since_days: int = 45) -> List[Dict]:
-        """Pulls recently-sent alerts so the caller can build the
-        (budget_id, period_start, alert_level) de-duplication set without
-        re-querying per budget."""
-        since = (date.today() - timedelta(days=since_days)).isoformat()
+        since = date.today() - timedelta(days=since_days)
         try:
-            result = (self.client.table('budget_alerts')
-                      .select('budget_id, period_start, alert_level')
-                      .gte('period_start', since)
-                      .execute())
-            return result.data or []
+            return self._fetch_all(
+                """
+                SELECT budget_id, period_start, alert_level
+                FROM budget_alerts
+                WHERE period_start >= %s
+                """,
+                (since,),
+            )
         except Exception as e:
             logger.error(f"get_recent_budget_alerts failed: {e}")
             return []
 
     def record_budget_alert(self, budget_id: str, period_start: str, alert_level: str,
                              amount_spent: float) -> bool:
+        sql = """
+            INSERT INTO budget_alerts (budget_id, period_start, alert_level, amount_spent)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (budget_id, period_start, alert_level) DO UPDATE SET
+                amount_spent = EXCLUDED.amount_spent
+        """
         try:
-            self.client.table('budget_alerts').upsert({
-                'budget_id': budget_id,
-                'period_start': period_start,
-                'alert_level': alert_level,
-                'amount_spent': amount_spent,
-            }, on_conflict='budget_id,period_start,alert_level').execute()
+            self._execute(sql, (budget_id, period_start, alert_level, amount_spent))
             return True
         except Exception as e:
             logger.error(f"record_budget_alert failed: {e}")
             return False
-    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
 
     def get_schema(self) -> str:
         return """
 Table: transactions
 Columns:
-  - id (integer, primary key)
+  - id (uuid, primary key)
   - transaction_id (text, unique)
   - amount (decimal) - transaction amount in KES
   - balance (decimal) - account balance after transaction

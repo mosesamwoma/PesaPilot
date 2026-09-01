@@ -1,4 +1,6 @@
+# Virtual envs and dependency caches
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -7,37 +9,40 @@ __pycache__/
 *.so
 *.egg
 *.egg-info/
-dist/
-build/
-.env
-data/
 node_modules/
-whatsapp-sessions/
-.git/
-.gitignore
-README.md
-*.log
-.DS_Store
+.npm/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local environment and secrets
+.env
+.env.*
+.git/
+.gitignore
+*.log
+*.log.*
+
+# Build output / generated artifacts
+build/
+dist/
 *.html
 *.xml
 *.csv
 *.xlsx
-node_modules
-npm-debug.log
-*.log
-.git
-.env
+*.db
+*.sqlite3
+
+# App runtime data that should be created in container
 data/
+whatsapp-sessions/
 sessions/
-*.pyc
-__pycache__
+.wwebjs_auth/
+.baileys_auth/
+
+# Editors / OS noise
+.vscode/
+.idea/
 .DS_Store
 *.swp
 *.swo
-.vscode
-.idea
-.wwebjs_auth/
-.baileys_auth/

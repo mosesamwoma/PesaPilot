@@ -26,7 +26,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **SQL safety guard** — every LLM-generated SQL query is validated (`SELECT`-only, no stacked statements, no DDL/DML keywords) before it touches the database
 - **Response caching** — in-memory TTL cache on all Groq calls, automatically invalidated whenever new transactions are inserted
 
-> **Note:** loading SMS data has no CLI command or dashboard button in the current codebase — see [Load your data](#5-load-your-data) below for the one-off script that does it.
+> **Note:** loading SMS data has no separate CLI subcommand or dashboard button. Follow the import command in [Set up the database and load your data](#3-set-up-the-database-and-load-your-data).
 
 ---
 
@@ -35,7 +35,6 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 PesaPilot ships with **two WhatsApp bot implementations**. They share the same FastAPI backend and self-hosted PostgreSQL database — only the WhatsApp connection layer differs.
 
 | | `whatsapp_bot.js` | `whatsapp_bot.ts` |
-|---|---|---|
 | **Library** | whatsapp-web.js | Baileys |
 | **Connection** | Headless Google Chrome (Puppeteer) | Pure WebSocket |
 | **Use case** | Local development | Docker / VPS (production) |
@@ -47,7 +46,6 @@ PesaPilot ships with **two WhatsApp bot implementations**. They share the same F
 > **Rule of thumb:** use `whatsapp_bot.js` when developing locally on your own machine. Use `whatsapp_bot.ts` (Baileys) for everything deployed — Docker, VPS, Railway, Raspberry Pi, any server. Baileys' low memory footprint (~80–120 MB, no Chromium) makes it well-suited to a Raspberry Pi (3B+ or newer recommended) running the Dockerized setup, giving you an always-on bot without paying for a VPS.
 
 ---
-
 ## Prerequisites
 
 - Python 3.10+
@@ -74,7 +72,6 @@ pip install -r requirements.txt
 npm install
 ```
 
----
 
 ## 2. Configure environment variables
 
@@ -84,83 +81,147 @@ cp .env.example .env
 
 Open `.env` and fill in the values. **Never commit `.env`** — it is already in `.gitignore`.
 
-### Required
+### PostgreSQL Credentials (Database Setup)
 
-| Variable | Where to get it |
-|---|---|
-| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:password@127.0.0.1:5432/pesapilot` |
-| `GROQ_API_KEY` | console.groq.com → API Keys |
-| `WHATSAPP_MAIN_NUMBER` | Your main number e.g. `254712345678` (country code, no `+`) — the number you text the bot **from** |
-| `WHATSAPP_PIN` | Any 4-digit number you choose e.g. `1234` — used for manual SMS entry |
+These variables are used by **both Docker and the app** to set up and connect to PostgreSQL:
 
-### Optional
+```env
+# Database user and password (used to create the DB and connect)
+POSTGRES_USER=pesapilot
+POSTGRES_PASSWORD=pesapilot
+POSTGRES_DB=pesapilot
+```
 
-| Variable | Default | Purpose |
+
+### DATABASE_URL — Depends on Deployment
+
+
+**🖥️ Local machine or VPS (direct PostgreSQL):**
+```env
+DATABASE_URL=postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot
+```
+
+**🐳 Docker Compose (uses service hostname):**
+```env
+DATABASE_URL=postgresql://pesapilot:pesapilot@db:5432/pesapilot
+```
+
+The `.env.example` file comes with the **local version** (127.0.0.1). If you're using Docker, **change `127.0.0.1` to `db`** before running `docker-compose up`.
+
+### Groq & Optional Variables
+
+| Variable | Required | Where to get it |
 |---|---|---|
-| `WHATSAPP_LID` | — | WhatsApp sometimes routes your number through an internal LID. Run the bot once, send a message, copy the value printed next to `From:` in the terminal, paste it here |
-| `API_URL` | `http://127.0.0.1:8000` | Where the bot looks for the FastAPI service |
-| `WHATSAPP_API_PORT` | `8000` | Port FastAPI listens on |
-| `LLM_MODEL_FAST` | `openai/gpt-oss-20b` | Groq model used for chat and dashboard insights (speed-sensitive) |
-| `LLM_MODEL_SMART` | `openai/gpt-oss-120b` | Groq model used for SQL generation, result analysis, budget/investment advice (accuracy-sensitive) |
-| `LLM_MODEL` | — | Legacy/back-compat: if set, overrides `LLM_MODEL_FAST` |
-| `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature |
-| `LLM_MAX_TOKENS` | `600` | Max tokens per Groq response |
-| `NODE_ENV` | `production` | Node runtime mode |
-| `NODE_OPTIONS` | `--max-old-space-size=2048` | Node heap size cap |
-| `TZ` | `Africa/Nairobi` | Timezone — affects log timestamps and the 9 PM daily-summary cron |
-| `WHATSAPP_USE_PAIRING_CODE` | `false` | Use a pairing code instead of a QR code to link the Baileys bot |
-| `BAILEYS_AUTH_PATH` | `./.baileys_auth` | Where Baileys session files are written |
-| `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log verbosity |
-| `WWEBJS_AUTH_PATH` | `./.wwebjs_auth` | Where whatsapp-web.js session files are written |
+| `GROQ_API_KEY` | Yes | console.groq.com → API Keys |
+| `WHATSAPP_MAIN_NUMBER` | Optional | Your main number e.g. `254712345678` (country code, no `+`) |
+| `WHATSAPP_PIN` | Optional | Any 4-digit number e.g. `1234` — used for manual SMS entry |
+| `WHATSAPP_LID` | Optional | Run bot once, copy value printed next to `From:`, paste here |
+| `API_URL` | No | Default: `http://127.0.0.1:8000` |
+| `WHATSAPP_API_PORT` | No | Default: `8000` |
+| `LLM_MODEL_FAST` | No | Default: `openai/gpt-oss-20b` |
+| `LLM_MODEL_SMART` | No | Default: `openai/gpt-oss-120b` |
+| `TZ` | No | Default: `Africa/Nairobi` |
+| `NODE_ENV` | No | Default: `production` |
+| `NODE_OPTIONS` | No | Default: `--max-old-space-size=2048` |
 
-> `.env.example` also lists `APP_ENV`, `DEBUG`, `SECRET_KEY`, `LOG_LEVEL`, `DB_MAX_CONNECTIONS`, `DB_CONNECTION_TIMEOUT`, `DB_QUERY_LIMIT`, `BATCH_SIZE`, `CACHE_TTL`, and `API_TIMEOUT`. None of these are currently read anywhere in the codebase — they're placeholders for future use and safe to ignore.
 
----
+## 3. Set up PostgreSQL, schema, and data
 
-## 3. Create the database schema
+PostgreSQL is managed separately from the application containers. Create the database, apply the schema, and load your M-Pesa transactions before starting Docker, Podman, or the local application.
 
-1. Connect to your PostgreSQL server as a superuser or admin user.
-2. Create the database and user if needed:
+### Create the database
+
+Run this on the machine where PostgreSQL is installed. If PostgreSQL is running in the Compose `db` service, start only that service first with `docker compose up -d db`, then run the SQL commands inside it with `docker compose exec -T db psql`.
 
 ```bash
 sudo -u postgres psql
-CREATE USER pesapilot_user WITH PASSWORD 'StrongPassword123!';
-CREATE DATABASE pesapilot OWNER pesapilot_user;
+```
+
+Then run:
+
+```sql
+CREATE USER pesapilot WITH PASSWORD 'pesapilot';
+CREATE DATABASE pesapilot OWNER pesapilot;
 \q
 ```
 
-3. Import the schema:
+If the user or database already exists, keep it and continue without running the failing `CREATE` command again.
+
+### Apply the schema
+
+For a local or VPS PostgreSQL server:
 
 ```bash
-psql "postgresql://pesapilot_user:StrongPassword123!@127.0.0.1:5432/pesapilot" < schema/init_db.sql
+psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" < schema/init_db.sql
 ```
 
-This creates the `transactions` table, indexes, and supporting tables required by the app.
+For PostgreSQL running in Docker Compose:
 
----
+```bash
+docker compose exec -T db psql -U pesapilot -d pesapilot < schema/init_db.sql
+```
 
-## 4. Get your M-Pesa data
+Verify that the tables exist:
 
-1. Install [SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore) on the phone with your M-Pesa SMS history
-2. **Back Up** → select **SMS only** → save to phone storage or Google Drive
-3. Transfer the XML file to your computer
-4. Place it in `data/raw/`
+```bash
+psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" -c "\dt"
+```
 
----
+### Load your M-Pesa data
 
-## 5. Parse and load your data
-
-Parse the SMS backup, save a cleaned CSV copy, and upsert the M-Pesa transactions into PostgreSQL:
+1. Install [SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore).
+2. Choose **Back Up** → **SMS only**.
+3. Transfer the XML file to this computer and place it in `data/raw/`.
+4. Replace the filename below with your actual XML filename:
 
 ```bash
 python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml', 'data/processed/mpesa_transactions.csv'); print(f'Loaded {count} transactions')"
 ```
 
-Replace `your-sms-backup.xml` with the name of your XML file. The cleaned CSV is saved to `data/processed/mpesa_transactions.csv`, and the parsed transactions are stored in PostgreSQL. Re-running the command is safe because records are upserted by `transaction_id`.
+For manual PostgreSQL, run the command on the host. For Docker Compose, run the same import inside the application container:
+
+```bash
+docker compose exec pesapilot python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml', 'data/processed/mpesa_transactions.csv'); print(f'Loaded {count} transactions')"
+```
+
+The command saves a cleaned CSV and upserts transactions into PostgreSQL. Re-running it is safe because records are upserted by `transaction_id`.
+
+Verify that data was loaded:
+
+```bash
+psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" -c "SELECT COUNT(*) FROM transactions;"
+```
+
+For Docker Compose, verify from the PostgreSQL container instead:
+
+```bash
+docker compose exec db psql -U pesapilot -d pesapilot -c "SELECT COUNT(*) FROM transactions;"
+```
+
+The count should be greater than zero when the XML contains valid M-Pesa messages.
+
+### Database settings
+
+For manual development or a VPS, use:
+
+```env
+POSTGRES_USER=pesapilot
+POSTGRES_PASSWORD=pesapilot
+POSTGRES_DB=pesapilot
+DATABASE_URL=postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot
+```
+
+For Docker Compose, PostgreSQL runs in the `db` service, so only the host in `DATABASE_URL` changes:
+
+```env
+DATABASE_URL=postgresql://pesapilot:pesapilot@db:5432/pesapilot
+```
+
+For production, replace the example password consistently in PostgreSQL, `.env`, and `DATABASE_URL`. Never commit `.env`.
 
 ---
 
-## 6. Run locally
+## 4. Run the application
 
 ### Both services together
 
@@ -179,23 +240,19 @@ streamlit run dashboard/app.py
 Open [http://localhost:8501](http://localhost:8501).
 
 ### API + WhatsApp bot (whatsapp-web.js — local dev)
-
 Open two terminals:
 
 ```bash
 # Terminal 1 — FastAPI backend
 npm run api
-# (equivalent to: uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 --reload)
-
 # Terminal 2 — WhatsApp bot (whatsapp-web.js + Google Chrome)
 npm run dev:wwebjs
 ```
-
 A QR code prints in Terminal 2 on first run. Scan it: **WhatsApp → Settings → Linked Devices → Link a Device**.
 
 Session is saved under `.wwebjs_auth/` — no rescan on normal restarts.
 
-### API + WhatsApp bot (Baileys TypeScript — also works locally)
+### API + WhatsApp bot (Baileys TypeScript)
 
 ```bash
 # Terminal 1 — FastAPI backend
@@ -216,7 +273,6 @@ Session is saved under `.baileys_auth/`.
 ```bash
 npm run api          # FastAPI backend with auto-reload (uvicorn --reload)
 npm run dev           # Baileys bot via ts-node (auto-restart on save)
-npm run dev:wwebjs    # whatsapp-web.js bot via nodemon
 npm run build         # Compile whatsapp_bot.ts → dist/whatsapp_bot.js
 npm start             # Run compiled Baileys bot: node dist/whatsapp_bot.js
 npm run start:wwebjs  # Run whatsapp-web.js bot: node whatsapp/whatsapp_bot.js
@@ -228,14 +284,12 @@ npm run clean         # Remove dist/ and auth session folders
 ## CLI reference
 
 `run.py` takes no subcommands — it starts both the FastAPI backend and the Streamlit dashboard and blocks until you Ctrl+C:
-
 ```bash
 python run.py
 ```
 
-There is no `setup`, `load`, `ask`, or `dashboard` subcommand. For loading data see [Load your data](#5-load-your-data) above; for a connection check, `python -c "from src.database import SupabaseDB; SupabaseDB()"` will raise if `SUPABASE_URL`/`SUPABASE_KEY` are missing or wrong.
+There is no `setup`, `load`, `ask`, or `dashboard` subcommand. For loading data, follow the import command in [Set up the database and load your data](#3-set-up-the-database-and-load-your-data). For a connection check, run `python -c "from src.database import PostgresDB; PostgresDB()"`; it will raise if `DATABASE_URL` is missing or wrong.
 
----
 
 ## The Forecast page
 
@@ -246,25 +300,16 @@ Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spendi
 **Minimum data required:** 14 days of spending history.
 
 **How it works:**
-1. Pulls up to 180 days of debit transactions from Supabase
+1. Pulls up to 180 days of debit transactions from PostgreSQL
 2. Aggregates into a daily series (zero-filled for no-spend days)
 3. Prophet fits a linear-growth model with weekly seasonality
-4. Result is cached in memory (6-hour TTL, invalidated on new inserts)
-5. Groq writes a plain-English insight framing the projection as a prediction, not a fact
 
-**Trend classification:** Increasing / Decreasing / Stable based on ±7% difference between first and second half of the forecast horizon.
-
-**Risk level:** High (>25% above historical pace or volatility >0.9) / Moderate (10–25% or 0.6–0.9) / Low (everything else).
-
----
 
 ## What you can ask the bot
-
 ![Ask AI view](assets/4.png)
 
 | You send | What happens |
 |---|---|
-| `bar chart` / `pie chart` / `trend` / `heatmap` / `merchants` / `histogram` | Chart rendered and sent as an image |
 | `What did I spend on food?` | Plain-English answer with KES + % breakdown |
 | `Give me a budget plan` | Needs/wants/savings split in KES, one category to trim |
 | `What should I invest in?` | Sacco / MMF / T-Bill recommendation sized to your surplus |
@@ -318,12 +363,8 @@ docker compose logs -f pesapilot         # live logs
 docker compose restart pesapilot         # restart (session persists)
 docker compose down                      # stop and remove container
 docker compose up -d --build             # rebuild after code change
-
-# Force a new QR scan (wipes Baileys session)
-docker compose exec pesapilot rm -rf /app/.baileys_auth
-docker compose restart pesapilot
-docker compose logs -f pesapilot
 ```
+
 
 ### Test the API
 
@@ -347,7 +388,11 @@ curl -X POST http://YOUR_VPS_IP:8000/ask \
 
 The Podman files live in `podman/` so the production Docker files can remain at the project root.
 
-### Install
+Complete [Section 3](#3-set-up-postgresql-schema-and-data) first. Podman does not create PostgreSQL or apply the schema. Because the application runs inside a Podman container, set this in `.env` when PostgreSQL runs on the host:
+
+```env
+DATABASE_URL=postgresql://pesapilot:pesapilot@host.containers.internal:5432/pesapilot
+```
 
 ```bash
 sudo dnf install podman podman-compose      # Fedora/RHEL
@@ -372,7 +417,6 @@ podman-compose -f podman/compose.yml restart           # restart (session persis
 podman-compose -f podman/compose.yml down              # stop and remove container
 podman-compose -f podman/compose.yml up -d --build     # rebuild after code change
 
-# Force a new QR scan (wipes the local session)
 podman-compose -f podman/compose.yml exec pesapilot rm -rf /app/.wwebjs_auth
 podman-compose -f podman/compose.yml restart
 podman-compose -f podman/compose.yml logs -f
@@ -428,7 +472,6 @@ chmod +x redeploy.sh
 
 You'll be prompted for:
 
-- VPS username: `your-username`
 - VPS host/IP: `your.vps.ip.address`
 - Remote project path: press Enter to accept the default path (`~/PesaPilot`)
 
@@ -450,7 +493,7 @@ The script then:
 
 ## How the AI advice is grounded
 
-Every question sent to Groq is paired with live context pulled from Supabase first:
+Every question sent to Groq is paired with live context pulled from PostgreSQL first:
 
 - Summary stats (total spent, received, balance, transaction count)
 - Top spending categories with KES amounts and percentages
@@ -467,7 +510,7 @@ This sits under a Kenya-specific system prompt (`src/groq_client.py`) that enfor
 | `LLM_MODEL_FAST` (`openai/gpt-oss-20b`) | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
 | `LLM_MODEL_SMART` (`openai/gpt-oss-120b`) | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
 
-**SQL safety guard:** all LLM-generated SQL is passed through `is_safe_select_sql()` before execution — it must start with `SELECT`, contain no stacked statements (`;`), and contain none of `DROP / DELETE / UPDATE / INSERT / ALTER / TRUNCATE / GRANT / REVOKE / EXEC / EXECUTE / CREATE / ATTACH / REPLACE / MERGE / CALL`. Anything that fails is rejected and never reaches Supabase.
+**SQL safety guard:** all LLM-generated SQL is passed through `is_safe_select_sql()` before execution — it must start with `SELECT`, contain no stacked statements (`;`), and contain none of `DROP / DELETE / UPDATE / INSERT / ALTER / TRUNCATE / GRANT / REVOKE / EXEC / EXECUTE / CREATE / ATTACH / REPLACE / MERGE / CALL`. Anything that fails is rejected and never reaches PostgreSQL.
 
 **Response caching:** every Groq call is cached in-memory, keyed on a SHA-256 hash of (system prompt, user prompt), with TTLs tuned per call type — 1 hour for SQL generation, 15 min for budget/investment advice, 10 min for insights, 5 min for general chat. The cache is cleared automatically whenever a new transaction is inserted (`GroqClient.invalidate_cache()`).
 
@@ -481,7 +524,7 @@ python -m pytest tests/ -v
 
 53 tests across `test_parser.py` (17), `test_analyzer.py` (10), `test_database.py` (11), `test_forecasting.py` (15).
 
-> `test_analyzer.py` and `test_database.py` are **not mocked** — they call your real Supabase project and Groq API key. `test_insert_and_retrieve` writes one row (`transaction_id = TEST0000001`) into your live `transactions` table. Don't run against a production database you care about being pristine.
+> `test_analyzer.py` and `test_database.py` are **not mocked** — they call your real PostgreSQL database and Groq API key. `test_insert_and_retrieve` writes one row (`transaction_id = TEST0000001`) into your live `transactions` table. Don't run against a production database you care about being pristine.
 >
 > `test_parser.py` and `test_forecasting.py` are fully self-contained (synthetic data, no network calls) and safe to run anywhere.
 
@@ -492,7 +535,7 @@ python -m pytest tests/ -v
 | Issue | Fix |
 |---|---|
 | `❌ .env file not found!` (from `python run.py`) | Copy `.env.example` to `.env` in the project root before running |
-| `run_query not found` / RPC errors | Run `schema/init_db.sql` in the Supabase SQL Editor |
+| Database connection errors | Verify PostgreSQL is running and that `DATABASE_URL` uses `127.0.0.1` for manual setup or `db` inside Docker |
 | `ModuleNotFoundError: No module named 'src'` | Run commands from the project root, not from inside `src/` or `whatsapp/` |
 | No transactions after loading XML | Confirm the file is an unmodified export from SMS Backup & Restore containing M-Pesa messages |
 | Port 8000 already in use | Set `WHATSAPP_API_PORT` to another port and update `API_URL` and `docker-compose.yml` to match |
@@ -508,13 +551,13 @@ python -m pytest tests/ -v
 | Groq rate limit / empty AI responses | Wait ~60s and retry; lower `LLM_MAX_TOKENS` if it happens often |
 | `streamlit: command not found` | Activate your virtualenv: `source venv/bin/activate` |
 | `balance` column empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
-| `pytest` fails on Supabase/Groq tests | Tests need real credentials and the schema from `schema/init_db.sql` already applied |
+| `pytest` fails on PostgreSQL/Groq tests | Tests need real credentials and the schema from `schema/init_db.sql` already applied |
 
 ---
 
 ## Future Improvements
 
-- Multi-user support — currently hardcoded to one number/Supabase project
+- Multi-user support — currently hardcoded to one number/PostgreSQL database
 - Other mobile money providers — Airtel Money, T-Kash via pluggable parsers
 - Self-hosted/local LLM option — for privacy-conscious users
 - CI/CD pipeline — automated tests + Docker builds via GitHub Actions

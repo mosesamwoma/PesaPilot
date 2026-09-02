@@ -9,7 +9,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
     volumes:
       - pesapilot-db-data:/var/lib/postgresql/data
-      - ./schema/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

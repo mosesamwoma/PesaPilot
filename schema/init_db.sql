@@ -1,16 +1,30 @@
 -- ============================================================
--- 3. Create the database schema
+-- Create the database schema (self-hosted PostgreSQL)
 -- ============================================================
--- 1. Go to https://supabase.com/dashboard, select your project,
---    then open SQL Editor -> New Query.
--- 2. Paste the contents of this file into the SQL Editor.
--- 3. Click Run.
+-- With Docker Compose (docker-compose.yml `db` service):
+--   docker exec -i pesapilot-db psql -U pesapilot -d pesapilot < schema/init_db.sql
+--
+-- With a local/VPS PostgreSQL install:
+--   psql "$DATABASE_URL" -f schema/init_db.sql
 --
 -- You should see: PesaPilot DB ready ✅
 -- ============================================================
 
 -- Needed for gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ------------------------------------------------------------
+-- MIGRATION (run this instead of the CREATE TABLE below if you
+-- already have a `transactions` table from before transaction_cost
+-- existed):
+--
+--   ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0;
+--
+-- Safe to run more than once. Existing rows backfill to 0 automatically
+-- (DEFAULT 0 applies retroactively on ADD COLUMN). Re-import your SMS
+-- Backup & Restore XML (or resend past SMS through the WhatsApp bot)
+-- afterwards to get the REAL fee amounts in place of that 0 backfill.
+-- ------------------------------------------------------------
 
 -- ------------------------------------------------------------
 -- 1. transactions
@@ -24,6 +38,7 @@ CREATE TABLE transactions (
     transaction_id TEXT UNIQUE NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     balance DECIMAL(12,2),
+    transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
     type TEXT NOT NULL,
     recipient TEXT,
     merchant_category TEXT,

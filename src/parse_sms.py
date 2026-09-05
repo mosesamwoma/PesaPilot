@@ -68,6 +68,7 @@ class MpesaParser:
             tx_type = self._determine_type(body)
             recipient = self._extract_recipient(body)
             balance = self._extract_balance(body)
+            transaction_cost = self._extract_transaction_cost(body)
             tx_id = self._extract_transaction_id(body)
             if tx_id is None:
                 # Cancellation notices and a few other Safaricom system SMS
@@ -85,6 +86,7 @@ class MpesaParser:
                 'transaction_id': tx_id,
                 'amount': amount,
                 'balance': balance,
+                'transaction_cost': transaction_cost,
                 'type': tx_type,
                 'recipient': recipient,
                 'merchant_category': category,
@@ -108,6 +110,7 @@ class MpesaParser:
             tx_type = self._determine_type(body)
             recipient = self._extract_recipient(body)
             balance = self._extract_balance(body)
+            transaction_cost = self._extract_transaction_cost(body)
             tx_id = self._extract_transaction_id(body)
             phone = self._extract_phone(body)
             category = self._categorize(body, recipient)
@@ -117,6 +120,7 @@ class MpesaParser:
                 'transaction_id': tx_id or f"MANUAL_{int(datetime.now().timestamp())}",
                 'amount': amount,
                 'balance': balance,
+                'transaction_cost': transaction_cost,
                 'type': tx_type,
                 'recipient': recipient,
                 'merchant_category': category,
@@ -155,6 +159,22 @@ class MpesaParser:
                     return value  # all amounts are 0 — still return it
                 return value
         return None
+
+    def _extract_transaction_cost(self, body: str) -> float:
+        """Extract the M-Pesa transaction cost/fee. Returns 0.0 (never None)
+        when the SMS has no "Transaction cost, Ksh..." line — plain P2P
+        sends and airtime top-ups usually don't carry one — so the column
+        is always a real number in the database, exactly like `amount` and
+        `balance`, and can always be summed/charted without extra NULL
+        handling downstream.
+        """
+        m = re.search(r'transaction\s*cost,?\s*Ksh\.?\s?([\d,]+\.?\d*)', body, re.IGNORECASE)
+        if m:
+            try:
+                return float(m.group(1).replace(',', ''))
+            except ValueError:
+                return 0.0
+        return 0.0
 
     def _extract_balance(self, body: str):
         """Extract the new M-PESA balance after the transaction.

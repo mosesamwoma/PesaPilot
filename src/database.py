@@ -142,7 +142,7 @@ class PostgresDB:
         if not valid_records:
             return 0
 
-        columns = ['transaction_id', 'amount', 'balance', 'type', 'recipient',
+        columns = ['transaction_id', 'amount', 'balance', 'transaction_cost', 'type', 'recipient',
                    'merchant_category', 'phone', 'body', 'timestamp',
                    'readable_date', 'raw_date']
         update_cols = [c for c in columns if c != 'transaction_id']
@@ -161,6 +161,7 @@ class PostgresDB:
                     rec.get('transaction_id'),
                     float(rec['amount']) if rec.get('amount') is not None else None,
                     float(rec['balance']) if rec.get('balance') is not None else None,
+                    float(rec.get('transaction_cost') or 0),
                     rec.get('type'),
                     rec.get('recipient'),
                     rec.get('merchant_category'),
@@ -224,6 +225,41 @@ class PostgresDB:
             )
         except Exception as e:
             logger.error(f"get_transactions failed: {e}")
+            return []
+
+    def get_transactions_range(self, date_from: Optional[str] = None,
+                                date_to: Optional[str] = None, limit: int = 20000) -> List[Dict]:
+        """Flexible, explicit-calendar-bounds transaction pull for the dynamic
+        chart engine (src/chart_generator.py). Unlike get_transactions()'s
+        rolling 'last N days' window, this accepts concrete YYYY-MM-DD bounds
+        so a user can ask for a specific month, a named week, or a custom
+        date range and get exactly that slice — either bound (or both) may
+        be omitted for 'from the beginning' / 'up to now' / full history."""
+        conditions = []
+        params: list = []
+        if date_from:
+            conditions.append("timestamp >= %s")
+            params.append(date_from)
+        if date_to:
+            conditions.append("timestamp < %s")
+            try:
+                # date_to is inclusive from the user's point of view ("through
+                # August 31"), so bump to the start of the next day.
+                params.append((datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)).isoformat())
+            except ValueError:
+                conditions.pop()
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"""
+            SELECT * FROM transactions
+            {where_clause}
+            ORDER BY timestamp ASC
+            LIMIT %s
+        """
+        params.append(limit)
+        try:
+            return self._fetch_all(sql, tuple(params))
+        except Exception as e:
+            logger.error(f"get_transactions_range failed: {e}")
             return []
 
     def get_summary(self) -> Dict:
@@ -313,14 +349,14 @@ class PostgresDB:
             if since is None:
                 data = self._fetch_all(
                     """
-                    SELECT amount, type, balance, timestamp FROM transactions
+                    SELECT amount, type, balance, transaction_cost, timestamp FROM transactions
                     ORDER BY timestamp DESC
                     """
                 )
             else:
                 data = self._fetch_all(
                     """
-                    SELECT amount, type, balance, timestamp FROM transactions
+                    SELECT amount, type, balance, transaction_cost, timestamp FROM transactions
                     WHERE timestamp >= %s
                     ORDER BY timestamp DESC
                     """,
@@ -343,10 +379,20 @@ class PostgresDB:
                     'debit_count': 0,
                     'credit_count': 0,
                     'balance': latest_balance,
+                    'total_transaction_cost': 0,
                 }
 
             debits = df[df['type'].isin(['debit', 'payment', 'withdrawal', 'transfer', 'airtime'])]
             credits = df[df['type'] == 'credit']
+            # Transaction fees only ever apply to outgoing transactions (withdrawals,
+            # paybill/buy-goods payments) — never to money received — so we sum the
+            # cost column only over debits. .fillna(0) because most SMS variants
+            # (plain P2P sends, airtime) never state a cost line at all.
+            total_cost = (
+                float(debits['transaction_cost'].fillna(0).sum())
+                if not debits.empty and 'transaction_cost' in debits.columns
+                else 0.0
+            )
             return {
                 'total_transactions': len(df),
                 'total_spent': float(debits['amount'].sum()) if not debits.empty else 0,
@@ -355,6 +401,7 @@ class PostgresDB:
                 'debit_count': len(debits),
                 'credit_count': len(credits),
                 'balance': latest_balance,
+                'total_transaction_cost': total_cost,
             }
         except Exception as e:
             logger.error(f"get_range_summary failed: {e}")
@@ -366,13 +413,13 @@ class PostgresDB:
             if since is None:
                 data = self._fetch_all(
                     """
-                    SELECT merchant_category, amount, type FROM transactions
+                    SELECT merchant_category, amount, transaction_cost, type FROM transactions
                     """
                 )
             else:
                 data = self._fetch_all(
                     """
-                    SELECT merchant_category, amount, type FROM transactions
+                    SELECT merchant_category, amount, transaction_cost, type FROM transactions
                     WHERE timestamp >= %s
                     """,
                     (since,),
@@ -380,11 +427,14 @@ class PostgresDB:
             df = pd.DataFrame(data)
             if df.empty:
                 return []
-            debits = df[df['type'] != 'credit']
-            grouped = (debits.groupby('merchant_category')['amount']
-                       .agg(['sum', 'count', 'mean'])
-                       .reset_index()
-                       .rename(columns={'sum': 'total_amount', 'count': 'transaction_count', 'mean': 'avg_amount'}))
+            debits = df[df['type'] != 'credit'].copy()
+            debits['transaction_cost'] = debits['transaction_cost'].fillna(0)
+            grouped = (debits.groupby('merchant_category')
+                       .agg(total_amount=('amount', 'sum'),
+                            transaction_count=('amount', 'count'),
+                            avg_amount=('amount', 'mean'),
+                            total_transaction_cost=('transaction_cost', 'sum'))
+                       .reset_index())
             grouped = grouped.sort_values('total_amount', ascending=False)
             return grouped.to_dict(orient='records')
         except Exception as e:
@@ -727,6 +777,7 @@ Columns:
   - transaction_id (text, unique)
   - amount (decimal) - transaction amount in KES
   - balance (decimal) - account balance after transaction
+  - transaction_cost (decimal, NOT NULL, default 0) - M-Pesa fee charged for the transaction; 0 when the SMS stated no fee (plain P2P sends and airtime usually don't have one), a real amount for withdrawals and paybill/buy-goods payments
   - type (text) - 'credit', 'debit', 'payment', 'withdrawal', 'transfer', 'airtime'
   - recipient (text) - person or merchant name
   - merchant_category (text) - food, transport, utilities, banking, shopping, health, education, entertainment, savings, business, other

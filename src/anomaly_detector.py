@@ -149,7 +149,7 @@ def detect_anomalies(transactions: List[Dict]) -> List[Dict]:
 
     df["merchant_category"] = df.get("merchant_category", "other").fillna("other")
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-    df["timestamp"] = pd.to_datetime(df.get("timestamp"), errors="coerce")
+    df["timestamp"] = pd.to_datetime(df.get("timestamp"), format='ISO8601', errors="coerce")
     df = df.dropna(subset=["amount", "timestamp"])
     if df.empty:
         return []

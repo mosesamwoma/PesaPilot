@@ -244,7 +244,7 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     if df.empty:
         return df
 
-    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601', errors='coerce')
     df = df.dropna(subset=['timestamp'])
     if df.empty:
         return df

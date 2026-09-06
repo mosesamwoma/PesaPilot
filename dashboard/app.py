@@ -733,7 +733,7 @@ def main() -> None:
                 df_heat: pd.DataFrame = pd.DataFrame(raw_for_heat)
                 df_heat = df_heat[df_heat['type'] != 'credit'].copy()
                 if not df_heat.empty and 'timestamp' in df_heat.columns:
-                    df_heat['timestamp'] = pd.to_datetime(df_heat['timestamp'], errors='coerce')
+                    df_heat['timestamp'] = pd.to_datetime(df_heat['timestamp'], format='ISO8601', errors='coerce')
                     df_heat = df_heat.dropna(subset=['timestamp'])
                     df_heat['merchant_category'] = df_heat['merchant_category'].fillna('other')
                     df_heat['amount'] = pd.to_numeric(df_heat['amount'], errors='coerce').fillna(0)

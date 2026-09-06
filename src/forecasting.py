@@ -125,7 +125,7 @@ def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["date", "amount"])
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', errors="coerce")
     df = df.dropna(subset=["timestamp"])
     if df.empty:
         return pd.DataFrame(columns=["date", "amount"])

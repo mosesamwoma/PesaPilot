@@ -79,6 +79,7 @@ class MpesaAnalyzer:
             anomalies = self.db.get_anomalies(days=days) or []
 
             total_spent = summary.get('total_spent', 0) or 0
+            total_cost = summary.get('total_transaction_cost', 0) or 0
             lines = []
 
             period_label = f"last {days} days" if days is not None else "full history"
@@ -88,6 +89,13 @@ class MpesaAnalyzer:
                 f"Total Received KES {summary.get('total_received', 0):,.0f}, "
                 f"Balance KES {summary.get('balance', 0):,.0f}."
             )
+            if total_cost > 0:
+                cost_pct = (total_cost / total_spent * 100) if total_spent else 0
+                lines.append(
+                    f"M-Pesa transaction fees paid: KES {total_cost:,.0f}"
+                    f" ({cost_pct:.1f}% of total spending) — this is money lost to charges, "
+                    f"not to purchases, and is worth calling out separately when relevant."
+                )
 
             if category_data and total_spent > 0:
                 cat_lines = []
@@ -336,6 +344,21 @@ class MpesaAnalyzer:
             return []
     # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
 
+    # ── DYNAMIC CHARTS (NEW) ──────────────────────────────────────────────
+    def generate_dynamic_chart(self, description: str, dark: bool = True) -> Dict:
+        """Natural-language chart request -> matplotlib figure. Replaces the
+        old fixed keyword->hardcoded-chart mapping: the user can describe
+        chart type, date range (a specific month/week/quarter/custom dates),
+        grouping, and category filter all in their own words. See
+        src/chart_generator.py for the full pipeline (LLM spec parsing +
+        flexible data pull + a single renderer covering bar/line/pie/area/
+        scatter/histogram/heatmap). `dark=True` matches the Streamlit
+        dashboard's theme; pass `dark=False` for the white-background PNGs
+        sent over WhatsApp."""
+        from src import chart_generator
+        return chart_generator.generate_dynamic_chart(self, description, dark=dark)
+    # ── END DYNAMIC CHARTS ───────────────────────────────────────────────
+
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
         """Parse a single M-Pesa SMS text and insert it into the database.
         Called by the WhatsApp /parse-sms endpoint for manual PIN-based entry."""
@@ -372,6 +395,11 @@ class MpesaAnalyzer:
         # message without a balance line. `or 0` catches that None case too.
         balance = tx.get('balance', 0) or 0
         category = tx.get('merchant_category', 'other')
+        # transaction_cost is always a real number now (0 when the SMS
+        # stated no fee), so the Fee line is shown for every outgoing
+        # transaction — including "Fee: KES 0.00" — rather than being
+        # hidden whenever there's nothing to report.
+        cost = tx.get('transaction_cost') or 0
 
         if tx_type == 'credit':
             summary = (
@@ -385,6 +413,7 @@ class MpesaAnalyzer:
                 f"✅ Paid KES {amount:,.2f}\n"
                 f"To: {recipient}\n"
                 f"Category: {category.title()}\n"
+                f"Fee: KES {cost:,.2f}\n"
                 f"Balance: KES {balance:,.2f}\n"
                 f"Transaction ID: {tx_id}"
             )

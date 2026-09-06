@@ -33,8 +33,7 @@ echo -e "${BLUE}   Hostname: $(hostname 2>/dev/null || echo unknown)${NC}\n"
 echo -e "${YELLOW}📋 Step 2: Validating environment variables...${NC}"
 
 REQUIRED_VARS=(
-    "SUPABASE_URL"
-    "SUPABASE_KEY"
+    "DATABASE_URL"
     "GROQ_API_KEY"
     "WHATSAPP_MAIN_NUMBER"
     "WHATSAPP_PIN"
@@ -53,10 +52,35 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
         echo -e "${RED}   - $var${NC}"
     done
     echo -e "${RED}Set these in your .env file (or however you inject env vars) and try again.${NC}"
+    echo -e "${RED}DATABASE_URL must point at a PostgreSQL server you already set up${NC}"
+    echo -e "${RED}(see scripts/setup_db.sh) — this container does not run its own database.${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}✅ All required variables configured${NC}\n"
+
+# ============================================================
+# STEP 2b: VERIFY DATABASE IS REACHABLE
+# ============================================================
+echo -e "${YELLOW}🗄️  Step 2b: Checking database connectivity...${NC}"
+
+if python -c "
+import sys, psycopg2
+try:
+    conn = psycopg2.connect('$DATABASE_URL', connect_timeout=5)
+    conn.close()
+except Exception as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+" 2>/tmp/db_check_error; then
+    echo -e "${GREEN}✅ Database is reachable${NC}\n"
+else
+    echo -e "${RED}❌ Could not connect to DATABASE_URL${NC}"
+    echo -e "${RED}   $(cat /tmp/db_check_error)${NC}"
+    echo -e "${RED}   Make sure PostgreSQL is running and reachable from this container${NC}"
+    echo -e "${RED}   (see scripts/setup_db.sh for a standalone setup, run outside Docker).${NC}"
+    exit 1
+fi
 
 # ============================================================
 # STEP 3: CONFIGURE API URL

@@ -311,6 +311,18 @@ Answer the user's question conversationally and helpfully. Apply Rules 1-7 where
         user = f"Financial context:\n{context}\n\nQuestion: {question}" if context else question
         return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
 
+    # ------------------------------------------------------------------
+    # DYNAMIC CHARTS (NEW): turn a free-text chart request into a JSON spec
+    # for src/chart_generator.py. Short TTL (same bucket as general chat)
+    # since the spec depends on "today" and any relative dates the user
+    # mentions ("last week" shouldn't still resolve to last week's dates
+    # an hour into next week).
+    # ------------------------------------------------------------------
+    def generate_chart_spec(self, description: str, system_prompt: str) -> str:
+        """Returns raw JSON text (see src/chart_generator.py for the schema
+        and parsing/validation) describing how to build the requested chart."""
+        return self._cached_chat(system_prompt, description, ttl=TTL_CHAT, model=self.model_fast, max_tokens=400)
+
     def budget_plan(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
 
@@ -412,4 +424,3 @@ You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the use
             f"KES {spent:,.0f} of KES {limit:,.0f} ({pct}%)."
         )
     # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
-    # ── END FORECAST ───────────────────────────────────────────────────────

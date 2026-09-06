@@ -6,6 +6,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional
+from urllib.parse import quote_plus
 
 import pandas as pd
 import psycopg2
@@ -53,18 +54,46 @@ _FORBIDDEN_SQL_KEYWORDS = re.compile(
 )
 
 
+def _build_dsn_from_parts() -> Optional[str]:
+    """Build a DATABASE_URL-style DSN from separate POSTGRES_* variables,
+    for people who'd rather set individual host/user/password/db/port env
+    vars than assemble one connection string by hand. These are the SAME
+    names the official Postgres Docker image reads for POSTGRES_USER,
+    POSTGRES_PASSWORD, and POSTGRES_DB, so if you're using this project's
+    docker-compose.yml your `db` service and the app read from one
+    consistent set of names instead of two different conventions. Returns
+    None if the required pieces (user, password, db) aren't all present,
+    so the caller can fall back to requiring DATABASE_URL with a clear error.
+    """
+    user = os.getenv('POSTGRES_USER')
+    password = os.getenv('POSTGRES_PASSWORD')
+    db = os.getenv('POSTGRES_DB')
+    if not (user and password and db):
+        return None
+    host = os.getenv('POSTGRES_HOST', 'localhost')
+    port = os.getenv('POSTGRES_PORT', '5432')
+    # URL-encode user/password so special characters (@, :, /, #, etc. —
+    # common in generated passwords) can't break the connection string.
+    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db}"
+
+
 class PostgresDB:
     def __init__(self):
-        dsn = os.getenv('DATABASE_URL')
+        # Either a single DATABASE_URL, or the separate POSTGRES_USER /
+        # POSTGRES_PASSWORD / POSTGRES_DB / POSTGRES_HOST / POSTGRES_PORT
+        # pieces below — DATABASE_URL wins if both are set.
+        dsn = os.getenv('DATABASE_URL') or _build_dsn_from_parts()
         if not dsn:
             raise ValueError(
-                "DATABASE_URL must be set, e.g. "
-                "postgresql://user:password@host:5432/dbname"
+                "Set either DATABASE_URL (e.g. postgresql://user:password@host:5432/dbname) "
+                "or POSTGRES_USER + POSTGRES_PASSWORD + POSTGRES_DB "
+                "(POSTGRES_HOST and POSTGRES_PORT are optional, defaulting to "
+                "localhost:5432) in your .env"
             )
         try:
             self._pool = pg_pool.ThreadedConnectionPool(1, 10, dsn=dsn)
         except Exception as e:
-            raise ValueError(f"Could not connect to Postgres at DATABASE_URL: {e}")
+            raise ValueError(f"Could not connect to Postgres: {e}")
         logger.info("Postgres connection pool initialized")
 
     def _fetch_all(self, sql: str, params: tuple = None) -> List[Dict]:
@@ -463,7 +492,10 @@ class PostgresDB:
             df = pd.DataFrame(data)
             if df.empty:
                 return []
-            df['date'] = pd.to_datetime(df['timestamp']).dt.date
+            df['date'] = pd.to_datetime(df['timestamp'], format='ISO8601', errors='coerce').dt.date
+            df = df.dropna(subset=['date'])
+            if df.empty:
+                return []
             debits = df[df['type'] != 'credit']
             credits = df[df['type'] == 'credit']
             daily = (debits.groupby('date')['amount'].sum()
@@ -563,228 +595,4 @@ class PostgresDB:
             if not debits.empty and 'merchant_category' in debits.columns:
                 top_category = debits.groupby('merchant_category')['amount'].sum().idxmax()
 
-            avg_transaction = float(debits['amount'].mean()) if not debits.empty else 0
-
-            return {
-                'total_spent': total_spent,
-                'total_received': total_received,
-                'transaction_count': len(df),
-                'top_merchant': str(top_merchant),
-                'top_category': str(top_category),
-                'avg_transaction': avg_transaction
-            }
-        except Exception as e:
-            logger.error(f"get_insights failed: {e}")
-            return {
-                'total_spent': 0,
-                'total_received': 0,
-                'transaction_count': 0,
-                'top_merchant': 'N/A',
-                'top_category': 'N/A',
-                'avg_transaction': 0
-            }
-
-    def save_spending_baselines(self, baselines: List[Dict]) -> int:
-        if not baselines:
-            return 0
-        sql = """
-            INSERT INTO spending_baselines
-                (merchant_category, mean_amount, std_amount, median_amount, mad_amount, sample_size, computed_at)
-            VALUES %s
-            ON CONFLICT (merchant_category) DO UPDATE SET
-                mean_amount = EXCLUDED.mean_amount,
-                std_amount = EXCLUDED.std_amount,
-                median_amount = EXCLUDED.median_amount,
-                mad_amount = EXCLUDED.mad_amount,
-                sample_size = EXCLUDED.sample_size,
-                computed_at = EXCLUDED.computed_at
-        """
-        now = datetime.now()
-        try:
-            values = [
-                (
-                    b.get('merchant_category'),
-                    b.get('mean_amount'),
-                    b.get('std_amount'),
-                    b.get('median_amount'),
-                    b.get('mad_amount'),
-                    b.get('sample_size'),
-                    now,
-                )
-                for b in baselines
-            ]
-            self._execute_values(sql, values)
-            return len(values)
-        except Exception as e:
-            logger.error(f"save_spending_baselines failed: {e}")
-            return 0
-
-    def get_spending_baselines(self) -> List[Dict]:
-        try:
-            return self._fetch_all("SELECT * FROM spending_baselines")
-        except Exception as e:
-            logger.error(f"get_spending_baselines failed: {e}")
-            return []
-
-    def save_anomalies(self, anomalies: List[Dict]) -> int:
-        if not anomalies:
-            return 0
-        sql = """
-            INSERT INTO anomalies (transaction_id, model, score)
-            VALUES %s
-            ON CONFLICT (transaction_id, model) DO UPDATE SET
-                score = EXCLUDED.score
-        """
-        try:
-            values = [
-                (
-                    a['transaction_id'],
-                    a.get('model', 'isolation_forest_v1'),
-                    a.get('score'),
-                )
-                for a in anomalies
-            ]
-            self._execute_values(sql, values)
-            return len(values)
-        except Exception as e:
-            logger.error(f"save_anomalies failed: {e}")
-            return 0
-
-    def get_saved_anomalies(self, days: Optional[int] = 90, limit: int = 20) -> List[Dict]:
-        try:
-            anomaly_rows = self._fetch_all(
-                """
-                SELECT id, transaction_id, model, score, reviewed, created_at
-                FROM anomalies
-                ORDER BY score DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            if not anomaly_rows:
-                return []
-
-            tx_ids = [r['transaction_id'] for r in anomaly_rows if r.get('transaction_id')]
-            if not tx_ids:
-                return []
-            since = _since(days)
-            if since is None:
-                tx_rows = self._fetch_all(
-                    """
-                    SELECT id, amount, recipient, merchant_category, timestamp, body
-                    FROM transactions
-                    WHERE id = ANY(%s::uuid[])
-                    """,
-                    (tx_ids,),
-                )
-            else:
-                tx_rows = self._fetch_all(
-                    """
-                    SELECT id, amount, recipient, merchant_category, timestamp, body
-                    FROM transactions
-                    WHERE id = ANY(%s::uuid[]) AND timestamp >= %s
-                    """,
-                    (tx_ids, since),
-                )
-            tx_by_id = {t['id']: t for t in tx_rows}
-
-            merged = []
-            for a in anomaly_rows:
-                tx = tx_by_id.get(a.get('transaction_id'))
-                if not tx:
-                    continue
-                merged.append({**tx, **a})
-            return merged
-        except Exception as e:
-            logger.error(f"get_saved_anomalies failed: {e}")
-            return []
-
-    def get_budgets(self, active_only: bool = True) -> List[Dict]:
-        try:
-            if active_only:
-                return self._fetch_all("SELECT * FROM budgets WHERE active = TRUE")
-            return self._fetch_all("SELECT * FROM budgets")
-        except Exception as e:
-            logger.error(f"get_budgets failed: {e}")
-            return []
-
-    def upsert_budget(self, category: str, limit_amount: float, period: str = 'monthly',
-                       alert_threshold_pct: int = 80) -> Optional[Dict]:
-        sql = """
-            INSERT INTO budgets (category, period, limit_amount, alert_threshold_pct, active, updated_at)
-            VALUES (%s, %s, %s, %s, TRUE, %s)
-            ON CONFLICT (category, period) DO UPDATE SET
-                limit_amount = EXCLUDED.limit_amount,
-                alert_threshold_pct = EXCLUDED.alert_threshold_pct,
-                active = TRUE,
-                updated_at = EXCLUDED.updated_at
-            RETURNING *
-        """
-        try:
-            return self._fetch_one(sql, (
-                category.strip().lower(),
-                period.strip().lower(),
-                limit_amount,
-                alert_threshold_pct,
-                datetime.now(),
-            ))
-        except Exception as e:
-            logger.error(f"upsert_budget failed: {e}")
-            return None
-
-    def get_budget_status(self) -> List[Dict]:
-        try:
-            return self._fetch_all("SELECT * FROM budget_status")
-        except Exception as e:
-            logger.error(f"get_budget_status failed: {e}")
-            return []
-
-    def get_recent_budget_alerts(self, since_days: int = 45) -> List[Dict]:
-        since = date.today() - timedelta(days=since_days)
-        try:
-            return self._fetch_all(
-                """
-                SELECT budget_id, period_start, alert_level
-                FROM budget_alerts
-                WHERE period_start >= %s
-                """,
-                (since,),
-            )
-        except Exception as e:
-            logger.error(f"get_recent_budget_alerts failed: {e}")
-            return []
-
-    def record_budget_alert(self, budget_id: str, period_start: str, alert_level: str,
-                             amount_spent: float) -> bool:
-        sql = """
-            INSERT INTO budget_alerts (budget_id, period_start, alert_level, amount_spent)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (budget_id, period_start, alert_level) DO UPDATE SET
-                amount_spent = EXCLUDED.amount_spent
-        """
-        try:
-            self._execute(sql, (budget_id, period_start, alert_level, amount_spent))
-            return True
-        except Exception as e:
-            logger.error(f"record_budget_alert failed: {e}")
-            return False
-
-    def get_schema(self) -> str:
-        return """
-Table: transactions
-Columns:
-  - id (uuid, primary key)
-  - transaction_id (text, unique)
-  - amount (decimal) - transaction amount in KES
-  - balance (decimal) - account balance after transaction
-  - transaction_cost (decimal, NOT NULL, default 0) - M-Pesa fee charged for the transaction; 0 when the SMS stated no fee (plain P2P sends and airtime usually don't have one), a real amount for withdrawals and paybill/buy-goods payments
-  - type (text) - 'credit', 'debit', 'payment', 'withdrawal', 'transfer', 'airtime'
-  - recipient (text) - person or merchant name
-  - merchant_category (text) - food, transport, utilities, banking, shopping, health, education, entertainment, savings, business, other
-  - phone (text) - phone number
-  - body (text) - original SMS text
-  - timestamp (timestamp) - transaction datetime
-  - readable_date (text)
-  - raw_date (text)
-  - created_at (timestamp)
-"""
+            avg_transaction =

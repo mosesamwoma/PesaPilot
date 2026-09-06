@@ -1,33 +1,18 @@
-services:
-  db:
-    image: postgres:16-alpine
-    container_name: pesapilot-db
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
-      - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
-    volumes:
-      - pesapilot-db-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pesapilot} -d ${POSTGRES_DB:-pesapilot}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - pesapilot-network
+# ────────────────────────────────────────────────────────
+# PesaPilot — production Docker Compose (Baileys)
+#
+# Run with:
+#   docker compose up -d --build
+#   docker compose logs -f pesapilot
+# ────────────────────────────────────────────────────────
 
+services:
   pesapilot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: pesapilot-bot
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
@@ -35,8 +20,12 @@ services:
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
 
-      # Database — points at the "db" service above, not localhost
-      - DATABASE_URL=${DATABASE_URL:-postgresql://pesapilot:pesapilot@db:5432/pesapilot}
+      # PostgreSQL runs separately on the host or another server —
+      # this container never starts or manages a database itself.
+      # host.docker.internal (mapped below via extra_hosts) reaches
+      # a Postgres instance running on the Docker host. Point this
+      # at a different host/IP if Postgres runs elsewhere.
+      - DATABASE_URL=${DATABASE_URL:-postgresql://pesapilot:pesapilot@host.docker.internal:5432/pesapilot}
 
       # Groq
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -73,6 +62,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./sessions:/app/.baileys_auth
+    # Lets the container resolve "host.docker.internal" to the Docker
+    # host's IP on Linux too (it works out of the box on Docker Desktop
+    # for Mac/Windows, but needs this explicit mapping on Linux hosts).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -85,6 +79,3 @@ services:
 networks:
   pesapilot-network:
     driver: bridge
-
-volumes:
-  pesapilot-db-data:

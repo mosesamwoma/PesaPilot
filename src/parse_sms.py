@@ -18,7 +18,7 @@ class MpesaParser:
         'education': ['school', 'university', 'college', 'fees', 'unilink', 'smep'],
         'entertainment': ['cinema', 'netflix', 'spotify', 'showmax', 'game', 'bar', 'club'],
         'savings': ['sacco', 'chama', 'savings', 'investment', 'shares'],
-        'business': ['till', 'lipa na mpesa', 'paybill', 'buy goods'],
+        'business': ['till', 'lipa na mpesa', 'paybill', 'buy goods', 'pochi la biashara', 'pochi'],
     }
 
     def parse_xml_to_csv(self, xml_path: str, output_path: str = None) -> pd.DataFrame:

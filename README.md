@@ -160,6 +160,7 @@ sudo -u postgres psql
 ```sql
 CREATE USER pesapilot WITH PASSWORD 'pesapilot';
 CREATE DATABASE pesapilot OWNER pesapilot;
+GRANT ALL PRIVILEGES ON DATABASE pesapilot TO pesapilot;
 \q
 ```
 

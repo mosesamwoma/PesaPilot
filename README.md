@@ -37,6 +37,8 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 
 * **Response caching** — in-memory TTL cache on all Groq calls, automatically invalidated whenever new transactions are inserted
 
+* **Till, Paybill, and Pochi la Biashara aware** — merchant categorization and transaction typing understand all three business-payment methods (see [How M-Pesa fees, Till, Paybill, and Pochi la Biashara work](#how-m-pesa-fees-till-paybill-and-pochi-la-biashara-work) below)
+
 > **Note:** loading SMS data has no CLI command or dashboard button in the current codebase — see [Set up PostgreSQL, schema, and data](#3-set-up-postgresql-schema-and-data) below for the one-off script that does it.
 
 ---
@@ -63,9 +65,9 @@ PesaPilot ships with **two WhatsApp bot implementations**. They share the same F
 
 * Python 3.10+
 * Node.js 20+ (`package.json` requires `>=20.0.0`)
-* A self-hosted PostgreSQL server (local or VPS)
+* A self-hosted PostgreSQL server — **always installed and run on its own, directly on the host or a separate machine, never inside a Docker or Podman container.** Both `docker-compose.yml` and `podman/compose.yml` expect Postgres to already be running outside the container and only connect to it over the network. `scripts/setup_db.sh` automates that standalone install for you (see [Set up PostgreSQL, schema, and data](#3-set-up-postgresql-schema-and-data))
 * A [Groq](https://console.groq.com) API key (free tier works)
-* Docker + Docker Compose for VPS/production deployment
+* Docker + Docker Compose, or Podman + podman-compose, for VPS/production deployment (the app container only — not the database)
 * A spare WhatsApp-capable SIM to run the bot on (you message it from your main number)
 
 ---
@@ -99,7 +101,7 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 
 | Variable       | Where to get it                                                            |
 | -------------- | -------------------------------------------------------------------------- |
-| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:password@127.0.0.1:5432/pesapilot` |
+| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:password@127.0.0.1:5432/pesapilot` — produced for you at the end of `scripts/setup_db.sh` |
 | `GROQ_API_KEY` | `console.groq.com` → API Keys                                              |
 
 ### Optional
@@ -115,7 +117,7 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 | `LLM_MODEL_SMART`           | `openai/gpt-oss-120b`       | Groq model used for SQL generation, result analysis, and budget/investment advice (accuracy-sensitive)                                                                     |
 | `LLM_MODEL`                 | —                           | Legacy/back-compat: if set, overrides `LLM_MODEL_FAST`                                                                                                                     |
 | `LLM_TEMPERATURE`           | `0.6`                       | Groq sampling temperature                                                                                                                                                  |
-| `LLM_MAX_TOKENS`            | `600`                       | Max tokens per Groq response                                                                                                                                               |
+| `LLM_MAX_TOKENS`            | `1536`                      | Max tokens per Groq response (the reasoning pass shares this budget with the visible answer)                                                                              |
 | `NODE_ENV`                  | `production`                | Node runtime mode                                                                                                                                                          |
 | `NODE_OPTIONS`              | `--max-old-space-size=2048` | Node heap size cap                                                                                                                                                         |
 | `TZ`                        | `Africa/Nairobi`            | Timezone — affects log timestamps and the 9 PM daily-summary cron                                                                                                          |
@@ -124,23 +126,36 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 | `BAILEYS_LOG_LEVEL`         | `info`                      | Baileys/pino log verbosity                                                                                                                                                 |
 | `WWEBJS_AUTH_PATH`          | `./.wwebjs_auth`            | Where whatsapp-web.js session files are written                                                                                                                            |
 
-`.env.example` also lists `APP_ENV`, `DEBUG`, `SECRET_KEY`, `LOG_LEVEL`, `DB_MAX_CONNECTIONS`, `DB_CONNECTION_TIMEOUT`, `DB_QUERY_LIMIT`, `BATCH_SIZE`, `CACHE_TTL`, and `API_TIMEOUT`. None of these are currently read anywhere in the codebase — they're placeholders for future use and safe to ignore.
+`.env.example` also lists `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` (read by `scripts/setup_db.sh` to name the standalone role/database — override them there if you don't want the `pesapilot`/`pesapilot` defaults), plus `APP_ENV`, `DEBUG`, `SECRET_KEY`, `LOG_LEVEL`, `DB_MAX_CONNECTIONS`, `DB_CONNECTION_TIMEOUT`, `CACHE_TTL`, and `API_TIMEOUT`, which are placeholders for future use and not currently read anywhere in the app.
 
 ---
 
 ## 3. Set up PostgreSQL, schema, and data
 
-PostgreSQL is managed separately from the application containers. Create the database, apply the schema, and load your M-Pesa transactions before starting Docker, Podman, or the local application.
+PostgreSQL is **always installed and run standalone** — directly on your VPS, laptop, or a separate database server. It is never started by Docker Compose or Podman Compose; neither `docker-compose.yml` nor `podman/compose.yml` define a database service, both only ever *connect* to one over the network via `DATABASE_URL`. Set up Postgres and load your data before you start Docker, Podman, or the local app.
 
-### Create the database
+### Option A — automated (recommended)
 
-Run this on the machine where PostgreSQL is installed. If PostgreSQL is running in the Compose `db` service, start only that service first with `docker compose up -d db`, then run the SQL commands inside it with `docker compose exec -T db psql`.
+```bash
+chmod +x scripts/setup_db.sh
+./scripts/setup_db.sh
+```
+
+This installs PostgreSQL via your system's package manager if it isn't already installed (apt/dnf/yum/brew), starts the service, creates the `pesapilot` role and database, and applies `schema/init_db.sql`. It's idempotent — safe to re-run. At the end it prints the exact `DATABASE_URL` to paste into your `.env`, including the right host to use if the app itself runs in Docker (`host.docker.internal`) or Podman (`host.containers.internal`).
+
+Override the defaults with environment variables if you want different credentials:
+
+```bash
+PGSQL_USER=pesapilot PGSQL_PASSWORD=your-own-password PGSQL_DB=pesapilot ./scripts/setup_db.sh
+```
+
+### Option B — manual
+
+Install PostgreSQL yourself, then:
 
 ```bash
 sudo -u postgres psql
 ```
-
-Then run:
 
 ```sql
 CREATE USER pesapilot WITH PASSWORD 'pesapilot';
@@ -150,18 +165,10 @@ CREATE DATABASE pesapilot OWNER pesapilot;
 
 If the user or database already exists, keep them and continue without running the failing `CREATE` command again.
 
-### Apply the schema
-
-For a local or VPS PostgreSQL server:
+Apply the schema:
 
 ```bash
-psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" < schema/init_db.sql
-```
-
-For PostgreSQL running in Docker Compose:
-
-```bash
-docker compose exec -T db psql -U pesapilot -d pesapilot < schema/init_db.sql
+psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" -f schema/init_db.sql
 ```
 
 Verify that the tables exist:
@@ -169,6 +176,16 @@ Verify that the tables exist:
 ```bash
 psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" -c "\dt"
 ```
+
+### Allowing container access (Docker/Podman only)
+
+If the app itself will run inside Docker or Podman while Postgres runs on the host, Postgres needs to accept connections from the container's network:
+
+* In `postgresql.conf`, set `listen_addresses = '*'` (or at least the host's private/bridge IP).
+* In `pg_hba.conf`, add a line allowing the container subnet, e.g. `host all all 172.16.0.0/12 md5` for Docker's default bridge range, or `host all all 10.88.0.0/16 md5` for Podman's default range.
+* Restart PostgreSQL after editing either file: `sudo systemctl restart postgresql`.
+
+If you're running everything on bare metal with no containers at all, none of this is needed — `127.0.0.1` just works.
 
 ### Load your M-Pesa data
 
@@ -182,7 +199,7 @@ psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" -c "\dt"
 python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml', 'data/processed/mpesa_transactions.csv'); print(f'Loaded {count} transactions')"
 ```
 
-For Docker Compose, run the same import inside the application container:
+For Docker, run the same import inside the running application container (Postgres itself is not in the container, so this only touches the app side):
 
 ```bash
 docker compose exec pesapilot python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_transactions('data/raw/your-sms-backup.xml', 'data/processed/mpesa_transactions.csv'); print(f'Loaded {count} transactions')"
@@ -194,12 +211,6 @@ Verify that data was loaded:
 
 ```bash
 psql "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" -c "SELECT COUNT(*) FROM transactions;"
-```
-
-For Docker Compose, verify from the PostgreSQL container instead:
-
-```bash
-docker compose exec db psql -U pesapilot -d pesapilot -c "SELECT COUNT(*) FROM transactions;"
 ```
 
 The count should be greater than zero when the XML contains valid M-Pesa messages.
@@ -266,11 +277,16 @@ The Streamlit dashboard is for local use only and is not included in the Docker 
 npm run api          # FastAPI backend with auto-reload (uvicorn --reload)
 npm run dev          # Baileys bot via ts-node (auto-restart on save)
 npm run dev:wwebjs   # whatsapp-web.js bot via nodemon
-npm run build        # Compile whatsapp_bot.ts → dist/whatsapp_bot.js
+npm run build        # Compile whatsapp_bot.ts → dist/whatsapp_bot.js (auto-cleans dist/ first, writes dist/package.json)
 npm start             # Run compiled Baileys bot: node dist/whatsapp_bot.js
 npm run start:wwebjs  # Run whatsapp-web.js bot: node whatsapp/whatsapp_bot.js
-npm run clean         # Remove dist/ and auth session folders
+npm run clean         # Remove dist/ only — safe, does not touch your live WhatsApp session
+npm run clean:all     # Remove dist/ AND both auth session folders — forces a QR rescan, use deliberately
 ```
+
+> **Why two clean scripts?** `npm run build` used to run a `clean` step that also deleted `.baileys_auth/`/`.wwebjs_auth/`, so every rebuild on a live server silently logged the bot out of WhatsApp and forced a new QR scan. `build` now only ever clears `dist/`. If you actually want to wipe a session (e.g. switching WhatsApp numbers), run `npm run clean:all` yourself.
+
+> **Why `postbuild` writes `dist/package.json`?** `tsconfig.json` compiles `whatsapp_bot.ts` to ES modules, but `whatsapp_bot.js` (the whatsapp-web.js variant, used for local dev) is plain CommonJS and would break if the root `package.json` declared `"type": "module"`. Instead, `postbuild` drops a tiny `{"type":"module"}` file inside `dist/` so only the compiled Baileys output is treated as ESM, and `whatsapp_bot.js` keeps working unmodified.
 
 ---
 
@@ -337,6 +353,34 @@ Only messages from `WHATSAPP_MAIN_NUMBER` (or `WHATSAPP_LID`) trigger the bot's 
 
 ---
 
+## How M-Pesa fees, Till, Paybill, and Pochi la Biashara work
+
+PesaPilot doesn't invent or hardcode any fee logic — it reads whatever amount Safaricom already printed in the SMS ("Transaction cost, Ksh X.XX") and stores it in `transaction_cost`. This section explains the real-world M-Pesa behavior behind those numbers, so the figures in your dashboard make sense.
+
+### The general rule Safaricom applies
+
+* **Sending money to another person (P2P), buying goods at a Till, and paying via Pochi la Biashara** are all **free for amounts up to and including KES 100.** Above that, Safaricom's published P2P/Till tariff applies and a fee shows up in the SMS.
+* **Paybill payments** (bills, school fees, subscriptions, etc.) follow Safaricom's Paybill tariff, which usually charges a fee even on small amounts — this varies by biller and amount band.
+* **Withdrawing cash** (agent or ATM) always carries a fee, at every amount, following Safaricom's withdrawal tariff.
+* **Airtime purchases and most P2P sends under the free threshold** have no fee, which is why `transaction_cost` is legitimately `0.00` for a large share of your transactions — that's correct, not a bug.
+
+Because this is Safaricom's tariff and not something PesaPilot decides, the exact fee for any given amount can change if Safaricom updates its pricing — always trust the number printed in your own SMS over any general rule stated here.
+
+### How PesaPilot reads this from your SMS
+
+`src/parse_sms.py` → `_extract_transaction_cost()` looks for a line matching `Transaction cost, Ksh...` in the SMS body:
+
+* **Found →** that exact amount is stored in `transaction_cost`.
+* **Not found →** `transaction_cost` is stored as `0.00` (never `NULL`), because plain P2P sends and airtime top-ups typically don't include a cost line at all. This keeps the column summable and chartable without any special-casing downstream.
+
+### Till, Paybill, and Pochi la Biashara in categorization
+
+`MpesaParser.MERCHANT_CATEGORIES['business']` recognizes all of the keywords a merchant-payment SMS typically contains: `till`, `lipa na mpesa`, `paybill`, `buy goods`, `pochi la biashara`, and `pochi`. Any transaction whose SMS body or recipient name contains one of these is categorized as `business` spending in the dashboard and AI analysis — regardless of which of the three payment rails (Till, Paybill, or Pochi la Biashara) was actually used.
+
+`_determine_type()` separately classifies the transaction as `payment` (paid to a till/paybill/Pochi merchant), `withdrawal`, `transfer`, `airtime`, or `credit`/`debit`, based on the SMS wording — this is independent of the fee amount.
+
+---
+
 ## Docker (VPS / Production)
 
 > **The Docker image uses Baileys (`whatsapp_bot.ts`) exclusively.**
@@ -344,6 +388,8 @@ Only messages from `WHATSAPP_MAIN_NUMBER` (or `WHATSAPP_LID`) trigger the bot's 
 > Baileys connects to WhatsApp over a pure WebSocket — no Chromium, no Puppeteer, no browser needed. This is why the Docker image is lean (~80 MB Node footprint vs ~500 MB with Chromium).
 >
 > `whatsapp_bot.js` (whatsapp-web.js) is available for local development only and is never invoked inside the container.
+
+**PostgreSQL is not part of this setup.** `docker-compose.yml` defines a single service — the app itself — and connects out to a PostgreSQL instance you already set up with `scripts/setup_db.sh` (see [Set up PostgreSQL, schema, and data](#3-set-up-postgresql-schema-and-data)). The container talks to it over `host.docker.internal`, which `docker-compose.yml` maps to the Docker host automatically (via `extra_hosts: host-gateway`, which also makes this work on Linux, not just Docker Desktop).
 
 The container runs **both the FastAPI backend and the Baileys bot together** — no separate bot host needed.
 
@@ -353,6 +399,8 @@ The container runs **both the FastAPI backend and the Baileys bot together** —
 docker compose up -d --build
 docker compose logs -f pesapilot     # watch startup + QR code
 ```
+
+The entrypoint validates `DATABASE_URL` (along with `GROQ_API_KEY`, `WHATSAPP_MAIN_NUMBER`, `WHATSAPP_PIN`) and actively test-connects to Postgres before starting anything — if the database isn't reachable, the container fails fast with a clear error instead of starting in a broken state.
 
 Health check:
 
@@ -365,11 +413,17 @@ http://YOUR_VPS_IP:8000/health
 `docker-compose.yml` uses bind mounts, not named volumes:
 
 | Host path    | Container path       | Purpose                                               |
-| ------------ | -------------------- | ----------------------------------------------------- |
-| `./sessions` | `/app/.baileys_auth` | Baileys session — survives restarts, no rescan needed |
-| `./data`     | `/app/data`          | Raw/processed transaction files                       |
+| ------------ | --------------------- | ----------------------------------------------------- |
+| `./sessions` | `/app/.baileys_auth`  | Baileys session — survives restarts, no rescan needed |
+| `./data`     | `/app/data`           | Raw/processed transaction files                       |
 
-Back them up:
+PostgreSQL's own data directory lives entirely on the host (wherever your OS/package manager put it, e.g. `/var/lib/postgresql/` on Debian/Ubuntu) — it's not part of this container at all, so back it up separately with `pg_dump` or your usual Postgres backup process:
+
+```bash
+pg_dump "postgresql://pesapilot:pesapilot@127.0.0.1:5432/pesapilot" > pesapilot-db-backup-$(date +%F).sql
+```
+
+Back up the app-side files with:
 
 ```bash
 tar czf pesapilot-backup-$(date +%F).tar.gz ./sessions ./data
@@ -412,9 +466,9 @@ curl -X POST http://YOUR_VPS_IP:8000/ask \
 
 The Podman files live in `podman/` so the production Docker files can remain at the project root.
 
-**Important:** Complete [Set up PostgreSQL, schema, and data](#3-set-up-postgresql-schema-and-data) first. Podman does not create PostgreSQL or apply the schema.
+**Important:** Complete [Set up PostgreSQL, schema, and data](#3-set-up-postgresql-schema-and-data) first. As with Docker, Podman does not create PostgreSQL, run it, or apply the schema — it only connects to a standalone instance you already set up with `scripts/setup_db.sh`.
 
-Because the application runs inside a Podman container, set this in `.env` when PostgreSQL runs on the host:
+`podman/compose.yml` already points `DATABASE_URL` at `host.containers.internal` by default, which Podman resolves to the host automatically:
 
 ```env
 DATABASE_URL=postgresql://pesapilot:pesapilot@host.containers.internal:5432/pesapilot
@@ -491,7 +545,7 @@ If you see permission-denied errors on `./data` or `./sessions-local` from insid
 
 ## Redeploying after a code change
 
-`redeploy.sh` (in the project root) syncs your local changes to the VPS and rebuilds/restarts the Docker container in one step.
+`redeploy.sh` (in the project root) syncs your local changes to the VPS and rebuilds/restarts the Docker container in one step. It never touches PostgreSQL — that keeps running on the VPS the whole time, independent of the app container.
 
 It doesn't hardcode any server details — you're prompted for them each run, so the script is safe to keep in a public/open-source repo.
 
@@ -517,7 +571,7 @@ Then for your SSH password (may be asked more than once, since sync, rebuild, an
 
 The script then:
 
-1. **Syncs** your local project to the VPS via `rsync` (skipping `node_modules`, `venv`, `dist`, `.git`, `sessions`, `.baileys_auth`, `whatsapp-sessions`, logs, and caches)
+1. **Syncs** your local project to the VPS via `rsync` (skipping `node_modules`, `venv`, `dist`, `podman/`, `.git`, `sessions`, `.baileys_auth`, `whatsapp-sessions`, logs, and caches)
 2. **Rebuilds** the Docker image on the VPS (`docker compose up -d --build`), which recompiles the TypeScript bot and restarts the container
 3. **Shows** the container status so you can confirm it came up healthy
 
@@ -598,9 +652,11 @@ python -m pytest tests/ -v
 ## Troubleshooting
 
 | Issue                                                           | Fix                                                                                                                       |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `❌ .env file not found!` (from `python run.py`)                 | Copy `.env.example` to `.env` in the project root before running                                                          |
-| Database connection errors                                      | Verify PostgreSQL is running and that `DATABASE_URL` uses `127.0.0.1` for manual setup or `db` inside Docker              |
+| Container exits immediately with a missing-env-var error        | `DATABASE_URL`, `GROQ_API_KEY`, `WHATSAPP_MAIN_NUMBER`, and `WHATSAPP_PIN` are all required — the entrypoint refuses to start without them |
+| Container exits with "Could not connect to DATABASE_URL"        | PostgreSQL isn't running, isn't reachable from the container network, or the credentials/host in `DATABASE_URL` are wrong — run `scripts/setup_db.sh` and check the pg_hba.conf note in [step 3](#allowing-container-access-dockerpodman-only) |
+| Database connection errors (running locally, no containers)     | Verify PostgreSQL is running and that `DATABASE_URL` uses `127.0.0.1`                                                    |
 | `ModuleNotFoundError: No module named 'src'`                    | Run commands from the project root, not from inside `src/` or `whatsapp/`                                                 |
 | No transactions after loading XML                               | Confirm the file is an unmodified export from SMS Backup & Restore containing M-Pesa messages                             |
 | Port 8000 already in use                                        | Set `WHATSAPP_API_PORT` to another port and update `API_URL` and `docker-compose.yml` to match                            |
@@ -609,13 +665,14 @@ python -m pytest tests/ -v
 | **whatsapp-web.js:** `Failed to launch the browser process`     | Google Chrome is missing or `PUPPETEER_EXECUTABLE_PATH` is wrong — only relevant for local dev, not Docker                |
 | **whatsapp-web.js:** `profile already in use` after a crash     | Delete `.wwebjs_auth/` once, restart, and rescan the QR                                                                   |
 | **Podman:** permission denied on `./data` or `./sessions-local` | Fedora/RHEL SELinux — confirm the `:Z` suffix is present on the volume mounts in `podman/compose.yml`                     |
-| WhatsApp session keeps logging out                              | Confirm the auth path (`./sessions` for Docker, `.baileys_auth/` locally) is not being wiped by your deploy process       |
+| WhatsApp session keeps logging out                              | Confirm the auth path (`./sessions` for Docker, `.baileys_auth/` locally) is not being wiped — `npm run build` no longer deletes it, only `npm run clean:all` does |
 | Charts not sending                                              | Confirm `matplotlib` and `seaborn` are installed: `pip install matplotlib seaborn`                                        |
 | Forecast shows "Not enough data"                                | You need at least 14 distinct days of debit transactions                                                                  |
 | Forecast shows "forecasting engine unavailable"                 | `pip install prophet cmdstanpy`                                                                                           |
 | Groq rate limit / empty AI responses                            | Wait ~60s and retry; lower `LLM_MAX_TOKENS` if it happens often                                                           |
 | `streamlit: command not found`                                  | Activate your virtualenv: `source venv/bin/activate`                                                                      |
 | `balance` column empty for some rows                            | Expected — not every M-Pesa SMS includes a balance figure                                                                 |
+| A Till/Paybill/Pochi transaction shows `transaction_cost = 0`   | Expected for amounts at or under Safaricom's fee-free threshold (typically ≤ KES 100) — see [How M-Pesa fees, Till, Paybill, and Pochi la Biashara work](#how-m-pesa-fees-till-paybill-and-pochi-la-biashara-work) |
 | `pytest` fails on PostgreSQL/Groq tests                         | Tests need real credentials and the schema from `schema/init_db.sql` already applied                                      |
 
 ---

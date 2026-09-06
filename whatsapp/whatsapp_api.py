@@ -18,7 +18,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 
 load_dotenv()
 
@@ -261,7 +260,14 @@ def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
 
 def generate_daily_summary() -> str:
     try:
-        analyzer = MpesaAnalyzer()
+        # Reuse the module-level `analyzer` singleton (created once below,
+        # after this function is defined — Python resolves globals at call
+        # time, so this is safe) instead of constructing a fresh
+        # MpesaAnalyzer() on every call. A fresh instance would open a brand
+        # new Postgres connection pool (PostgresDB.__init__ creates a
+        # ThreadedConnectionPool) that is never closed, leaking a pool of
+        # connections every time this runs (e.g. every /daily-summary
+        # request and the 9PM cron job).
         summary = analyzer.db.get_today_summary()
         
         if not summary or summary.get('total_transactions', 0) == 0:

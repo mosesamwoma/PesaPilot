@@ -17,7 +17,7 @@ into this module for the actual decision logic, then `whatsapp_api.py`
 turns the result into WhatsApp messages.
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)

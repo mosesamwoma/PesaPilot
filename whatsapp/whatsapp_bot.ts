@@ -38,6 +38,12 @@ interface DailySummaryResponse {
     summary: string;
 }
 
+// A WhatsApp message we've already confirmed has a non-null `key` — used
+// so downstream handlers (which need `key` to react/quote-reply) don't have
+// to re-check for null/undefined on every access. Built once in
+// handleMessage() right after the null-check on the raw Baileys message.
+type QuotableMessage = proto.IWebMessageInfo & { key: proto.IMessageKey };
+
 // ── BUDGET GOALS + ALERTS (NEW) ─────────────────────────────────────────
 interface BudgetAlert {
     category: string;
@@ -256,7 +262,7 @@ async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data
     }
 }
 
-async function handleManualSms(smsContent: string, sock: WASocket, jid: string, msg: proto.IWebMessageInfo): Promise<void> {
+async function handleManualSms(smsContent: string, sock: WASocket, jid: string, msg: QuotableMessage): Promise<void> {
     console.log('📝 Manual SMS entry');
     
     if (!smsContent) {
@@ -281,7 +287,7 @@ async function handleManualSms(smsContent: string, sock: WASocket, jid: string, 
     }
 }
 
-async function handleQuestion(userMessage: string, sock: WASocket, jid: string, msg: proto.IWebMessageInfo): Promise<void> {
+async function handleQuestion(userMessage: string, sock: WASocket, jid: string, msg: QuotableMessage): Promise<void> {
     try {
         const response = await callApi<MessageResponse>('/ask', 'POST', { question: userMessage });
 
@@ -339,9 +345,13 @@ async function handleMessage(
 ): Promise<void> {
     try {
         if (!msg.message) return;
-        if (msg.key.fromMe) return;
+        // Baileys types `msg.key` as possibly null/undefined even though it's
+        // always populated for real incoming messages — guard explicitly so
+        // TypeScript (and we) can trust it's present for everything below.
+        if (!msg.key || msg.key.fromMe) return;
+        const key = msg.key;
 
-        const jid = msg.key.remoteJid;
+        const jid = key.remoteJid;
         if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@broadcast')) return;
 
         const userMessage = extractText(msg).trim();
@@ -367,24 +377,29 @@ async function handleMessage(
         }
 
         console.log('✅ Authorized');
-        await react(sock, jid, msg.key, '⏳');
+        await react(sock, jid, key, '⏳');
+
+        // From here on `key` is guaranteed non-null, so build a QuotableMessage
+        // once so the handlers below can quote-reply without re-checking.
+        const quotableMsg: QuotableMessage = { ...msg, key };
 
         // Check for manual SMS entry (PIN-SMS_CONTENT)
         if (userMessage.startsWith(config.whatsappPin + '-')) {
             const smsContent = userMessage.substring(config.whatsappPin.length + 1).trim();
-            await handleManualSms(smsContent, sock, jid, msg);
+            await handleManualSms(smsContent, sock, jid, quotableMsg);
             return;
         }
 
         // Handle normal question
-        await handleQuestion(userMessage, sock, jid, msg);
+        await handleQuestion(userMessage, sock, jid, quotableMsg);
 
     } catch (error) {
         const err = error as Error;
         console.error(`❌ Fatal: ${err.message}`);
         try {
-            if (msg.key.remoteJid) {
-                await sock.sendMessage(msg.key.remoteJid, { text: '❌ Something went wrong.' });
+            const remoteJid = msg.key?.remoteJid;
+            if (remoteJid) {
+                await sock.sendMessage(remoteJid, { text: '❌ Something went wrong.' });
             }
         } catch (e) {
             // Ignore

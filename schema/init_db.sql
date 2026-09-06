@@ -4,8 +4,8 @@
 -- With Docker Compose (docker-compose.yml `db` service):
 --   docker exec -i pesapilot-db psql -U pesapilot -d pesapilot < schema/init_db.sql
 --
--- With a local/VPS PostgreSQL install:
---   psql "$DATABASE_URL" -f schema/init_db.sql
+-- With a local/VPS PostgreSQL install (using your POSTGRES_* .env values):
+--   PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f schema/init_db.sql
 --
 -- You should see: PesaPilot DB ready ✅
 -- ============================================================

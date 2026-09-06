@@ -90,16 +90,14 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 
 | Variable | Where to get it |
 |---|---|
-| Database connection — either `DATABASE_URL`, or `POSTGRES_USER` + `POSTGRES_PASSWORD` + `POSTGRES_DB` | See [Database connection: two ways to configure it](#database-connection-two-ways-to-configure-it) below |
+| Database connection — `POSTGRES_USER` + `POSTGRES_PASSWORD` + `POSTGRES_DB` | See [Database connection](#database-connection) below |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `WHATSAPP_MAIN_NUMBER` | Your main number e.g. `254712345678` (country code, no `+`) — the number you text the bot **from** |
 | `WHATSAPP_PIN` | Any 4-digit number you choose e.g. `1234` — used for manual SMS entry |
 
-#### Database connection: two ways to configure it
+#### Database connection
 
-`src/database.py`'s `PostgresDB` class accepts **either** a single connection string, **or** separate pieces — pick whichever you find easier to manage. If both are set, `DATABASE_URL` always wins and the `POSTGRES_*` variables are silently ignored, so don't set both at once (or comment one out).
-
-**Option A — separate pieces:**
+`src/database.py`'s `PostgresDB` class connects using these separate variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -109,17 +107,11 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 | `POSTGRES_HOST` | `127.0.0.1` | Database host |
 | `POSTGRES_PORT` | `5432` | Database port |
 
-These are the exact same names the official Postgres Docker image reads for `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` — if you're using this project's `docker-compose.yml`, the `db` service and the app share one naming convention instead of two.
+These are the exact same names the official Postgres Docker image reads for `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` — if you're using this project's `docker-compose.yml`, the `db` service and the app share one naming convention.
 
-**Option B — one connection string:**
+> **Use `127.0.0.1`, not `localhost`,** in `POSTGRES_HOST` — on some systems (especially Linux/Docker) `localhost` resolves to the IPv6 loopback (`::1`) first, and if Postgres isn't listening on IPv6 you get a slow hang or a refused connection that often only shows up after shipping, not in local dev. `127.0.0.1` skips DNS resolution entirely and always means IPv4 loopback. (This doesn't apply inside `docker-compose.yml` itself, which correctly points the app at the `db` service by container network alias, not a loopback address.)
 
-| Variable | Where to get it |
-|---|---|
-| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:password@127.0.0.1:5432/pesapilot` |
-
-> **Use `127.0.0.1`, not `localhost`,** in `POSTGRES_HOST` or `DATABASE_URL` — on some systems (especially Linux/Docker) `localhost` resolves to the IPv6 loopback (`::1`) first, and if Postgres isn't listening on IPv6 you get a slow hang or a refused connection that often only shows up after shipping, not in local dev. `127.0.0.1` skips DNS resolution entirely and always means IPv4 loopback. (This doesn't apply inside `docker-compose.yml` itself, which correctly points the app at the `db` service by container network alias, not a loopback address.)
-
-Passwords with special characters (`@`, `:`, `/`, `#`, etc.) are safe with Option A — they're URL-encoded automatically when the connection string is built. If you type one directly into `DATABASE_URL` yourself (Option B), you're responsible for URL-encoding it.
+Passwords with special characters (`@`, `:`, `/`, `#`, etc.) are safe to use as-is — they're passed directly to psycopg2 as connection kwargs, never assembled into a URL, so no URL-encoding is ever needed.
 
 ### Optional
 
@@ -161,7 +153,7 @@ CREATE DATABASE pesapilot OWNER pesapilot_user;
 
 ```bash
 # Local/VPS PostgreSQL install:
-psql "postgresql://pesapilot_user:StrongPassword123!@127.0.0.1:5432/pesapilot" -f schema/init_db.sql
+PGPASSWORD="StrongPassword123!" psql -h 127.0.0.1 -p 5432 -U pesapilot_user -d pesapilot -f schema/init_db.sql
 
 # Or, if Postgres is running in Docker (docker-compose.yml's `db` service):
 docker exec -i pesapilot-db psql -U pesapilot -d pesapilot < schema/init_db.sql
@@ -171,7 +163,7 @@ This creates the `transactions` table (including `transaction_cost`, for trackin
 
 > **Already have a `transactions` table from before `transaction_cost` existed?** Run this instead of the full schema import — it's a safe, additive, non-destructive migration that doesn't touch your existing rows:
 > ```bash
-> psql "$DATABASE_URL" -c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0;"
+> PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0;"
 > ```
 > Existing rows backfill to `0`. Re-import your SMS Backup & Restore XML (or resend recent SMS through the WhatsApp bot) afterwards to replace that `0` backfill with the real fee amounts.
 
@@ -271,7 +263,7 @@ npm run clean         # Remove dist/ and auth session folders
 python run.py
 ```
 
-There is no `setup`, `load`, `ask`, or `dashboard` subcommand. For loading data see [Load your data](#5-load-your-data) above; for a connection check, `python -c "from src.database import PostgresDB; PostgresDB()"` will raise if `DATABASE_URL` (or the `POSTGRES_*` variables) are missing or wrong.
+There is no `setup`, `load`, `ask`, or `dashboard` subcommand. For loading data see [Load your data](#5-load-your-data) above; for a connection check, `python -c "from src.database import PostgresDB; PostgresDB()"` will raise if the `POSTGRES_*` variables are missing or wrong.
 
 ---
 
@@ -548,8 +540,8 @@ python -m pytest tests/ -v
 | Groq rate limit / empty AI responses | Wait ~60s and retry; lower `LLM_MAX_TOKENS` if it happens often |
 | `streamlit: command not found` | Activate your virtualenv: `source venv/bin/activate` |
 | `balance` column empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
-| `pytest` fails on Postgres/Groq tests | Tests need real credentials (`DATABASE_URL` or `POSTGRES_*`, and `GROQ_API_KEY`) and the schema from `schema/init_db.sql` already applied |
-| `Could not connect to Postgres` / connection refused or hangs | Check `POSTGRES_HOST` / your `DATABASE_URL` host is `127.0.0.1`, not `localhost` — `localhost` can resolve to the IPv6 loopback first on some systems and fail if Postgres isn't listening on IPv6 |
+| `pytest` fails on Postgres/Groq tests | Tests need real credentials (`POSTGRES_*` and `GROQ_API_KEY`) and the schema from `schema/init_db.sql` already applied |
+| `Could not connect to Postgres` / connection refused or hangs | Check `POSTGRES_HOST` is `127.0.0.1`, not `localhost` — `localhost` can resolve to the IPv6 loopback first on some systems and fail if Postgres isn't listening on IPv6 |
 | `get_daily_trend failed: time data ... doesn't match format` in the logs | Fixed as of the `transaction_cost` update — make sure `src/database.py`, `src/chart_generator.py`, `src/anomaly_detector.py`, and `src/forecasting.py` all parse timestamps with `format='ISO8601'`, not a fixed format string |
 
 ---

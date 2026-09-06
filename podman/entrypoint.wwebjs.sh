@@ -33,7 +33,9 @@ echo -e "${BLUE}   Hostname: $(hostname 2>/dev/null || echo unknown)${NC}\n"
 echo -e "${YELLOW}📋 Step 2: Validating environment variables...${NC}"
 
 REQUIRED_VARS=(
-    "DATABASE_URL"
+    "POSTGRES_USER"
+    "POSTGRES_PASSWORD"
+    "POSTGRES_DB"
     "GROQ_API_KEY"
     "WHATSAPP_MAIN_NUMBER"
     "WHATSAPP_LID"
@@ -53,7 +55,7 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
         echo -e "${RED}   - $var${NC}"
     done
     echo -e "${RED}Set these in your .env file (or however you inject env vars) and try again.${NC}"
-    echo -e "${RED}DATABASE_URL must point at a PostgreSQL server you already set up${NC}"
+    echo -e "${RED}POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB must point at a PostgreSQL server you already set up${NC}"
     echo -e "${RED}(see scripts/setup_db.sh) — this container does not run its own database.${NC}"
     exit 1
 fi
@@ -65,10 +67,20 @@ echo -e "${GREEN}✅ All required variables configured${NC}\n"
 # ============================================================
 echo -e "${YELLOW}🗄️  Step 2b: Checking database connectivity...${NC}"
 
+POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
 if python -c "
 import sys, psycopg2
 try:
-    conn = psycopg2.connect('$DATABASE_URL', connect_timeout=5)
+    conn = psycopg2.connect(
+        user='$POSTGRES_USER',
+        password='$POSTGRES_PASSWORD',
+        dbname='$POSTGRES_DB',
+        host='$POSTGRES_HOST',
+        port='$POSTGRES_PORT',
+        connect_timeout=5,
+    )
     conn.close()
 except Exception as e:
     print(str(e), file=sys.stderr)
@@ -76,7 +88,7 @@ except Exception as e:
 " 2>/tmp/db_check_error; then
     echo -e "${GREEN}✅ Database is reachable${NC}\n"
 else
-    echo -e "${RED}❌ Could not connect to DATABASE_URL${NC}"
+    echo -e "${RED}❌ Could not connect to Postgres at ${POSTGRES_HOST}:${POSTGRES_PORT}${NC}"
     echo -e "${RED}   $(cat /tmp/db_check_error)${NC}"
     echo -e "${RED}   Make sure PostgreSQL is running and reachable from this container${NC}"
     echo -e "${RED}   (see scripts/setup_db.sh for a standalone setup, run outside Docker/Podman).${NC}"

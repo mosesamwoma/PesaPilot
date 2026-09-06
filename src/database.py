@@ -6,7 +6,6 @@ from decimal import Decimal
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional
-from urllib.parse import quote_plus
 
 import pandas as pd
 import psycopg2
@@ -54,44 +53,42 @@ _FORBIDDEN_SQL_KEYWORDS = re.compile(
 )
 
 
-def _build_dsn_from_parts() -> Optional[str]:
-    """Build a DATABASE_URL-style DSN from separate POSTGRES_* variables,
-    for people who'd rather set individual host/user/password/db/port env
-    vars than assemble one connection string by hand. These are the SAME
-    names the official Postgres Docker image reads for POSTGRES_USER,
-    POSTGRES_PASSWORD, and POSTGRES_DB, so if you're using this project's
-    docker-compose.yml your `db` service and the app read from one
-    consistent set of names instead of two different conventions. Returns
-    None if the required pieces (user, password, db) aren't all present,
-    so the caller can fall back to requiring DATABASE_URL with a clear error.
+def _pg_connection_kwargs() -> Dict[str, str]:
+    """Read the separate POSTGRES_* env vars and return connection kwargs
+    for psycopg2. These are the SAME names the official Postgres Docker
+    image reads for POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB, so
+    if you're using this project's docker-compose.yml your `db` service
+    and the app read from one consistent set of names. Passed as separate
+    kwargs (not assembled into a URL), so passwords never need URL-encoding
+    no matter what characters they contain.
     """
     user = os.getenv('POSTGRES_USER')
     password = os.getenv('POSTGRES_PASSWORD')
     db = os.getenv('POSTGRES_DB')
-    if not (user and password and db):
-        return None
-    host = os.getenv('POSTGRES_HOST', 'localhost')
-    port = os.getenv('POSTGRES_PORT', '5432')
-    # URL-encode user/password so special characters (@, :, /, #, etc. —
-    # common in generated passwords) can't break the connection string.
-    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db}"
+    missing = [name for name, val in (
+        ('POSTGRES_USER', user), ('POSTGRES_PASSWORD', password), ('POSTGRES_DB', db)
+    ) if not val]
+    if missing:
+        raise ValueError(
+            f"Missing required env var(s): {', '.join(missing)}. "
+            "Set POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB in your .env "
+            "(POSTGRES_HOST and POSTGRES_PORT are optional, defaulting to "
+            "127.0.0.1:5432)."
+        )
+    return {
+        'user': user,
+        'password': password,
+        'dbname': db,
+        'host': os.getenv('POSTGRES_HOST', '127.0.0.1'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+    }
 
 
 class PostgresDB:
     def __init__(self):
-        # Either a single DATABASE_URL, or the separate POSTGRES_USER /
-        # POSTGRES_PASSWORD / POSTGRES_DB / POSTGRES_HOST / POSTGRES_PORT
-        # pieces below — DATABASE_URL wins if both are set.
-        dsn = os.getenv('DATABASE_URL') or _build_dsn_from_parts()
-        if not dsn:
-            raise ValueError(
-                "Set either DATABASE_URL (e.g. postgresql://user:password@host:5432/dbname) "
-                "or POSTGRES_USER + POSTGRES_PASSWORD + POSTGRES_DB "
-                "(POSTGRES_HOST and POSTGRES_PORT are optional, defaulting to "
-                "localhost:5432) in your .env"
-            )
+        conn_kwargs = _pg_connection_kwargs()
         try:
-            self._pool = pg_pool.ThreadedConnectionPool(1, 10, dsn=dsn)
+            self._pool = pg_pool.ThreadedConnectionPool(1, 10, **conn_kwargs)
         except Exception as e:
             raise ValueError(f"Could not connect to Postgres: {e}")
         logger.info("Postgres connection pool initialized")

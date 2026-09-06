@@ -23,9 +23,13 @@ services:
       # PostgreSQL runs separately on the host or another server —
       # this container never starts or manages a database itself.
       # host.docker.internal (mapped below via extra_hosts) reaches
-      # a Postgres instance running on the Docker host. Point this
-      # at a different host/IP if Postgres runs elsewhere.
-      - DATABASE_URL=${DATABASE_URL:-postgresql://pesapilot:pesapilot@host.docker.internal:5432/pesapilot}
+      # a Postgres instance running on the Docker host. Point
+      # POSTGRES_HOST at a different host/IP if Postgres runs elsewhere.
+      - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
+      - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
+      - POSTGRES_HOST=${POSTGRES_HOST:-host.docker.internal}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
 
       # Groq
       - GROQ_API_KEY=${GROQ_API_KEY}

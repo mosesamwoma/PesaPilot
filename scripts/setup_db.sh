@@ -116,7 +116,7 @@ echo "==> Applying schema/init_db.sql..."
 
 if command -v psql >/dev/null 2>&1; then
     PGPASSWORD="$PGSQL_PASSWORD" psql \
-        "postgresql://$PGSQL_USER:$PGSQL_PASSWORD@127.0.0.1:5432/$PGSQL_DB" \
+        -h 127.0.0.1 -p 5432 -U "$PGSQL_USER" -d "$PGSQL_DB" \
         -f "$SCHEMA_FILE"
 fi
 
@@ -127,15 +127,14 @@ echo "=============================================================="
 echo
 echo "Add this to your .env:"
 echo
-echo "  DATABASE_URL=postgresql://$PGSQL_USER:$PGSQL_PASSWORD@127.0.0.1:5432/$PGSQL_DB"
+echo "  POSTGRES_USER=$PGSQL_USER"
+echo "  POSTGRES_PASSWORD=$PGSQL_PASSWORD"
+echo "  POSTGRES_DB=$PGSQL_DB"
+echo "  POSTGRES_HOST=127.0.0.1"
+echo "  POSTGRES_PORT=5432"
 echo
-echo "If the app runs inside Docker, use host.docker.internal instead of 127.0.0.1:"
-echo
-echo "  DATABASE_URL=postgresql://$PGSQL_USER:$PGSQL_PASSWORD@host.docker.internal:5432/$PGSQL_DB"
-echo
-echo "If the app runs inside Podman, use host.containers.internal instead:"
-echo
-echo "  DATABASE_URL=postgresql://$PGSQL_USER:$PGSQL_PASSWORD@host.containers.internal:5432/$PGSQL_DB"
+echo "If the app runs inside Docker, set POSTGRES_HOST=host.docker.internal instead of 127.0.0.1."
+echo "If the app runs inside Podman, set POSTGRES_HOST=host.containers.internal instead."
 echo
 echo "PostgreSQL must also be configured to accept connections from your"
 echo "container's network. If Docker/Podman can't reach it, check that"

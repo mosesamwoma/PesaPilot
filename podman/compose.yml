@@ -23,7 +23,11 @@ services:
       - WHATSAPP_API_PORT=8000
 
       # PostgreSQL runs separately on the host
-      - DATABASE_URL=${DATABASE_URL:-postgresql://pesapilot:pesapilot@host.containers.internal:5432/pesapilot}
+      - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
+      - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
+      - POSTGRES_HOST=${POSTGRES_HOST:-host.containers.internal}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
 
       # Groq
       - GROQ_API_KEY=${GROQ_API_KEY}

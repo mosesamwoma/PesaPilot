@@ -3,7 +3,6 @@ import {
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
     DisconnectReason,
-    delay,
     proto,
 } from '@whiskeysockets/baileys';
 import type { WASocket } from '@whiskeysockets/baileys';
@@ -439,30 +438,41 @@ async function startBaileys(): Promise<WASocket> {
         // ──────────────────────────────────────────────────────────
         // PAIRING CODE (if enabled)
         // ──────────────────────────────────────────────────────────
-        if (config.usePairingCode && !state.creds.registered) {
-            try {
-                console.log('📱 Requesting pairing code...');
-                await delay(3000);
-                const code = await sock.requestPairingCode(config.mainNumber);
-                startupResolved = true;
-                console.log('\n╔════════════════════════════════════════════════════════╗');
-                console.log('║          ENTER THIS PAIRING CODE ON YOUR PHONE         ║');
-                console.log('║  Settings → Linked Devices → Link with phone number    ║');
-                console.log('╚════════════════════════════════════════════════════════╝\n');
-                console.log(`🔑 Pairing code: ${code}\n`);
-                console.log('⏳ Waiting for connection...\n');
-            } catch (e) {
-                const err = e as Error;
-                console.error(`❌ Failed to request pairing code: ${err.message}`);
-                startupResolved = true; // Prevent timeout
-            }
-        }
+        // Requested from inside the 'connection.update' handler below,
+        // once the 'qr' event fires — that's Baileys's own signal that
+        // the raw socket is actually up and ready to accept a pairing
+        // request. A fixed delay() here is a race condition: on a slow
+        // network the socket may not be open yet (causing "Connection
+        // Closed" on the request itself), and on a fast one the delay
+        // just wastes time. pairingCodeRequested guards against firing
+        // more than once if multiple 'qr' events arrive.
+        let pairingCodeRequested = false;
 
         // ──────────────────────────────────────────────────────────
         // CONNECTION UPDATE HANDLER
         // ──────────────────────────────────────────────────────────
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
+
+            if (qr && config.usePairingCode && !pairingCodeRequested && !state.creds.registered) {
+                pairingCodeRequested = true;
+                try {
+                    console.log('📱 Requesting pairing code...');
+                    const code = await sock.requestPairingCode(config.mainNumber);
+                    startupResolved = true;
+                    console.log('\n╔════════════════════════════════════════════════════════╗');
+                    console.log('║          ENTER THIS PAIRING CODE ON YOUR PHONE         ║');
+                    console.log('║  Settings → Linked Devices → Link with phone number    ║');
+                    console.log('╚════════════════════════════════════════════════════════╝\n');
+                    console.log(`🔑 Pairing code: ${code}\n`);
+                    console.log('⏳ Waiting for connection...\n');
+                } catch (e) {
+                    const err = e as Error;
+                    console.error(`❌ Failed to request pairing code: ${err.message}`);
+                    // Allow a retry on the next 'qr' event instead of giving up outright.
+                    pairingCodeRequested = false;
+                }
+            }
 
             if (qr && !config.usePairingCode) {
                 startupResolved = true;

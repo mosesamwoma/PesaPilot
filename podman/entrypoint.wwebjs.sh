@@ -67,7 +67,43 @@ echo -e "${GREEN}✅ All required variables configured${NC}\n"
 # ============================================================
 echo -e "${YELLOW}🗄️  Step 2b: Checking database connectivity...${NC}"
 
-POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
+# POSTGRES_HOST supports the special value "auto" (also the default when the
+# var is unset/empty) — same contract as src/database.py's _pg_connection_kwargs().
+# This resolves it in bash BEFORE the psycopg2 check below, otherwise the
+# literal string "auto" gets used as a hostname and DNS resolution fails.
+_detect_postgres_host() {
+    # Podman: sets /run/.containerenv and/or container=podman. Resolves
+    # host.containers.internal for every container automatically.
+    if [ -f /run/.containerenv ] || [ "$container" = "podman" ]; then
+        echo "host.containers.internal"
+        return
+    fi
+    # Docker: /.dockerenv exists in every container's root filesystem.
+    if [ -f /.dockerenv ]; then
+        if python -c "import socket; socket.gethostbyname('host.docker.internal')" >/dev/null 2>&1; then
+            echo "host.docker.internal"
+        else
+            # host.docker.internal didn't resolve (e.g. plain `docker run`
+            # without extra_hosts on Linux) — fall back to the default
+            # bridge network's gateway, which reaches the host on most
+            # Linux installs without any extra config.
+            echo "172.17.0.1"
+        fi
+        return
+    fi
+    # Bare metal: no container runtime detected.
+    echo "127.0.0.1"
+}
+
+RAW_POSTGRES_HOST="${POSTGRES_HOST:-auto}"
+RAW_POSTGRES_HOST_LOWER=$(echo "$RAW_POSTGRES_HOST" | tr '[:upper:]' '[:lower:]')
+if [ -z "$RAW_POSTGRES_HOST" ] || [ "$RAW_POSTGRES_HOST_LOWER" = "auto" ]; then
+    POSTGRES_HOST="$(_detect_postgres_host)"
+    echo -e "${BLUE}   POSTGRES_HOST=auto -> detected '$POSTGRES_HOST'${NC}"
+else
+    POSTGRES_HOST="$RAW_POSTGRES_HOST"
+fi
+export POSTGRES_HOST
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 if python -c "

@@ -104,12 +104,22 @@ Open `.env` and fill in the values. **Never commit `.env`** — it is already in
 | `POSTGRES_USER` | — (required) | Database user |
 | `POSTGRES_PASSWORD` | — (required) | Database password |
 | `POSTGRES_DB` | — (required) | Database name |
-| `POSTGRES_HOST` | `127.0.0.1` | Database host |
+| `POSTGRES_HOST` | `auto` | Database host — see below |
 | `POSTGRES_PORT` | `5432` | Database port |
 
-These are the exact same names the official Postgres Docker image reads for `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` — if you're using this project's `docker-compose.yml`, the `db` service and the app share one naming convention.
+These are the exact same names the official Postgres Docker image reads for `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` — if you're using this project's `docker-compose.yml`, the app and your Postgres server share one naming convention.
 
-> **Use `127.0.0.1`, not `localhost`,** in `POSTGRES_HOST` — on some systems (especially Linux/Docker) `localhost` resolves to the IPv6 loopback (`::1`) first, and if Postgres isn't listening on IPv6 you get a slow hang or a refused connection that often only shows up after shipping, not in local dev. `127.0.0.1` skips DNS resolution entirely and always means IPv4 loopback. (This doesn't apply inside `docker-compose.yml` itself, which correctly points the app at the `db` service by container network alias, not a loopback address.)
+**`POSTGRES_HOST=auto` (the default) makes one `.env` work unmodified on bare metal, in Docker, and in Podman.** At startup, `src/database.py` checks for `/.dockerenv` and `/run/.containerenv` to work out which of the three it's running in, then picks the host that reaches Postgres from there:
+
+| Environment | Detected via | Host used |
+|---|---|---|
+| Bare metal | neither marker file present | `127.0.0.1` |
+| Docker | `/.dockerenv` exists | `host.docker.internal` (falls back to `172.17.0.1`, Docker's default bridge gateway, if that hostname doesn't resolve) |
+| Podman | `/run/.containerenv` exists, or `container=podman` | `host.containers.internal` |
+
+You'll only see the `172.17.0.1` fallback if you run the container with plain `docker run` instead of `docker compose up` — this project's `docker-compose.yml` already includes the `extra_hosts: ["host.docker.internal:host-gateway"]` entry that Linux needs for `host.docker.internal` to resolve, so under compose you shouldn't hit it.
+
+Set `POSTGRES_HOST` to an explicit hostname or IP instead of `auto` to skip detection entirely — for example, if Postgres runs on a remote VPS rather than the same machine as the app.
 
 Passwords with special characters (`@`, `:`, `/`, `#`, etc.) are safe to use as-is — they're passed directly to psycopg2 as connection kwargs, never assembled into a URL, so no URL-encoding is ever needed.
 
@@ -161,9 +171,9 @@ docker exec -i pesapilot-db psql -U pesapilot -d pesapilot < schema/init_db.sql
 
 This creates the `transactions` table (including `transaction_cost`, for tracking M-Pesa fees separately from the transaction amount), indexes, and supporting tables required by the app.
 
-> **Already have a `transactions` table from before `transaction_cost` existed?** Run this instead of the full schema import — it's a safe, additive, non-destructive migration that doesn't touch your existing rows:
+> **Already have a `transactions` table from before `transaction_cost` existed?** Run this instead of the full schema import — it's a safe, additive, non-destructive migration that doesn't touch your existing rows. `POSTGRES_HOST` in your `.env` may be `auto`, which `psql` doesn't understand (only `src/database.py`'s Python code resolves that keyword), so pass the real host/IP on the command line here instead:
 > ```bash
-> PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0;"
+> PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0;"
 > ```
 > Existing rows backfill to `0`. Re-import your SMS Backup & Restore XML (or resend recent SMS through the WhatsApp bot) afterwards to replace that `0` backfill with the real fee amounts.
 
@@ -541,7 +551,7 @@ python -m pytest tests/ -v
 | `streamlit: command not found` | Activate your virtualenv: `source venv/bin/activate` |
 | `balance` column empty for some rows | Expected — not every M-Pesa SMS includes a balance figure |
 | `pytest` fails on Postgres/Groq tests | Tests need real credentials (`POSTGRES_*` and `GROQ_API_KEY`) and the schema from `schema/init_db.sql` already applied |
-| `Could not connect to Postgres` / connection refused or hangs | Check `POSTGRES_HOST` is `127.0.0.1`, not `localhost` — `localhost` can resolve to the IPv6 loopback first on some systems and fail if Postgres isn't listening on IPv6 |
+| `Could not connect to Postgres` / connection refused or hangs | With `POSTGRES_HOST=auto` (default), check which host got detected in the startup logs (`POSTGRES_HOST=auto -> detected '...'`) and confirm Postgres is actually reachable at that address. If you've set `POSTGRES_HOST` explicitly, avoid `localhost` — it can resolve to the IPv6 loopback first on some systems and fail if Postgres isn't listening on IPv6; use `127.0.0.1` or the real host/IP instead |
 | `get_daily_trend failed: time data ... doesn't match format` in the logs | Fixed as of the `transaction_cost` update — make sure `src/database.py`, `src/chart_generator.py`, `src/anomaly_detector.py`, and `src/forecasting.py` all parse timestamps with `format='ISO8601'`, not a fixed format string |
 
 ---

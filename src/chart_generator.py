@@ -14,10 +14,18 @@ metric, date range (a specific month, a named week, "last quarter", exact
 dates), grouping, category filter — and an LLM call (GroqClient.
 generate_chart_spec) turns that into a small structured JSON spec. One
 flexible data pull (PostgresDB.get_transactions_range) and one flexible
-matplotlib renderer then produce the chart, instead of a hardcoded function
-per chart type. This single module is shared by both the Streamlit
-dashboard (matplotlib figure via st.pyplot) and the WhatsApp bot
-(matplotlib figure encoded to base64 PNG) — one engine, two front ends.
+renderer then produce the chart, instead of a hardcoded function per chart
+type. This single module is shared by both the Streamlit dashboard
+(figure via st.pyplot) and the WhatsApp bot (figure encoded to base64 PNG)
+— one engine, two front ends.
+
+RENDERING: built on matplotlib, styled and drawn with seaborn — seaborn's
+`axes_style`/`plotting_context` context managers drive the theme (so this
+module never mutates global matplotlib/seaborn state that other callers
+rely on), `sns.color_palette` supplies every categorical/sequential color
+ramp, and `sns.histplot` / `sns.heatmap` / `sns.scatterplot` replace the
+hand-rolled matplotlib equivalents for a noticeably cleaner, more
+"designed" look than plain matplotlib defaults.
 """
 from __future__ import annotations
 
@@ -34,6 +42,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import seaborn as sns
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +145,13 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
         spec["group_by"] = None if spec["chart_type"] == "histogram" else "merchant_category"
     if spec.get("transaction_type") not in TRANSACTION_TYPES:
         spec["transaction_type"] = "spending"
+    # A histogram of `metric='count'` has nothing to plot — every row
+    # contributes exactly 1, so the "distribution" would just be a single
+    # spike at x=1. Distributions only make sense for a real KES amount, so
+    # fall back to 'amount' (matches the LLM prompt's own framing of
+    # histograms as "how transaction sizes are spread out").
+    if spec.get("chart_type") == "histogram" and spec.get("metric") == "count":
+        spec["metric"] = "amount"
     try:
         spec["top_n"] = max(3, min(30, int(spec.get("top_n") or 12)))
     except (TypeError, ValueError):
@@ -273,23 +289,52 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------
-# Step 3: render — one flexible matplotlib renderer for every chart type
+# Step 3: render — seaborn-styled, matplotlib-backed renderer for every
+# chart type. Colors/palettes and the two statistical chart types
+# (histogram, heatmap) lean directly on seaborn; everything else uses
+# matplotlib primitives colored with seaborn palettes for full control
+# over per-bar/per-cell labeling.
 # ------------------------------------------------------------------
 
 _DARK = dict(bg='#0f1117', panel='#1e2130', grid='#2d3250', text='#c8cdd8',
              accent='#00d4aa', accent2='#ff4b6e')
-_LIGHT = dict(bg='white', panel='white', grid='#e0e0e0', text='#333333',
+_LIGHT = dict(bg='white', panel='#fbfbfd', grid='#e0e0e0', text='#333333',
               accent='#2E86AB', accent2='#ff4b6e')
+
+# Seaborn palette names used throughout — chosen to be perceptually uniform
+# (crest/flare/rocket/mako are seaborn's own colormaps, not matplotlib's)
+# and to feel distinct from the flat single-color matplotlib defaults this
+# module used before.
+_PALETTE_CATEGORICAL = 'Set2'      # pie slices — clearly distinct categories
+_PALETTE_SEQUENTIAL = 'crest'      # ranking bars — low → high magnitude
+_PALETTE_HEATMAP = 'rocket_r'      # heatmap cells — reversed so "hot" = high spend
+_PALETTE_SCATTER = 'flare'         # scatter points colored by total spend
+
+
+def _seaborn_rc(theme: dict) -> dict:
+    """rc overrides layered on top of seaborn's 'darkgrid'/'whitegrid' base
+    style so the plot matches PesaPilot's own dark/light palette instead of
+    seaborn's stock colors."""
+    return {
+        'figure.facecolor': theme['bg'],
+        'axes.facecolor': theme['panel'],
+        'axes.edgecolor': theme['grid'],
+        'axes.labelcolor': theme['text'],
+        'text.color': theme['text'],
+        'xtick.color': theme['text'],
+        'ytick.color': theme['text'],
+        'grid.color': theme['grid'],
+        'grid.alpha': 0.4,
+        'font.size': 11,
+    }
 
 
 def _style(ax, fig, theme: dict, title: str) -> None:
-    fig.patch.set_facecolor(theme['bg'])
-    ax.set_facecolor(theme['panel'])
+    """Cosmetic finishing touches applied after the data is drawn — title,
+    spines. `sns.despine` (drop the top/right border) is the one bit of
+    polish plain matplotlib doesn't give you for free."""
     ax.set_title(title, fontsize=14, fontweight='bold', color=theme['text'], pad=14)
-    ax.tick_params(colors=theme['text'])
-    for spine in ax.spines.values():
-        spine.set_color(theme['grid'])
-    ax.grid(True, color=theme['grid'], alpha=0.4, linewidth=0.6)
+    sns.despine(fig=fig, ax=ax, left=False, bottom=False)
     ax.xaxis.label.set_color(theme['text'])
     ax.yaxis.label.set_color(theme['text'])
 
@@ -307,139 +352,181 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
     if df is None or df.empty:
         return None, "No transactions found for that request — try widening the date range."
 
-    fig, ax = plt.subplots(figsize=(11, 6.5))
+    base_style = 'darkgrid' if dark else 'whitegrid'
 
-    try:
-        if chart_type == 'histogram':
-            values = df[df[metric] > 0][metric]
-            if values.empty or len(values) < 2:
-                plt.close(fig)
-                return None, "Not enough positive amounts to build a distribution from."
-            ax.hist(values, bins=25, color=theme['accent'], edgecolor=theme['bg'])
-            mean_val = values.mean()
-            ax.axvline(mean_val, color=theme['accent2'], linestyle='--', linewidth=1.5,
-                        label=f"Avg KES {mean_val:,.0f}")
-            ax.set_xlabel(f'{metric_label} (KES)')
-            ax.set_ylabel('Number of transactions')
-            ax.legend(facecolor=theme['panel'], edgecolor=theme['grid'], labelcolor=theme['text'])
-            _style(ax, fig, theme, title)
-            summary = (f"Average KES {mean_val:,.0f}, median KES {values.median():,.0f}, "
-                       f"across {len(values)} transactions.")
+    with sns.axes_style(base_style, rc=_seaborn_rc(theme)), sns.plotting_context('notebook', font_scale=1.0):
+        fig, ax = plt.subplots(figsize=(11, 6.5))
 
-        elif chart_type == 'heatmap':
-            pivot = df.pivot_table(values=metric, index='merchant_category', columns='weekday',
-                                    aggfunc='sum', fill_value=0)
-            day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-            cols = [d for d in day_order if d in pivot.columns]
-            if not cols or pivot.empty or pivot.values.max() == 0:
-                plt.close(fig)
-                return None, "Not enough data yet for a heatmap."
-            pivot = pivot[cols]
-            im = ax.imshow(pivot.values, cmap='YlOrRd', aspect='auto')
-            ax.set_xticks(range(len(cols)))
-            ax.set_xticklabels(cols, rotation=45, ha='right')
-            ax.set_yticks(range(len(pivot.index)))
-            ax.set_yticklabels(pivot.index)
-            vmax = pivot.values.max()
-            for i in range(len(pivot.index)):
-                for j in range(len(cols)):
-                    val = pivot.values[i, j]
-                    if val > 0:
-                        ax.text(j, i, f"{val:,.0f}", ha='center', va='center',
-                                 color='black' if val < vmax * 0.6 else 'white', fontsize=8)
-            cbar = fig.colorbar(im, ax=ax, shrink=0.8, label=f'{metric_label} (KES)')
-            cbar.ax.yaxis.set_tick_params(color=theme['text'])
-            plt.setp(cbar.ax.get_yticklabels(), color=theme['text'])
-            cbar.ax.yaxis.label.set_color(theme['text'])
-            _style(ax, fig, theme, title)
-            summary = f"Heatmap of {metric_label.lower()} across {len(pivot.index)} categories and {len(cols)} weekdays."
+        try:
+            if chart_type == 'histogram':
+                values = df[df[metric] > 0][metric]
+                if values.empty or len(values) < 2:
+                    plt.close(fig)
+                    return None, "Not enough positive amounts to build a distribution from."
+                sns.histplot(
+                    values, bins=25, kde=True, ax=ax,
+                    color=theme['accent'], edgecolor=theme['bg'], linewidth=0.6,
+                    line_kws={'color': theme['accent2'], 'linewidth': 2},
+                )
+                mean_val = values.mean()
+                ax.axvline(mean_val, color=theme['accent2'], linestyle='--', linewidth=1.5,
+                           label=f"Avg KES {mean_val:,.0f}")
+                ax.set_xlabel(f'{metric_label} (KES)')
+                ax.set_ylabel('Number of transactions')
+                ax.legend(facecolor=theme['panel'], edgecolor=theme['grid'], labelcolor=theme['text'])
+                _style(ax, fig, theme, title)
+                summary = (f"Average KES {mean_val:,.0f}, median KES {values.median():,.0f}, "
+                           f"across {len(values)} transactions.")
 
-        elif chart_type == 'scatter':
-            key = group_by or 'recipient'
-            grouped = df.groupby(key).agg(total=(metric, 'sum'), tx_count=(metric, 'count')).reset_index()
-            grouped = grouped[grouped['total'] != 0]
-            if grouped.empty:
-                plt.close(fig)
-                return None, "No data to plot for that grouping."
-            ax.scatter(grouped['tx_count'], grouped['total'], color=theme['accent'], s=80, alpha=0.85,
-                        edgecolors=theme['bg'])
-            for _, row in grouped.nlargest(min(8, len(grouped)), 'total').iterrows():
-                ax.annotate(str(row[key])[:18], (row['tx_count'], row['total']),
-                             color=theme['text'], fontsize=8, xytext=(4, 4), textcoords='offset points')
-            ax.set_xlabel('Number of transactions')
-            ax.set_ylabel(f'Total {metric_label} (KES)')
-            _style(ax, fig, theme, title)
-            summary = f"{len(grouped)} {key.replace('_', ' ')} groups plotted by count vs total {metric_label.lower()}."
+            elif chart_type == 'heatmap':
+                pivot = df.pivot_table(values=metric, index='merchant_category', columns='weekday',
+                                        aggfunc='sum', fill_value=0)
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                cols = [d for d in day_order if d in pivot.columns]
+                if not cols or pivot.empty or pivot.values.max() == 0:
+                    plt.close(fig)
+                    return None, "Not enough data yet for a heatmap."
+                pivot = pivot[cols]
+                heat = sns.heatmap(
+                    pivot, ax=ax, cmap=_PALETTE_HEATMAP, linewidths=1, linecolor=theme['bg'],
+                    cbar_kws={'label': f'{metric_label} (KES)'}, annot=False, square=False,
+                )
+                # Manual annotations (instead of sns.heatmap's annot=True) so
+                # each cell's text color adapts to that EXACT cell's own
+                # rendered color — reading the real colormap+norm off the
+                # QuadMesh (rather than guessing from a fraction of vmax)
+                # means the label stays readable even on a heatmap with a
+                # few very low outlier cells (near-white on 'rocket_r').
+                quadmesh = heat.collections[0]
+                cmap, norm = quadmesh.cmap, quadmesh.norm
+                for i in range(len(pivot.index)):
+                    for j in range(len(cols)):
+                        val = pivot.values[i, j]
+                        if val <= 0:
+                            continue
+                        r, g, b, _ = cmap(norm(val))
+                        # Perceptual luminance (ITU-R BT.601) — decide black vs
+                        # white text from the actual cell color, not a rough
+                        # value-based guess.
+                        luminance = 0.299 * r + 0.587 * g + 0.114 * b
+                        text_color = '#111111' if luminance > 0.6 else '#ffffff'
+                        ax.text(j + 0.5, i + 0.5, f"{val:,.0f}", ha='center', va='center',
+                                color=text_color, fontsize=8, fontweight='medium')
+                cbar = quadmesh.colorbar
+                cbar.ax.yaxis.set_tick_params(color=theme['text'])
+                plt.setp(cbar.ax.get_yticklabels(), color=theme['text'])
+                cbar.ax.yaxis.label.set_color(theme['text'])
+                ax.set_xlabel('')
+                ax.set_ylabel('')
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+                _style(ax, fig, theme, title)
+                summary = f"Heatmap of {metric_label.lower()} across {len(pivot.index)} categories and {len(cols)} weekdays."
 
-        elif chart_type in ('line', 'area'):
-            daily = df.groupby('date')[metric].sum().reset_index().sort_values('date')
-            if daily.empty:
-                plt.close(fig)
-                return None, "No data over this period."
-            dates = pd.to_datetime(daily['date'])
-            ax.plot(dates, daily[metric], color=theme['accent2'], linewidth=2, marker='o', markersize=3)
-            if chart_type == 'area':
-                ax.fill_between(dates, daily[metric], color=theme['accent2'], alpha=0.15)
-            avg_val = daily[metric].mean()
-            ax.axhline(avg_val, color=theme['accent'], linestyle='--', linewidth=1.2,
-                        label=f"Avg KES {avg_val:,.0f}/day")
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
-            fig.autofmt_xdate(rotation=45)
-            ax.set_ylabel(f'{metric_label} (KES)')
-            ax.legend(facecolor=theme['panel'], edgecolor=theme['grid'], labelcolor=theme['text'])
-            _style(ax, fig, theme, title)
-            peak = daily.loc[daily[metric].idxmax()]
-            summary = (f"Peak: {peak['date']} at KES {peak[metric]:,.0f}. "
-                       f"Average KES {avg_val:,.0f}/day across {len(daily)} days.")
+            elif chart_type == 'scatter':
+                key = group_by or 'recipient'
+                grouped = df.groupby(key).agg(total=(metric, 'sum'), tx_count=(metric, 'count')).reset_index()
+                grouped = grouped[grouped['total'] != 0]
+                if grouped.empty:
+                    plt.close(fig)
+                    return None, "No data to plot for that grouping."
+                sns.scatterplot(
+                    data=grouped, x='tx_count', y='total', hue='total', size='total',
+                    palette=_PALETTE_SCATTER, sizes=(60, 260), edgecolor=theme['bg'],
+                    linewidth=0.8, alpha=0.9, ax=ax, legend=False,
+                )
+                for _, row in grouped.nlargest(min(8, len(grouped)), 'total').iterrows():
+                    ax.annotate(str(row[key])[:18], (row['tx_count'], row['total']),
+                                color=theme['text'], fontsize=8, xytext=(4, 4), textcoords='offset points')
+                ax.set_xlabel('Number of transactions')
+                ax.set_ylabel(f'Total {metric_label} (KES)')
+                _style(ax, fig, theme, title)
+                summary = f"{len(grouped)} {key.replace('_', ' ')} groups plotted by count vs total {metric_label.lower()}."
 
-        elif chart_type == 'pie':
-            key = group_by or 'merchant_category'
-            grouped = df.groupby(key)[metric].sum().sort_values(ascending=False)
-            grouped = grouped[grouped > 0]
-            if grouped.empty:
-                plt.close(fig)
-                return None, "No positive totals to chart for that grouping."
-            top_n = spec.get('top_n', 12)
-            if len(grouped) > top_n:
-                other = grouped.iloc[top_n:].sum()
-                grouped = grouped.iloc[:top_n].copy()
-                if other > 0:
-                    grouped['Other'] = other
-            colors = plt.cm.tab20(range(len(grouped)))
-            ax.pie(grouped.values, labels=grouped.index.astype(str), autopct='%1.1f%%', colors=colors,
-                    textprops={'color': theme['text'], 'fontsize': 9}, pctdistance=0.8)
-            ax.set_title(title, fontsize=14, fontweight='bold', color=theme['text'], pad=14)
+            elif chart_type in ('line', 'area'):
+                daily = df.groupby('date')[metric].sum().reset_index().sort_values('date')
+                if daily.empty:
+                    plt.close(fig)
+                    return None, "No data over this period."
+                dates = pd.to_datetime(daily['date'])
+                sns.lineplot(x=dates, y=daily[metric], ax=ax, color=theme['accent2'],
+                             linewidth=2.2, marker='o', markersize=4)
+                ax.set_xlabel('')
+                if chart_type == 'area':
+                    ax.fill_between(dates, daily[metric], color=theme['accent2'], alpha=0.15)
+                avg_val = daily[metric].mean()
+                ax.axhline(avg_val, color=theme['accent'], linestyle='--', linewidth=1.2,
+                           label=f"Avg KES {avg_val:,.0f}/day")
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+                fig.autofmt_xdate(rotation=45)
+                ax.set_ylabel(f'{metric_label} (KES)')
+                ax.legend(facecolor=theme['panel'], edgecolor=theme['grid'], labelcolor=theme['text'])
+                _style(ax, fig, theme, title)
+                peak = daily.loc[daily[metric].idxmax()]
+                summary = (f"Peak: {peak['date']} at KES {peak[metric]:,.0f}. "
+                           f"Average KES {avg_val:,.0f}/day across {len(daily)} days.")
+
+            elif chart_type == 'pie':
+                key = group_by or 'merchant_category'
+                grouped = df.groupby(key)[metric].sum().sort_values(ascending=False)
+                grouped = grouped[grouped > 0]
+                if grouped.empty:
+                    plt.close(fig)
+                    return None, "No positive totals to chart for that grouping."
+                top_n = spec.get('top_n', 12)
+                if len(grouped) > top_n:
+                    other = grouped.iloc[top_n:].sum()
+                    grouped = grouped.iloc[:top_n].copy()
+                    if other > 0:
+                        grouped['Other'] = other
+                colors = sns.color_palette(_PALETTE_CATEGORICAL, n_colors=len(grouped))
+                wedges, _labels, autotexts = ax.pie(
+                    grouped.values, labels=grouped.index.astype(str), autopct='%1.1f%%', colors=colors,
+                    textprops={'color': theme['text'], 'fontsize': 9}, pctdistance=0.8,
+                    wedgeprops={'edgecolor': theme['bg'], 'linewidth': 1.2},
+                )
+                # Slice labels (category names) sit outside the pie on the
+                # figure background, so theme['text'] always reads fine —
+                # but the % labels sit ON the wedge itself, and Set2 mixes
+                # light (yellow) and darker (teal, purple) colors. A single
+                # fixed color is illegible on the light slices, so pick
+                # black/white per-wedge from that wedge's own luminance.
+                for wedge, autotext in zip(wedges, autotexts):
+                    r, g, b, _ = wedge.get_facecolor()
+                    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+                    autotext.set_color('#111111' if luminance > 0.6 else '#ffffff')
+                ax.set_title(title, fontsize=14, fontweight='bold', color=theme['text'], pad=14)
+                top_label = grouped.index[0]
+                total = grouped.sum()
+                summary = f"{top_label} is the largest share at KES {grouped.iloc[0]:,.0f} ({grouped.iloc[0] / total * 100:.0f}%)."
+
+            else:  # bar (default, also covers "top merchants" / "top recipients" via group_by='recipient')
+                key = group_by or 'merchant_category'
+                grouped = df.groupby(key)[metric].sum().sort_values(ascending=True)
+                grouped = grouped[grouped != 0]
+                if grouped.empty:
+                    plt.close(fig)
+                    return None, "No data to chart for that grouping."
+                top_n = spec.get('top_n', 12)
+                grouped = grouped.tail(top_n)
+                colors = sns.color_palette(_PALETTE_SEQUENTIAL, n_colors=len(grouped))
+                bars = ax.barh(grouped.index.astype(str), grouped.values, color=colors,
+                                edgecolor=theme['bg'], linewidth=0.6)
+                for bar, val in zip(bars, grouped.values):
+                    ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" KES {val:,.0f}",
+                            va='center', color=theme['text'], fontsize=8)
+                ax.set_xlabel(f'{metric_label} (KES)')
+                _style(ax, fig, theme, title)
+                top_label = grouped.index[-1]
+                summary = f"Top: {top_label} at KES {grouped.iloc[-1]:,.0f}, across {len(grouped)} groups."
+
             fig.patch.set_facecolor(theme['bg'])
-            top_label = grouped.index[0]
-            total = grouped.sum()
-            summary = f"{top_label} is the largest share at KES {grouped.iloc[0]:,.0f} ({grouped.iloc[0] / total * 100:.0f}%)."
-
-        else:  # bar (default, also covers "top merchants" / "top recipients" via group_by='recipient')
-            key = group_by or 'merchant_category'
-            grouped = df.groupby(key)[metric].sum().sort_values(ascending=True)
-            grouped = grouped[grouped != 0]
-            if grouped.empty:
-                plt.close(fig)
-                return None, "No data to chart for that grouping."
-            top_n = spec.get('top_n', 12)
-            grouped = grouped.tail(top_n)
-            max_val = grouped.max() or 1
-            colors = plt.cm.viridis([v / max_val for v in grouped.values])
-            bars = ax.barh(grouped.index.astype(str), grouped.values, color=colors)
-            for bar, val in zip(bars, grouped.values):
-                ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" KES {val:,.0f}",
-                        va='center', color=theme['text'], fontsize=8)
-            ax.set_xlabel(f'{metric_label} (KES)')
-            _style(ax, fig, theme, title)
-            top_label = grouped.index[-1]
-            summary = f"Top: {top_label} at KES {grouped.iloc[-1]:,.0f}, across {len(grouped)} groups."
-
-        plt.tight_layout()
-        return fig, summary
-    except Exception as e:
-        logger.error(f"build_figure failed (chart_type={chart_type}): {e}")
-        plt.close(fig)
-        return None, f"Couldn't build that chart: {e}"
+            ax.set_facecolor(theme['panel'])
+            plt.tight_layout()
+            return fig, summary
+        except Exception as e:
+            logger.error(f"build_figure failed (chart_type={chart_type}): {e}")
+            plt.close(fig)
+            return None, f"Couldn't build that chart: {e}"
 
 
 # ------------------------------------------------------------------
@@ -447,9 +534,9 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
 # ------------------------------------------------------------------
 
 def generate_dynamic_chart(analyzer, description: str, dark: bool = True) -> Dict[str, Any]:
-    """Full pipeline: free-text description -> spec -> data -> matplotlib
-    figure. `analyzer` is a src.analyzer.MpesaAnalyzer instance (used for
-    its .groq and .db). Returns a dict with keys:
+    """Full pipeline: free-text description -> spec -> data -> figure.
+    `analyzer` is a src.analyzer.MpesaAnalyzer instance (used for its .groq
+    and .db). Returns a dict with keys:
       fig     - matplotlib Figure, or None if nothing could be plotted
       spec    - the resolved chart spec (useful for logging/debugging)
       summary - one-line, human-readable takeaway from the chart (None on error)

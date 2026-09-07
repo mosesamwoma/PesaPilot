@@ -20,7 +20,7 @@ import dotenv from 'dotenv';
 
 interface Config {
     mainNumber: string;
-    whatsappLid: string | undefined;
+    whatsappLid: string;
     whatsappPin: string;
     apiUrl: string;
     authPath: string;
@@ -75,7 +75,7 @@ dotenv.config();
 
 const config: Config = {
     mainNumber: process.env.WHATSAPP_MAIN_NUMBER || '',
-    whatsappLid: process.env.WHATSAPP_LID || undefined,
+    whatsappLid: process.env.WHATSAPP_LID || '',
     whatsappPin: process.env.WHATSAPP_PIN || '',
     apiUrl: process.env.API_URL || 'http://127.0.0.1:8000',
     authPath: process.env.BAILEYS_AUTH_PATH || './.baileys_auth',
@@ -90,6 +90,11 @@ const config: Config = {
 function validateConfig(config: Config): void {
     if (!config.mainNumber) {
         console.error('\n❌ ERROR: WHATSAPP_MAIN_NUMBER is required in .env');
+        process.exit(1);
+    }
+
+    if (!config.whatsappLid) {
+        console.error('\n❌ ERROR: WHATSAPP_LID is required in .env');
         process.exit(1);
     }
 
@@ -110,7 +115,7 @@ function printBanner(config: Config): void {
     console.log('🤖 PesaPilot WhatsApp Bot v2.1 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`✅ Phone Number : ${config.mainNumber}`);
-    console.log(`✅ LID          : ${config.whatsappLid ? 'configured' : 'not set (optional)'}`);
+    console.log(`✅ LID          : configured`);
     console.log(`✅ PIN          : ${config.whatsappPin}`);
     console.log(`🔗 API URL      : ${config.apiUrl}`);
     console.log(`📂 Auth path    : ${config.authPath}`);
@@ -204,10 +209,10 @@ function splitMessage(text: string, maxLength: number): string[] {
 function isAuthorized(
     senderNumeric: string,
     mainNumber: string,
-    lidNumber?: string
+    lidNumber: string
 ): boolean {
     const mainNumeric = stripSuffix(mainNumber);
-    const lidNumeric = lidNumber ? stripSuffix(lidNumber) : '';
+    const lidNumeric = stripSuffix(lidNumber);
 
     if (mainNumeric && senderNumeric === mainNumeric) return true;
     if (lidNumeric && senderNumeric === lidNumeric) return true;

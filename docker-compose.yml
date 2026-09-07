@@ -22,13 +22,15 @@ services:
 
       # PostgreSQL runs separately on the host or another server —
       # this container never starts or manages a database itself.
-      # host.docker.internal (mapped below via extra_hosts) reaches
-      # a Postgres instance running on the Docker host. Point
-      # POSTGRES_HOST at a different host/IP if Postgres runs elsewhere.
+      # POSTGRES_HOST=auto lets src/database.py detect that it's inside
+      # Docker and resolve host.docker.internal itself (the extra_hosts
+      # entry below is what makes that hostname resolve on Linux; it's
+      # automatic on Docker Desktop for Mac/Windows). Set POSTGRES_HOST
+      # to an explicit host/IP here if Postgres runs elsewhere entirely.
       - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
       - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
-      - POSTGRES_HOST=${POSTGRES_HOST:-host.docker.internal}
+      - POSTGRES_HOST=${POSTGRES_HOST:-auto}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
 
       # Groq

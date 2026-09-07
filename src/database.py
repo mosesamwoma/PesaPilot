@@ -53,6 +53,62 @@ _FORBIDDEN_SQL_KEYWORDS = re.compile(
 )
 
 
+def _running_in_docker() -> bool:
+    """Docker (and Docker-based tools) create /.dockerenv in every
+    container's root filesystem. Podman deliberately does NOT create this
+    file, which is what lets us tell the two runtimes apart below."""
+    return os.path.exists('/.dockerenv')
+
+
+def _running_in_podman() -> bool:
+    """Podman creates /run/.containerenv in every container it starts, and
+    also sets the `container=podman` env var. Check both since either is
+    sufficient and neither is set by plain Docker."""
+    return os.path.exists('/run/.containerenv') or os.getenv('container') == 'podman'
+
+
+def _resolves(hostname: str) -> bool:
+    import socket
+    try:
+        socket.gethostbyname(hostname)
+        return True
+    except OSError:
+        return False
+
+
+def _detect_postgres_host() -> str:
+    """Pick the right Postgres host for whatever environment this process
+    is running in, with no env var needed. Postgres itself always runs
+    outside the app container (on the host or another server) — this only
+    figures out how to *reach* the host from inside the sandbox we're in.
+
+    - Bare metal (no container runtime at all): 127.0.0.1 — Postgres is
+      right there on the same machine.
+    - Docker: host.docker.internal. Docker Desktop (Mac/Windows) wires
+      this up automatically; on Linux it only resolves if the compose
+      file adds `extra_hosts: ["host.docker.internal:host-gateway"]`
+      (this project's docker-compose.yml does). If it doesn't resolve —
+      e.g. someone ran `docker run` by hand without that flag — fall
+      back to 172.17.0.1, the default gateway address of Docker's
+      default `bridge` network, which reaches the host on most Linux
+      installs without any extra config.
+    - Podman: host.containers.internal, which Podman resolves for every
+      container automatically — no extra_hosts entry needed.
+    """
+    if _running_in_podman():
+        return 'host.containers.internal'
+    if _running_in_docker():
+        if _resolves('host.docker.internal'):
+            return 'host.docker.internal'
+        logger.warning(
+            "host.docker.internal did not resolve; falling back to "
+            "172.17.0.1 (Docker's default bridge gateway). If Postgres "
+            "still isn't reachable, set POSTGRES_HOST explicitly."
+        )
+        return '172.17.0.1'
+    return '127.0.0.1'
+
+
 def _pg_connection_kwargs() -> Dict[str, str]:
     """Read the separate POSTGRES_* env vars and return connection kwargs
     for psycopg2. These are the SAME names the official Postgres Docker
@@ -61,6 +117,12 @@ def _pg_connection_kwargs() -> Dict[str, str]:
     and the app read from one consistent set of names. Passed as separate
     kwargs (not assembled into a URL), so passwords never need URL-encoding
     no matter what characters they contain.
+
+    POSTGRES_HOST supports a special value: "auto" (also the default when
+    the var is unset), which detects bare metal vs. Docker vs. Podman at
+    startup and picks the right host automatically — see
+    _detect_postgres_host(). Set POSTGRES_HOST to an explicit hostname/IP
+    to skip detection entirely, e.g. when Postgres runs on a remote VPS.
     """
     user = os.getenv('POSTGRES_USER')
     password = os.getenv('POSTGRES_PASSWORD')
@@ -73,13 +135,21 @@ def _pg_connection_kwargs() -> Dict[str, str]:
             f"Missing required env var(s): {', '.join(missing)}. "
             "Set POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB in your .env "
             "(POSTGRES_HOST and POSTGRES_PORT are optional, defaulting to "
-            "127.0.0.1:5432)."
+            "auto-detection and 5432)."
         )
+
+    host_setting = os.getenv('POSTGRES_HOST', 'auto').strip()
+    if host_setting.lower() == 'auto' or not host_setting:
+        host = _detect_postgres_host()
+        logger.info(f"POSTGRES_HOST=auto -> detected '{host}'")
+    else:
+        host = host_setting
+
     return {
         'user': user,
         'password': password,
         'dbname': db,
-        'host': os.getenv('POSTGRES_HOST', '127.0.0.1'),
+        'host': host,
         'port': os.getenv('POSTGRES_PORT', '5432'),
     }
 

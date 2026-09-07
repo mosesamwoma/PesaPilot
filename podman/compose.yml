@@ -22,11 +22,14 @@ services:
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
 
-      # PostgreSQL runs separately on the host
+      # PostgreSQL runs separately on the host. POSTGRES_HOST=auto lets
+      # src/database.py detect Podman (via /run/.containerenv) and
+      # resolve host.containers.internal itself — Podman wires that
+      # hostname up automatically, no extra_hosts entry needed.
       - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
       - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
-      - POSTGRES_HOST=${POSTGRES_HOST:-host.containers.internal}
+      - POSTGRES_HOST=${POSTGRES_HOST:-auto}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
 
       # Groq

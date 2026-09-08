@@ -142,8 +142,9 @@ Passwords with special characters (`@`, `:`, `/`, `#`, etc.) are safe to use as-
 | `BAILEYS_AUTH_PATH` | `./.baileys_auth` | Where Baileys session files are written |
 | `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log verbosity |
 | `WWEBJS_AUTH_PATH` | `./.wwebjs_auth` | Where whatsapp-web.js session files are written |
+| `LLM_REASONING_EFFORT` | `low` | Reasoning effort for `openai/gpt-oss-*` models — `low`, `medium`, or `high` |
 
-> `.env.example` also lists `APP_ENV`, `DEBUG`, `SECRET_KEY`, `LOG_LEVEL`, `DB_MAX_CONNECTIONS`, `DB_CONNECTION_TIMEOUT`, `DB_QUERY_LIMIT`, `BATCH_SIZE`, `CACHE_TTL`, and `API_TIMEOUT`. None of these are currently read anywhere in the codebase — they're placeholders for future use and safe to ignore.
+> `.env.example` also lists `APP_ENV`, `DEBUG`, `SECRET_KEY`, `LOG_LEVEL`, `CACHE_TTL`, and `API_TIMEOUT` (plus commented-out `DB_MAX_CONNECTIONS`/`DB_CONNECTION_TIMEOUT` notes). None of these are currently read anywhere in the codebase — they're placeholders for future use and safe to ignore.
 
 ---
 
@@ -279,7 +280,6 @@ There is no `setup`, `load`, `ask`, or `dashboard` subcommand. For loading data 
 
 ## The Forecast page
 
-Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spending forward 7 or 30 days.
 Uses [Meta Prophet](https://facebook.github.io/prophet/) to project daily spending forward 7 or 30 days.
 
 ![Forecast view](assets/3.png)

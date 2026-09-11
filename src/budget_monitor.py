@@ -1,4 +1,3 @@
-# src/budget_monitor.py
 """
 Budget goals + proactive alert engine for PesaPilot.
 
@@ -22,14 +21,9 @@ from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-ALERT_WARNING = "warning"   # crossed alert_threshold_pct but still under 100%
-ALERT_OVER = "over"         # crossed 100% of the budget limit
+ALERT_WARNING = "warning"   
+ALERT_OVER = "over"         
 
-# Alert ordering matters: if a user is already over-budget we don't also
-# want to separately ping them for "near" the same period — over supersedes
-# warning for a given check, but each is tracked independently in
-# budget_alerts so a category that later also breaches 100% still gets its
-# own distinct "over" ping even after a "warning" ping already fired.
 
 
 def period_start_for(period: str, today: date = None) -> date:
@@ -39,8 +33,7 @@ def period_start_for(period: str, today: date = None) -> date:
     today = today or date.today()
     period = (period or "monthly").lower()
     if period == "weekly":
-        return today - timedelta(days=today.weekday())  # Monday
-    # default: monthly
+        return today - timedelta(days=today.weekday())  
     return today.replace(day=1)
 
 
@@ -75,7 +68,6 @@ def evaluate_budgets(
         pct_used = (spent / limit_amount) * 100
         p_start = period_start_for(period).isoformat()
 
-        # Over-budget takes priority and is checked first.
         if pct_used >= 100:
             key = (budget_id, p_start, ALERT_OVER)
             if key not in already_alerted:
@@ -89,7 +81,7 @@ def evaluate_budgets(
                     "amount_spent": spent,
                     "pct_used": round(pct_used, 1),
                 })
-            continue  # don't also fire a "warning" once already over
+            continue  
 
         if pct_used >= threshold_pct:
             key = (budget_id, p_start, ALERT_WARNING)

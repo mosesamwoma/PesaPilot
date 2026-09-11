@@ -1,4 +1,3 @@
-# src/parse_sms.py - COMPLETE FINAL VERSION (recipient extraction fixed)
 import re
 import pandas as pd
 from lxml import etree
@@ -21,13 +20,6 @@ class MpesaParser:
         'business': ['till', 'lipa na mpesa', 'paybill', 'buy goods', 'pochi la biashara', 'pochi'],
     }
 
-    # ------------------------------------------------------------------
-    # Recipient extraction — see _extract_recipient() below for the fix.
-    # A trigger phrase ("paid to", "from", etc.) marks where the name
-    # starts; NAME_BOUNDARY_RE then finds where it *ends* by looking for
-    # whichever comes first: the word "on"/"for", a phone number/account
-    # digit run, "New M-PESA...", a period/comma, or end of string.
-    # ------------------------------------------------------------------
     _RECIPIENT_TRIGGERS = [
         r'paid to\s+',
         r'sent to\s+',
@@ -42,7 +34,7 @@ class MpesaParser:
         r'(?=\s+(?:on\b|for\b|New\s+M-?PESA\b)|\s+[\d\*]{3,}|[.,]|$)',
         re.IGNORECASE,
     )
-    _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')  # strips "410650 - " agent codes
+    _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')  
 
     def parse_xml_to_csv(self, xml_path: str, output_path: str = None) -> pd.DataFrame:
         logger.info(f"Parsing XML: {xml_path}")
@@ -94,11 +86,6 @@ class MpesaParser:
             transaction_cost = self._extract_transaction_cost(body)
             tx_id = self._extract_transaction_id(body)
             if tx_id is None:
-                # Cancellation notices and a few other Safaricom system SMS
-                # carry no M-Pesa code at all — 'transaction_id' is NOT NULL
-                # UNIQUE in the DB, so a row with no ID can't be stored or
-                # deduped. Skip it here rather than let a single null value
-                # fail the whole insert batch it lands in downstream.
                 logger.debug(f"Skipping SMS with no transaction ID: {body[:60]!r}")
                 return None
             phone = self._extract_phone(body) or address
@@ -173,13 +160,12 @@ class MpesaParser:
             m = re.search(p, body, re.IGNORECASE)
             if m:
                 value = float(m.group(1).replace(',', ''))
-                # If the first match is 0.00 keep scanning — could be a quirky SMS
                 if value == 0.0:
                     for m2 in re.finditer(p, body, re.IGNORECASE):
                         v2 = float(m2.group(1).replace(',', ''))
                         if v2 > 0:
                             return v2
-                    return value  # all amounts are 0 — still return it
+                    return value  
                 return value
         return None
 
@@ -212,9 +198,7 @@ class MpesaParser:
         and optionally 'is', then a Ksh amount.
         """
         patterns = [
-            # Covers "New M-PESA balance is Ksh..." and "New balance is Ksh..."
             r'(?:new\s+)?(?:m-?pesa\s+)?balance\s+is\s+Ksh\s?([\d,]+\.?\d*)',
-            # Covers "balance: Ksh..." or "balance Ksh..."
             r'balance[:\s]+Ksh\s?([\d,]+\.?\d*)',
         ]
         for p in patterns:
@@ -261,7 +245,7 @@ class MpesaParser:
             if not m:
                 continue
             tail = body[m.end():]
-            tail = self._AGENT_PREFIX_RE.sub('', tail)  # drop "410650 - " agent prefixes
+            tail = self._AGENT_PREFIX_RE.sub('', tail)  
             name_match = self._NAME_BOUNDARY_RE.match(tail)
             if not name_match:
                 continue

@@ -1,4 +1,3 @@
-# src/groq_client.py
 import os
 import re
 import hashlib
@@ -42,9 +41,6 @@ STYLE RULES:
 - Every response should open with one emoji that sets the tone and close with one emoji next to the final next-step line.
 """
 
-# ─────────────────────────────────────────────────────────────
-# Simple in-memory cache
-# ─────────────────────────────────────────────────────────────
 class _ResponseCache:
     """
     Lightweight TTL cache keyed on a SHA-256 hash of (system, user).
@@ -57,7 +53,7 @@ class _ResponseCache:
     """
 
     def __init__(self):
-        self._store: dict = {}   # key → {'response': str, 'expires_at': float}
+        self._store: dict = {}   
 
     @staticmethod
     def _key(system: str, user: str) -> str:
@@ -89,28 +85,20 @@ class _ResponseCache:
 
     @property
     def size(self) -> int:
-        # Prune expired entries while we're here
         now = time.time()
         self._store = {k: v for k, v in self._store.items() if now < v['expires_at']}
         return len(self._store)
 
 
-# Module-level singleton — shared across all GroqClient instances
 _cache = _ResponseCache()
 
 
-# ─────────────────────────────────────────────────────────────
-# TTL constants (seconds)
-# ─────────────────────────────────────────────────────────────
-TTL_SQL        = 3600   # 1 hour  — SQL for the same question won't change
-TTL_INSIGHTS   =  600   # 10 min  — dashboard insights
-TTL_ADVICE     =  900   # 15 min  — budget / investment advice
-TTL_CHAT       =  300   #  5 min  — general conversational answers
+TTL_SQL        = 3600   
+TTL_INSIGHTS   =  600   
+TTL_ADVICE     =  900   
+TTL_CHAT       =  300   
 
 
-# ─────────────────────────────────────────────────────────────
-# SQL safety guard (defense-in-depth for LLM-generated SQL)
-# ─────────────────────────────────────────────────────────────
 _FORBIDDEN_SQL_KEYWORDS = re.compile(
     r'\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE|'
     r'EXEC|EXECUTE|CREATE|ATTACH|REPLACE|MERGE|CALL)\b',
@@ -135,7 +123,7 @@ def is_safe_select_sql(sql: str) -> bool:
     if not cleaned.upper().startswith('SELECT'):
         return False
     body = cleaned.rstrip(';').strip()
-    if ';' in body:                          # stacked statements
+    if ';' in body:                          
         return False
     if _FORBIDDEN_SQL_KEYWORDS.search(body):
         return False
@@ -149,46 +137,18 @@ class GroqClient:
             raise ValueError("GROQ_API_KEY must be set")
         self.client = Groq(api_key=api_key)
 
-        # Two model tiers:
-        #   FAST  -> chat / generate_insights (speed matters, lower stakes)
-        #   SMART -> budget_plan / investment_advice / analyze_results / generate_sql
-        #            (numeric reasoning + advice quality matters more than latency)
-        # NOTE: llama-3.1-8b-instant and llama-3.3-70b-versatile were deprecated
-        # by Groq (announced June 17, 2026). Defaults below use Groq's recommended
-        # replacements: openai/gpt-oss-20b (fast tier) and openai/gpt-oss-120b (smart tier).
         self.model_fast = os.getenv('LLM_MODEL_FAST', 'openai/gpt-oss-20b')
         self.model_smart = os.getenv('LLM_MODEL_SMART', 'openai/gpt-oss-120b')
 
-        # Back-compat: if someone still sets LLM_MODEL, use it as the fast default
         legacy = os.getenv('LLM_MODEL')
         if legacy:
             self.model_fast = legacy
 
         self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))
 
-        # NOTE ON TRUNCATED OUTPUT (budget plans / investment advice getting
-        # cut off mid-sentence):
-        # openai/gpt-oss-20b and openai/gpt-oss-120b are REASONING models.
-        # By default Groq has them emit a hidden "reasoning" pass before the
-        # visible answer, and that reasoning is billed against the SAME
-        # max_tokens budget as the answer itself. At the old default of 600
-        # tokens, the model could burn most (or all) of the budget on
-        # reasoning for a 4-part structured answer (budget_plan /
-        # investment_advice), leaving the visible reply cut off partway
-        # through. Fixes:
-        #   1. Raise the default token budget so there's headroom for both
-        #      the reasoning pass and the full visible answer.
-        #   2. Ask Groq for low reasoning effort on these calls, since we
-        #      don't need deep chain-of-thought for templated financial
-        #      advice — this keeps most of the budget for the actual answer.
-        #   3. Log (and no longer silently swallow) truncated responses so
-        #      this is visible in the logs instead of just "half an answer".
         self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 1536))
         self.reasoning_effort = os.getenv('LLM_REASONING_EFFORT', 'low')
 
-    # ------------------------------------------------------------------
-    # Internal: raw API call (no caching here — callers decide TTL)
-    # ------------------------------------------------------------------
     def _chat(self, system: str, user: str, model: str = None, timeout: int = 20,
               max_tokens: int = None) -> str:
         resolved_model = model or self.model_fast
@@ -207,10 +167,6 @@ class GroqClient:
             content = (choice.message.content or "").strip()
 
             if choice.finish_reason == 'length':
-                # The model ran out of tokens before finishing — this is the
-                # exact failure mode behind "output gets cut off". Log it
-                # loudly so it's diagnosable instead of silently shipping a
-                # half-finished answer.
                 logger.warning(
                     f"Groq response TRUNCATED (finish_reason=length, "
                     f"model={resolved_model}, max_tokens={max_tokens or self.max_tokens}, "
@@ -222,22 +178,16 @@ class GroqClient:
             logger.error(f"Groq API error (model={resolved_model}): {e}")
             return ""
 
-    # ------------------------------------------------------------------
-    # Internal: cache-aware wrapper
-    # ------------------------------------------------------------------
     def _cached_chat(self, system: str, user: str, ttl: int, model: str = None,
                       max_tokens: int = None) -> str:
         cached = _cache.get(system, user)
         if cached is not None:
             return cached
         response = self._chat(system, user, model=model, max_tokens=max_tokens)
-        if response:                          # only cache successful responses
+        if response:                          
             _cache.set(system, user, response, ttl=ttl)
         return response
 
-    # ------------------------------------------------------------------
-    # Public: cache invalidation (call after inserting new transactions)
-    # ------------------------------------------------------------------
     @staticmethod
     def invalidate_cache():
         """Clear all cached responses. Call whenever new transactions are added."""
@@ -248,9 +198,6 @@ class GroqClient:
         """Return number of live (non-expired) cache entries."""
         return _cache.size
 
-    # ------------------------------------------------------------------
-    # API methods
-    # ------------------------------------------------------------------
     def generate_sql(self, question: str, schema: str, days: int = None, row_limit: int = None) -> str:
         """days=None and row_limit=None (the defaults) give the generated query
         access to the user's ENTIRE transaction history with no row cap."""
@@ -311,13 +258,6 @@ Answer the user's question conversationally and helpfully. Apply Rules 1-7 where
         user = f"Financial context:\n{context}\n\nQuestion: {question}" if context else question
         return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
 
-    # ------------------------------------------------------------------
-    # DYNAMIC CHARTS (NEW): turn a free-text chart request into a JSON spec
-    # for src/chart_generator.py. Short TTL (same bucket as general chat)
-    # since the spec depends on "today" and any relative dates the user
-    # mentions ("last week" shouldn't still resolve to last week's dates
-    # an hour into next week).
-    # ------------------------------------------------------------------
     def generate_chart_spec(self, description: str, system_prompt: str) -> str:
         """Returns raw JSON text (see src/chart_generator.py for the schema
         and parsing/validation) describing how to build the requested chart."""
@@ -347,7 +287,6 @@ Never mention Fuliza or name a specific bank/provider. Apply Rules 1-7. Max 220 
         user = f"Financial context:\n{context}" if context else "No transaction context available — ask one quick question about their monthly surplus, then give a general Kenyan investment framework (MMF, T-Bills, Sacco) anyway."
         return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart, max_tokens=1800)
 
-    # ── FORECAST (NEW) ─────────────────────────────────────────────────────
     def generate_forecast_insights(self, forecast_data: dict) -> str:
         """Turn a Prophet forecast result (see src/forecasting.py) into a short,
         plain-English explanation — clearly framed as a projection, not a fact."""
@@ -365,9 +304,7 @@ You are explaining a {horizon}-day spending FORECAST produced by a statistical m
             f"Based on {forecast_data.get('history_days', 0)} days of transaction history."
         )
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
-    # ── END FORECAST ───────────────────────────────────────────────────────
 
-    # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
     def generate_anomaly_insights(self, anomalies: list) -> str:
         """Explain a batch of ML-flagged unusual transactions (from
         src/anomaly_detector.py's per-category IsolationForest, not a
@@ -386,9 +323,7 @@ You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC
         ]
         user = "Flagged transactions:\n" + "\n".join(lines)
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
-    # ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────
 
-    # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────
     def budget_alert_message(self, alert: dict) -> str:
         """Turn one due budget alert (see src/budget_monitor.py) into a
         short, proactive WhatsApp ping. Kept short since this is pushed
@@ -415,12 +350,9 @@ You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the use
         if result:
             return result
 
-        # Fallback if the LLM call fails — a budget alert should never
-        # silently disappear just because Groq timed out.
         icon = "🚨" if level == "over" else "⚠️"
         verb = "gone over" if level == "over" else "is close to"
         return (
             f"{icon} Budget check: your {category} spending {verb} its {period} limit — "
             f"KES {spent:,.0f} of KES {limit:,.0f} ({pct}%)."
         )
-    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────

@@ -36,28 +36,21 @@ if not WHATSAPP_PIN:
 
 DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC']
 
-# ── FORECAST (NEW) ─────────────────────────────────────────────────────────
 FORECAST_KEYWORDS = [
     'forecast', 'spending prediction', 'predict my spending', 'spending forecast',
     'projected spending', 'predict spending', 'future spending',
 ]
-# ── END FORECAST ───────────────────────────────────────────────────────────
 
-# ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────────
 ANOMALY_KEYWORDS = [
     'anomaly', 'anomalies', 'unusual spending', 'unusual transaction', 'weird transaction',
     'strange transaction', 'suspicious transaction', 'flagged transaction', 'odd spending',
     'out of pattern', 'is anything unusual',
 ]
-# ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────────
 
-# ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────────
 BUDGET_STATUS_KEYWORDS = [
     'my budgets', 'budget status', 'how are my budgets', 'budget check',
     'check my budget', 'am i over budget', 'am i within budget', 'budget progress',
 ]
-# Matches things like: "set budget food 5000", "set budget for food to 5000",
-# "budget limit transport 3000 weekly", "set food budget 5,000"
 SET_BUDGET_PATTERN = re.compile(
     r'(?:'
         r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
@@ -69,7 +62,6 @@ SET_BUDGET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _HAS_DIGIT = re.compile(r'\d')
-# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
 
 class QuestionRequest(BaseModel):
     question: str
@@ -88,7 +80,6 @@ class ParseSMSResponse(BaseModel):
     summary: str
     error: Optional[str] = None
 
-# ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────────
 class SetBudgetRequest(BaseModel):
     category: str
     limit_amount: float
@@ -98,7 +89,6 @@ class SetBudgetRequest(BaseModel):
 class BudgetAlertsResponse(BaseModel):
     alerts: list
     count: int
-# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
 
 def is_safe_question(question: str) -> bool:
     question_upper = question.upper()
@@ -211,7 +201,6 @@ def extract_category_filter(question_lower: str) -> Optional[str]:
                 return category
     return None
 
-# ── FORECAST (NEW) ─────────────────────────────────────────────────────────
 def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending Forecast") -> Optional[str]:
     """Render historical spend + forecast spend + confidence band as a single
     line chart, in the same matplotlib style as the other WhatsApp charts."""
@@ -256,18 +245,9 @@ def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
     if 'week' in question_lower or re.search(r'\b7\b', question_lower):
         return 7
     return default
-# ── END FORECAST ───────────────────────────────────────────────────────────
 
 def generate_daily_summary() -> str:
     try:
-        # Reuse the module-level `analyzer` singleton (created once below,
-        # after this function is defined — Python resolves globals at call
-        # time, so this is safe) instead of constructing a fresh
-        # MpesaAnalyzer() on every call. A fresh instance would open a brand
-        # new Postgres connection pool (PostgresDB.__init__ creates a
-        # ThreadedConnectionPool) that is never closed, leaking a pool of
-        # connections every time this runs (e.g. every /daily-summary
-        # request and the 9PM cron job).
         summary = analyzer.db.get_today_summary()
         
         if not summary or summary.get('total_transactions', 0) == 0:
@@ -312,7 +292,6 @@ async def daily_summary():
     daily cron job (9PM Africa/Nairobi) to push the summary proactively."""
     return {"summary": generate_daily_summary()}
 
-# ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────────
 @app.get("/budget-check", response_model=BudgetAlertsResponse)
 async def budget_check():
     """Evaluates all active budgets against current spend and returns any
@@ -342,15 +321,12 @@ async def create_budget(request: SetBudgetRequest):
     if not result.get('success'):
         raise HTTPException(status_code=400, detail=result.get('error', 'Could not save budget'))
     return result
-# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
 
-# ── SMARTER ANOMALY DETECTION (NEW) ──────────────────────────────────────────
 @app.get("/anomalies")
 async def list_anomalies(days: int = 90):
     """ML-flagged unusual transactions (per-category IsolationForest, see
     src/anomaly_detector.py) for the dashboard or external tools."""
     return analyzer.get_smart_anomalies(days=days, force_refresh=False)
-# ── END SMARTER ANOMALY DETECTION ────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
@@ -382,10 +358,6 @@ async def ask_question(request: QuestionRequest):
         INVEST_KEYWORDS = ['invest', 'investment', 'where to invest', 'grow my money', 'grow savings', 'mmf', 'money market fund',
                             'treasury bill', 't-bill', 'sacco', 'put my money']
 
-        # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────
-        # Checked BEFORE the generic BUDGET_KEYWORDS block below, since "set
-        # budget food 5000" would otherwise just be caught by the word
-        # "budget" and routed to the generic budget-PLAN advice instead.
         if (question_lower.startswith('set budget') or question_lower.startswith('budget limit')
                 or (question_lower.startswith('set ') and 'budget' in question_lower
                     and _HAS_DIGIT.search(question_lower))):
@@ -426,7 +398,6 @@ async def ask_question(request: QuestionRequest):
                     )
                 analysis = "\n".join(lines)
             return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
-        # ── END BUDGET GOALS + ALERTS ──────────────────────────────────────
 
         if any(k in question_lower for k in BUDGET_KEYWORDS):
             logger.info("📋 BUDGET PLAN")
@@ -440,7 +411,6 @@ async def ask_question(request: QuestionRequest):
             analysis = analyzer.groq.investment_advice(context=context)
             return AnalysisResponse(question=request.question, analysis=clean_response(analysis))
 
-        # ── FORECAST (NEW) ─────────────────────────────────────────────────
         if any(k in question_lower for k in FORECAST_KEYWORDS):
             logger.info("🔮 FORECAST")
             horizon = parse_forecast_horizon(question_lower, default=7)
@@ -466,9 +436,7 @@ async def ask_question(request: QuestionRequest):
             analysis = clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else ""))
 
             return AnalysisResponse(question=request.question, analysis=analysis, chart=chart_img)
-        # ── END FORECAST ───────────────────────────────────────────────────
 
-        # ── SMARTER ANOMALY DETECTION (NEW) ──────────────────────────────────
         if any(k in question_lower for k in ANOMALY_KEYWORDS):
             logger.info("🕵️ ML ANOMALY DETECTION")
             anomaly_days = parse_days_from_question(question_lower, default=90)
@@ -488,16 +456,7 @@ async def ask_question(request: QuestionRequest):
 
             analysis = clean_response(header + result.get('insight', ''))
             return AnalysisResponse(question=request.question, analysis=analysis, chart=chart_img)
-        # ── END SMARTER ANOMALY DETECTION ────────────────────────────────────
 
-        # ── DYNAMIC CHARTS (NEW) ─────────────────────────────────────────────
-        # Replaces the old fixed keyword -> hardcoded-chart-function dict
-        # (bar/pie/line/heatmap/merchants/histogram each had their own rigid
-        # matcher and only understood a few fixed day-count windows). Now the
-        # user describes the chart freely — type, dates ("last week", a named
-        # month, a custom range), grouping, category — and an LLM resolves it
-        # into a spec; one renderer in src/chart_generator.py builds any of
-        # bar/line/pie/area/scatter/histogram/heatmap from the same data pull.
         CHART_TRIGGER_WORDS = [
             'bar chart', 'pie chart', 'line chart', 'area chart', 'scatter chart', 'scatter plot',
             'bar', 'pie', 'trend', 'line', 'area', 'heatmap', 'heat map', 'histogram', 'distribution',
@@ -519,7 +478,6 @@ async def ask_question(request: QuestionRequest):
             chart_img = chart_generator.figure_to_base64(fig)
             analysis = f"📊 **{spec.get('title')}**\n\n{chart_result['summary']}\n✅ Chart generated"
             return AnalysisResponse(question=question, analysis=analysis, chart=chart_img)
-        # ── END DYNAMIC CHARTS ───────────────────────────────────────────────
 
         if question_lower == 'help':
             help_text = """🤖 **PesaPilot v2.1 - Your AI Financial Assistant**

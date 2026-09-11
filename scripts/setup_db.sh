@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# scripts/setup_db.sh — set up PesaPilot's PostgreSQL database on its own,
-# outside any container. Run this directly on your VPS or local machine
-# BEFORE starting Docker, Podman, or the app itself.
-#
-# What it does:
-#   1. Installs PostgreSQL via the system package manager, if not already installed
-#   2. Starts and enables the PostgreSQL service
-#   3. Creates the `pesapilot` role and `pesapilot` database (if they don't exist)
-#   4. Applies schema/init_db.sql
-#
-# Usage:
-#   chmod +x scripts/setup_db.sh
-#   ./scripts/setup_db.sh
-#
-# Optional environment overrides:
-#   PGSQL_USER=pesapilot PGSQL_PASSWORD=changeme PGSQL_DB=pesapilot ./scripts/setup_db.sh
-#
 set -euo pipefail
 
 PGSQL_USER="${PGSQL_USER:-pesapilot}"
@@ -39,7 +22,6 @@ if [ ! -f "$SCHEMA_FILE" ]; then
     exit 1
 fi
 
-# ── Step 1: install PostgreSQL if missing ──────────────────────────────
 if command -v psql >/dev/null 2>&1; then
     echo "✅ PostgreSQL client already installed ($(psql --version))"
 else
@@ -49,7 +31,6 @@ else
         sudo apt-get install -y postgresql postgresql-contrib
     elif command -v dnf >/dev/null 2>&1; then
         sudo dnf install -y postgresql-server postgresql-contrib
-        # Fedora/RHEL requires an explicit initdb on first install
         if [ ! -d /var/lib/pgsql/data ] || [ -z "$(ls -A /var/lib/pgsql/data 2>/dev/null)" ]; then
             sudo postgresql-setup --initdb
         fi
@@ -69,7 +50,6 @@ else
     fi
 fi
 
-# ── Step 2: start and enable the service ────────────────────────────────
 echo "==> Ensuring PostgreSQL service is running..."
 if command -v systemctl >/dev/null 2>&1; then
     sudo systemctl enable postgresql --now 2>/dev/null \
@@ -79,14 +59,10 @@ elif command -v brew >/dev/null 2>&1; then
     brew services start postgresql@16 || true
 fi
 
-# Give the service a moment to come up
 sleep 2
 
-# ── Step 3: create role + database (idempotent) ─────────────────────────
 echo "==> Creating role '$PGSQL_USER' and database '$PGSQL_DB' (if they don't exist)..."
 
-# Run as the postgres superuser. On Linux this is the 'postgres' OS user;
-# on macOS/Homebrew, the current user is usually already a superuser.
 run_psql() {
     if id -u postgres >/dev/null 2>&1; then
         sudo -u postgres psql -v ON_ERROR_STOP=0 "$@"
@@ -111,7 +87,6 @@ run_psql -tc "SELECT 1 FROM pg_database WHERE datname = '$PGSQL_DB'" | grep -q 1
 echo "✅ Role and database ready"
 echo
 
-# ── Step 4: apply schema ─────────────────────────────────────────────────
 echo "==> Applying schema/init_db.sql..."
 
 if command -v psql >/dev/null 2>&1; then

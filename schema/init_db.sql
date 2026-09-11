@@ -1,38 +1,7 @@
--- ============================================================
--- PesaPilot database schema (self-hosted PostgreSQL)
--- ============================================================
--- BEGINNER NOTE: this whole script is safe to run more than once.
--- Every CREATE TABLE / CREATE INDEX below uses "IF NOT EXISTS", and
--- every function/view uses "CREATE OR REPLACE" — so re-running it
--- (e.g. after `git pull`) will never error out with "already exists".
---
--- With a local/VPS PostgreSQL install (using your POSTGRES_* .env values):
---   PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f schema/init_db.sql
---
--- You should see: PesaPilot DB ready ✅
--- ============================================================
 
--- Needed for gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- ------------------------------------------------------------
--- MIGRATION (only needed if you already had a `transactions`
--- table from before transaction_cost existed):
---
---   ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_cost DECIMAL(12,2) NOT NULL DEFAULT 0;
---
--- Safe to run more than once. Existing rows backfill to 0 automatically.
--- Re-import your SMS Backup & Restore XML (or resend past SMS through
--- the WhatsApp bot) afterwards to get REAL fee amounts in place of 0,
--- and to refresh any "Unknown" recipient names from the parser fix.
--- ------------------------------------------------------------
 
--- ------------------------------------------------------------
--- 1. transactions
--- Core table. `id` is a UUID — the safe, unique identifier used
--- everywhere else. `transaction_id` is the M-Pesa-provided code,
--- used to prevent the same SMS being inserted twice.
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id TEXT UNIQUE NOT NULL,
@@ -56,10 +25,6 @@ CREATE INDEX IF NOT EXISTS idx_transactions_amount ON transactions(amount);
 CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_category);
 CREATE INDEX IF NOT EXISTS idx_transactions_recipient ON transactions(recipient);
 
--- ------------------------------------------------------------
--- 2. budgets
--- One row per category you want to set a spending limit on.
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS budgets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category TEXT NOT NULL,
@@ -74,11 +39,6 @@ CREATE TABLE IF NOT EXISTS budgets (
 
 CREATE INDEX IF NOT EXISTS idx_budgets_category ON budgets(category);
 
--- ------------------------------------------------------------
--- 3. budget_alerts
--- Log of alerts already sent, so the WhatsApp bot never pings
--- you twice for the same budget breach in the same period.
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS budget_alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -91,13 +51,6 @@ CREATE TABLE IF NOT EXISTS budget_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_budget_alerts_budget ON budget_alerts(budget_id);
 
--- ------------------------------------------------------------
--- 4. spending_baselines
--- One row per merchant_category, holding stats used to judge
--- what's "normal" for THAT category specifically — this is what
--- makes anomaly detection personalized instead of one global
--- threshold across every kind of spending.
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS spending_baselines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     merchant_category TEXT NOT NULL UNIQUE,
@@ -109,11 +62,6 @@ CREATE TABLE IF NOT EXISTS spending_baselines (
     computed_at TIMESTAMP DEFAULT NOW()
 );
 
--- ------------------------------------------------------------
--- 5. anomalies
--- Flagged unusual transactions, saved so they don't need to be
--- recalculated every time the dashboard loads.
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS anomalies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID REFERENCES transactions(id) ON DELETE CASCADE,
@@ -127,11 +75,6 @@ CREATE TABLE IF NOT EXISTS anomalies (
 CREATE INDEX IF NOT EXISTS idx_anomalies_tx ON anomalies(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_anomalies_model ON anomalies(model);
 
--- ------------------------------------------------------------
--- 6. run_query — lets the Python backend (and the "ask AI about
--- your spending" feature) run SELECT-only queries. Only SELECT
--- is allowed: anything else raises an exception before it runs.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION run_query(query TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -148,9 +91,6 @@ BEGIN
 END;
 $$;
 
--- ------------------------------------------------------------
--- 7. daily_summary — spend/income totals per day
--- ------------------------------------------------------------
 CREATE OR REPLACE VIEW daily_summary AS
 SELECT
     DATE(timestamp) as date,
@@ -164,9 +104,6 @@ FROM transactions
 GROUP BY DATE(timestamp)
 ORDER BY date DESC;
 
--- ------------------------------------------------------------
--- 8. category_summary — spend/income totals per category
--- ------------------------------------------------------------
 CREATE OR REPLACE VIEW category_summary AS
 SELECT
     merchant_category,
@@ -179,9 +116,6 @@ FROM transactions
 GROUP BY merchant_category
 ORDER BY total_amount DESC;
 
--- ------------------------------------------------------------
--- 9. budget_status — how much you've spent this period vs. limit
--- ------------------------------------------------------------
 CREATE OR REPLACE VIEW budget_status AS
 SELECT
     b.id as budget_id,
@@ -200,18 +134,7 @@ LEFT JOIN transactions t ON t.merchant_category = b.category
 WHERE b.active = TRUE
 GROUP BY b.id, b.category, b.period, b.limit_amount, b.alert_threshold_pct;
 
--- ============================================================
--- ANALYTICS EXTENSION — window functions + CTEs
--- Everything below is additive: new functions only, nothing
--- above is touched. Safe to re-run (CREATE OR REPLACE FUNCTION
--- throughout).
--- ============================================================
 
--- ------------------------------------------------------------
--- 10. daily_trend_running(days)
--- Running cumulative spend, a 7-day rolling average, and
--- day-over-day change. days = NULL means full history.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION daily_trend_running(days INT DEFAULT NULL)
 RETURNS TABLE (
     day DATE,
@@ -247,12 +170,6 @@ AS $$
     ORDER BY d.day;
 $$;
 
--- ------------------------------------------------------------
--- 11. category_month_trend(months_back)
--- Monthly total per category, per-month rank (ties share a
--- place), and month-over-month % change. months_back = NULL
--- means full history.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION category_month_trend(months_back INT DEFAULT NULL)
 RETURNS TABLE (
     month DATE,
@@ -293,12 +210,6 @@ AS $$
     ORDER BY mc.month DESC, category_rank_in_month;
 $$;
 
--- ------------------------------------------------------------
--- 12. top_merchants_ranked(days, limit_count)
--- DENSE_RANK, each merchant's % share of total spend, and a
--- running cumulative % (a Pareto view — "these N merchants are
--- 80% of spend"). NULL = full history / no limit.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION top_merchants_ranked(days INT DEFAULT NULL, limit_count INT DEFAULT NULL)
 RETURNS TABLE (
     recipient TEXT,
@@ -342,13 +253,6 @@ AS $$
     LIMIT limit_count;
 $$;
 
--- ------------------------------------------------------------
--- 13. detect_category_anomalies(z_threshold, lookback_days)
--- Per-category z-score anomaly detection: mean/stddev computed
--- PER merchant_category, so a KES 3,000 "food" transaction and
--- a KES 3,000 "transport" transaction are judged against
--- different baselines instead of one blended global one.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION detect_category_anomalies(
     z_threshold NUMERIC DEFAULT 2.5,
     lookback_days INT DEFAULT 90
@@ -397,13 +301,6 @@ AS $$
     ORDER BY ABS((sc.amount - sc.category_mean) / NULLIF(sc.category_stddev, 0)) DESC;
 $$;
 
--- ------------------------------------------------------------
--- 14. budget_pace()
--- For every active budget: % of period elapsed, average daily
--- spend so far, a straight-line projection of the full-period
--- spend, % of limit used, and a RANK so the most at-risk budget
--- surfaces first.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION budget_pace()
 RETURNS TABLE (
     budget_id UUID,
@@ -483,13 +380,6 @@ AS $$
     ORDER BY risk_rank;
 $$;
 
--- ------------------------------------------------------------
--- 15. recipient_gaps(days)
--- Days between consecutive transactions to the SAME recipient —
--- good for spotting recurring/subscription-like payments (a
--- merchant whose gaps cluster around ~30 days is probably a
--- monthly bill) without a separate subscriptions table.
--- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION recipient_gaps(days INT DEFAULT NULL)
 RETURNS TABLE (
     recipient TEXT,
@@ -523,7 +413,4 @@ AS $$
     ORDER BY tx.recipient, tx.timestamp;
 $$;
 
--- ------------------------------------------------------------
--- 16. Confirm it worked
--- ------------------------------------------------------------
 SELECT 'PesaPilot DB ready ✅' as status;

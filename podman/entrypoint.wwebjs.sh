@@ -1,10 +1,7 @@
 #!/bin/bash
-# PesaPilot Entrypoint - whatsapp-web.js - Production Ready
-# Works on any server: plain Docker, Docker Compose, VPS, bare-metal, Raspberry Pi.
 
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -15,9 +12,6 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${BLUE}🚀 PesaPilot Startup Sequence${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
 
-# ============================================================
-# STEP 1: DETECT ENVIRONMENT
-# ============================================================
 echo -e "${YELLOW}📋 Step 1: Detecting environment...${NC}"
 
 INTERNAL_IP=$(hostname -i 2>/dev/null | awk '{print $1}')
@@ -27,9 +21,6 @@ fi
 echo -e "${BLUE}   Internal IP: $INTERNAL_IP${NC}"
 echo -e "${BLUE}   Hostname: $(hostname 2>/dev/null || echo unknown)${NC}\n"
 
-# ============================================================
-# STEP 2: VALIDATE ENVIRONMENT VARIABLES
-# ============================================================
 echo -e "${YELLOW}📋 Step 2: Validating environment variables...${NC}"
 
 REQUIRED_VARS=(
@@ -62,36 +53,21 @@ fi
 
 echo -e "${GREEN}✅ All required variables configured${NC}\n"
 
-# ============================================================
-# STEP 2b: VERIFY DATABASE IS REACHABLE
-# ============================================================
 echo -e "${YELLOW}🗄️  Step 2b: Checking database connectivity...${NC}"
 
-# POSTGRES_HOST supports the special value "auto" (also the default when the
-# var is unset/empty) — same contract as src/database.py's _pg_connection_kwargs().
-# This resolves it in bash BEFORE the psycopg2 check below, otherwise the
-# literal string "auto" gets used as a hostname and DNS resolution fails.
 _detect_postgres_host() {
-    # Podman: sets /run/.containerenv and/or container=podman. Resolves
-    # host.containers.internal for every container automatically.
     if [ -f /run/.containerenv ] || [ "$container" = "podman" ]; then
         echo "host.containers.internal"
         return
     fi
-    # Docker: /.dockerenv exists in every container's root filesystem.
     if [ -f /.dockerenv ]; then
         if python -c "import socket; socket.gethostbyname('host.docker.internal')" >/dev/null 2>&1; then
             echo "host.docker.internal"
         else
-            # host.docker.internal didn't resolve (e.g. plain `docker run`
-            # without extra_hosts on Linux) — fall back to the default
-            # bridge network's gateway, which reaches the host on most
-            # Linux installs without any extra config.
             echo "172.17.0.1"
         fi
         return
     fi
-    # Bare metal: no container runtime detected.
     echo "127.0.0.1"
 }
 
@@ -131,14 +107,8 @@ else
     exit 1
 fi
 
-# ============================================================
-# STEP 3: CONFIGURE API URL
-# ============================================================
 echo -e "${YELLOW}🔗 Step 3: Configuring API URL...${NC}"
 
-# If API_URL is explicitly set (e.g. the bot and API run on different hosts/containers),
-# always respect it. Otherwise default to loopback, since both processes run in this
-# same container/host and talk to each other over localhost.
 if [ -n "$API_URL" ]; then
     export API_URL="$API_URL"
     echo -e "${BLUE}   Using API_URL: $API_URL${NC}"
@@ -149,9 +119,6 @@ fi
 
 echo -e "${GREEN}✅ API_URL configured${NC}\n"
 
-# ============================================================
-# STEP 4: CLEANUP CHROME LOCK FILES
-# ============================================================
 echo -e "${YELLOW}🧹 Step 4: Cleaning Chrome lock files...${NC}"
 
 AUTH_PATH="/app/.wwebjs_auth"
@@ -187,7 +154,6 @@ if [ -d "$AUTH_PATH/Default" ]; then
     done
 fi
 
-# Remove any other lock files
 find "$AUTH_PATH" -name "*.lock" -delete 2>/dev/null || true
 find "$AUTH_PATH" -name "*.ldb" -delete 2>/dev/null || true
 
@@ -197,9 +163,6 @@ else
     echo -e "${GREEN}✅ No lock files found (clean state)${NC}\n"
 fi
 
-# ============================================================
-# STEP 5: SET PROPER PERMISSIONS
-# ============================================================
 echo -e "${YELLOW}🔐 Step 5: Setting directory permissions...${NC}"
 
 chmod -R 755 "$AUTH_PATH" 2>/dev/null || true
@@ -207,19 +170,13 @@ chmod -R 755 /app/data 2>/dev/null || true
 
 echo -e "${GREEN}✅ Permissions set${NC}\n"
 
-# ============================================================
-# STEP 6: START FASTAPI SERVER
-# ============================================================
 echo -e "${YELLOW}🐍 Step 6: Starting FastAPI server...${NC}"
 
 cd /app
 
-# Set Python path and run the API module
 export PYTHONPATH=/app:$PYTHONPATH
 
-# Check if whatsapp_api.py exists
 if [ -f "/app/whatsapp/whatsapp_api.py" ]; then
-    # Run as module with proper Python path
     python -m whatsapp.whatsapp_api &
     API_PID=$!
     echo -e "${GREEN}✅ FastAPI started (PID: $API_PID)${NC}"
@@ -229,9 +186,6 @@ else
     exit 1
 fi
 
-# ============================================================
-# STEP 7: WAIT FOR API TO BE READY
-# ============================================================
 echo -e "${BLUE}⏳ Waiting for API to initialize...${NC}"
 
 API_READY=false
@@ -249,18 +203,13 @@ for i in {1..20}; do
     fi
 done
 
-# ============================================================
-# STEP 8: START WHATSAPP BOT
-# ============================================================
 echo -e "${YELLOW}📱 Step 8: Starting WhatsApp Bot...${NC}\n"
 
-# Set environment for bot
 export PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/google-chrome-stable}
 export API_URL=${API_URL}
 
 echo -e "${BLUE}   Bot will use API: $API_URL${NC}\n"
 
-# Try different possible bot paths
 BOT_PATH=""
 if [ -f "/app/whatsapp/whatsapp_bot.js" ]; then
     BOT_PATH="/app/whatsapp/whatsapp_bot.js"
@@ -276,14 +225,10 @@ fi
 
 echo -e "${BLUE}   Bot file: $BOT_PATH${NC}"
 
-# Start the bot
 node "$BOT_PATH" &
 BOT_PID=$!
 echo -e "${GREEN}✅ WhatsApp Bot started (PID: $BOT_PID)${NC}\n"
 
-# ============================================================
-# STEP 9: DISPLAY STATUS
-# ============================================================
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}🚀 PesaPilot is ONLINE and READY${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
@@ -293,15 +238,10 @@ echo -e "${BLUE}   API:  http://0.0.0.0:${API_PORT:-8000}${NC}"
 echo -e "${BLUE}   Bot:  WhatsApp Web (Headless)${NC}"
 echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 
-# ============================================================
-# STEP 10: PROCESS MANAGEMENT AND CLEANUP
-# ============================================================
 
-# Function to handle shutdown gracefully
 cleanup() {
     echo -e "\n${YELLOW}🛑 Shutting down gracefully...${NC}"
 
-    # Kill API
     if kill -0 $API_PID 2>/dev/null; then
         echo -e "${BLUE}   Stopping FastAPI (PID: $API_PID)...${NC}"
         kill -TERM $API_PID 2>/dev/null || true
@@ -309,7 +249,6 @@ cleanup() {
         echo -e "${GREEN}   ✅ FastAPI stopped${NC}"
     fi
 
-    # Kill Bot
     if kill -0 $BOT_PID 2>/dev/null; then
         echo -e "${BLUE}   Stopping WhatsApp Bot (PID: $BOT_PID)...${NC}"
         kill -TERM $BOT_PID 2>/dev/null || true
@@ -321,17 +260,13 @@ cleanup() {
     exit 0
 }
 
-# Set trap for SIGTERM and SIGINT
 trap cleanup SIGTERM SIGINT
 
-# Wait for both processes
 wait -n
 
-# If one dies, kill the other and exit
 echo -e "${RED}❌ A process exited unexpectedly${NC}"
 echo -e "${RED}   API PID: $API_PID, Bot PID: $BOT_PID${NC}"
 
-# Kill both processes
 kill -TERM $API_PID 2>/dev/null || true
 kill -TERM $BOT_PID 2>/dev/null || true
 wait 2>/dev/null || true

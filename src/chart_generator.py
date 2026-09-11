@@ -1,4 +1,3 @@
-# src/chart_generator.py
 """
 Dynamic, natural-language-driven chart generation for PesaPilot.
 
@@ -63,8 +62,6 @@ DEFAULT_SPEC: Dict[str, Any] = {
     "title": None,
 }
 
-# Transaction `type` values that represent money leaving the account —
-# matches the convention used throughout src/database.py and src/analyzer.py.
 _SPENDING_TYPES = ('debit', 'payment', 'withdrawal', 'transfer', 'airtime')
 
 
@@ -72,9 +69,6 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-# ------------------------------------------------------------------
-# Step 1: turn free text into a structured, validated chart spec
-# ------------------------------------------------------------------
 
 def _spec_system_prompt() -> str:
     return f"""You convert a user's natural-language chart request into STRICT JSON describing
@@ -135,8 +129,6 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
         logger.warning(f"Chart spec parse failed ({e!r}); raw={raw[:200]!r}. Using heuristic fallback.")
         spec.update(_heuristic_spec(description))
 
-    # ── sanitize every field so a bad/partial LLM response can never crash
-    #    the renderer or query builder downstream ──
     if spec.get("chart_type") not in CHART_TYPES:
         spec["chart_type"] = "bar"
     if spec.get("metric") not in METRICS:
@@ -145,11 +137,6 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
         spec["group_by"] = None if spec["chart_type"] == "histogram" else "merchant_category"
     if spec.get("transaction_type") not in TRANSACTION_TYPES:
         spec["transaction_type"] = "spending"
-    # A histogram of `metric='count'` has nothing to plot — every row
-    # contributes exactly 1, so the "distribution" would just be a single
-    # spike at x=1. Distributions only make sense for a real KES amount, so
-    # fall back to 'amount' (matches the LLM prompt's own framing of
-    # histograms as "how transaction sizes are spread out").
     if spec.get("chart_type") == "histogram" and spec.get("metric") == "count":
         spec["metric"] = "amount"
     try:
@@ -248,9 +235,6 @@ def _default_title(spec: Dict[str, Any]) -> str:
     return f"{metric_label} by {group_label}{cat}{period}".strip()
 
 
-# ------------------------------------------------------------------
-# Step 2: pull exactly the data the spec needs
-# ------------------------------------------------------------------
 
 def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     rows = db.get_transactions_range(
@@ -269,14 +253,13 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     df['transaction_cost'] = pd.to_numeric(df.get('transaction_cost'), errors='coerce').fillna(0)
     df['merchant_category'] = df.get('merchant_category').fillna('other')
     df['recipient'] = df.get('recipient').fillna('Unknown')
-    df['count'] = 1  # lets metric='count' reuse the same sum-based groupby path everywhere below
+    df['count'] = 1  
 
     ttype = spec.get('transaction_type', 'spending')
     if ttype == 'spending':
         df = df[df['type'].isin(_SPENDING_TYPES)]
     elif ttype == 'income':
         df = df[df['type'] == 'credit']
-    # ttype == 'all' -> no filter
 
     if spec.get('category_filter'):
         df = df[df['merchant_category'].str.lower() == spec['category_filter']]
@@ -288,27 +271,16 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     return df
 
 
-# ------------------------------------------------------------------
-# Step 3: render — seaborn-styled, matplotlib-backed renderer for every
-# chart type. Colors/palettes and the two statistical chart types
-# (histogram, heatmap) lean directly on seaborn; everything else uses
-# matplotlib primitives colored with seaborn palettes for full control
-# over per-bar/per-cell labeling.
-# ------------------------------------------------------------------
 
 _DARK = dict(bg='#0f1117', panel='#1e2130', grid='#2d3250', text='#c8cdd8',
              accent='#00d4aa', accent2='#ff4b6e')
 _LIGHT = dict(bg='white', panel='#fbfbfd', grid='#e0e0e0', text='#333333',
               accent='#2E86AB', accent2='#ff4b6e')
 
-# Seaborn palette names used throughout — chosen to be perceptually uniform
-# (crest/flare/rocket/mako are seaborn's own colormaps, not matplotlib's)
-# and to feel distinct from the flat single-color matplotlib defaults this
-# module used before.
-_PALETTE_CATEGORICAL = 'Set2'      # pie slices — clearly distinct categories
-_PALETTE_SEQUENTIAL = 'crest'      # ranking bars — low → high magnitude
-_PALETTE_HEATMAP = 'rocket_r'      # heatmap cells — reversed so "hot" = high spend
-_PALETTE_SCATTER = 'flare'         # scatter points colored by total spend
+_PALETTE_CATEGORICAL = 'Set2'      
+_PALETTE_SEQUENTIAL = 'crest'      
+_PALETTE_HEATMAP = 'rocket_r'      
+_PALETTE_SCATTER = 'flare'         
 
 
 def _seaborn_rc(theme: dict) -> dict:
@@ -391,12 +363,6 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                     pivot, ax=ax, cmap=_PALETTE_HEATMAP, linewidths=1, linecolor=theme['bg'],
                     cbar_kws={'label': f'{metric_label} (KES)'}, annot=False, square=False,
                 )
-                # Manual annotations (instead of sns.heatmap's annot=True) so
-                # each cell's text color adapts to that EXACT cell's own
-                # rendered color — reading the real colormap+norm off the
-                # QuadMesh (rather than guessing from a fraction of vmax)
-                # means the label stays readable even on a heatmap with a
-                # few very low outlier cells (near-white on 'rocket_r').
                 quadmesh = heat.collections[0]
                 cmap, norm = quadmesh.cmap, quadmesh.norm
                 for i in range(len(pivot.index)):
@@ -405,9 +371,6 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                         if val <= 0:
                             continue
                         r, g, b, _ = cmap(norm(val))
-                        # Perceptual luminance (ITU-R BT.601) — decide black vs
-                        # white text from the actual cell color, not a rough
-                        # value-based guess.
                         luminance = 0.299 * r + 0.587 * g + 0.114 * b
                         text_color = '#111111' if luminance > 0.6 else '#ffffff'
                         ax.text(j + 0.5, i + 0.5, f"{val:,.0f}", ha='center', va='center',
@@ -484,12 +447,6 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                     textprops={'color': theme['text'], 'fontsize': 9}, pctdistance=0.8,
                     wedgeprops={'edgecolor': theme['bg'], 'linewidth': 1.2},
                 )
-                # Slice labels (category names) sit outside the pie on the
-                # figure background, so theme['text'] always reads fine —
-                # but the % labels sit ON the wedge itself, and Set2 mixes
-                # light (yellow) and darker (teal, purple) colors. A single
-                # fixed color is illegible on the light slices, so pick
-                # black/white per-wedge from that wedge's own luminance.
                 for wedge, autotext in zip(wedges, autotexts):
                     r, g, b, _ = wedge.get_facecolor()
                     luminance = 0.299 * r + 0.587 * g + 0.114 * b
@@ -499,7 +456,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 total = grouped.sum()
                 summary = f"{top_label} is the largest share at KES {grouped.iloc[0]:,.0f} ({grouped.iloc[0] / total * 100:.0f}%)."
 
-            else:  # bar (default, also covers "top merchants" / "top recipients" via group_by='recipient')
+            else:  
                 key = group_by or 'merchant_category'
                 grouped = df.groupby(key)[metric].sum().sort_values(ascending=True)
                 grouped = grouped[grouped != 0]
@@ -529,9 +486,6 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
             return None, f"Couldn't build that chart: {e}"
 
 
-# ------------------------------------------------------------------
-# Public entrypoints
-# ------------------------------------------------------------------
 
 def generate_dynamic_chart(analyzer, description: str, dark: bool = True) -> Dict[str, Any]:
     """Full pipeline: free-text description -> spec -> data -> figure.

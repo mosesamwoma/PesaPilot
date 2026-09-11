@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 PesaPilot - Start all services
 """
@@ -8,7 +7,6 @@ import sys
 import signal
 import time
 
-# Colors
 GREEN = '\033[92m'
 RED = '\033[91m'
 BLUE = '\033[94m'
@@ -36,7 +34,6 @@ def start_services():
 
     processes = []
 
-    # Start FastAPI
     print(f"{GREEN}▶ Starting FastAPI server (port 8000)...{RESET}")
     api_cmd = [
         sys.executable, "-m", "uvicorn",
@@ -55,7 +52,6 @@ def start_services():
 
     time.sleep(3)
 
-    # Start Streamlit — dashboard is now at dashboard/app.py
     print(f"{GREEN}▶ Starting Streamlit dashboard (port 8501)...{RESET}")
     st_cmd = [
         sys.executable, "-m", "streamlit", "run",
@@ -120,7 +116,6 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Keep running
     for name, proc in processes:
         try:
             proc.wait()

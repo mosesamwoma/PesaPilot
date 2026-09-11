@@ -1,4 +1,3 @@
-# src/forecasting.py
 """
 Spending Forecasting engine for PesaPilot.
 
@@ -21,18 +20,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Minimum number of distinct days of spending history required before we'll
-# trust Prophet to produce a meaningful forecast.
 MIN_HISTORY_DAYS = 14
 
-# How much spending history (in days) the analyzer should pull when building
-# the daily series that feeds the model.
 TRAIN_HISTORY_DAYS = 180
 
-# How long a trained forecast result stays cached before it can be
-# regenerated. New transactions invalidate the cache immediately via
-# invalidate_cache(), so this TTL is just a safety net for long-idle data.
-CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
+CACHE_TTL_SECONDS = 6 * 60 * 60  
 
 TREND_INCREASING = "Increasing"
 TREND_DECREASING = "Decreasing"
@@ -43,10 +35,6 @@ RISK_MODERATE = "Moderate"
 RISK_HIGH = "High"
 
 
-# ─────────────────────────────────────────────────────────────
-# Lightweight in-memory TTL cache (mirrors the pattern already used by
-# GroqClient's _ResponseCache in src/groq_client.py).
-# ─────────────────────────────────────────────────────────────
 class _ForecastCache:
     """Caches a trained forecast result per (data fingerprint, horizon)."""
 
@@ -84,7 +72,6 @@ class _ForecastCache:
         return len(self._store)
 
 
-# Module-level singleton — shared across all callers, same pattern as Groq's cache.
 _cache = _ForecastCache()
 
 
@@ -98,9 +85,6 @@ def cache_size() -> int:
     return _cache.size
 
 
-# ─────────────────────────────────────────────────────────────
-# Data preparation
-# ─────────────────────────────────────────────────────────────
 def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
     """
     Aggregate raw transaction rows (as returned by SupabaseDB.get_transactions)
@@ -140,8 +124,6 @@ def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
     if daily.empty:
         return daily
 
-    # Zero-fill any missing calendar days so Prophet sees a true daily cadence
-    # rather than treating gaps as a coarser frequency.
     full_range = pd.date_range(daily["date"].min(), daily["date"].max(), freq="D")
     daily = daily.set_index(pd.to_datetime(daily["date"]))["amount"]
     daily = daily.reindex(full_range, fill_value=0.0)
@@ -168,9 +150,6 @@ def _fingerprint(daily_df: pd.DataFrame) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-# ─────────────────────────────────────────────────────────────
-# Trend / risk classification
-# ─────────────────────────────────────────────────────────────
 def _classify_trend(predicted_values: List[float]) -> str:
     """Compare the first half vs second half of the forecast horizon."""
     if len(predicted_values) < 2:
@@ -217,9 +196,6 @@ def _classify_risk(
     return RISK_LOW
 
 
-# ─────────────────────────────────────────────────────────────
-# Public API
-# ─────────────────────────────────────────────────────────────
 def generate_forecast(transactions: List[Dict], horizon_days: int = 7) -> Dict:
     """
     Train (or reuse a cached) Prophet model on daily spending history and
@@ -263,7 +239,6 @@ def generate_forecast(transactions: List[Dict], horizon_days: int = 7) -> Dict:
 
     prophet_df = daily_df.rename(columns={"date": "ds", "amount": "y"}).copy()
     prophet_df["ds"] = pd.to_datetime(prophet_df["ds"])
-    # Spending is non-negative by construction; guard against any artifacts.
     prophet_df["y"] = prophet_df["y"].clip(lower=0.0)
 
     try:

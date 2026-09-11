@@ -349,8 +349,6 @@ class PostgresDB:
         if date_to:
             conditions.append("timestamp < %s")
             try:
-                # date_to is inclusive from the user's point of view ("through
-                # August 31"), so bump to the start of the next day.
                 params.append((datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)).isoformat())
             except ValueError:
                 conditions.pop()

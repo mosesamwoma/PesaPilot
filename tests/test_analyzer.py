@@ -1,4 +1,3 @@
-# tests/test_analyzer.py
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,7 +14,6 @@ def analyzer():
 def groq():
     return GroqClient()
 
-# ── Groq LLM tests ──────────────────────────────────────────────────────────
 
 def test_groq_connection(groq):
     """Groq client initializes"""
@@ -50,7 +48,6 @@ def test_groq_generate_insights(groq):
     assert isinstance(insights, str)
     assert len(insights) > 20
 
-# ── Analyzer pipeline tests ─────────────────────────────────────────────────
 
 def test_analyzer_initializes(analyzer):
     assert analyzer.db is not None

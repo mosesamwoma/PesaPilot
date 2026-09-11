@@ -31,9 +31,6 @@ console.log(`🔗 API URL      : ${API_URL}`);
 console.log(`🌐 Chrome       : ${CHROME_PATH}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
-// ──────────────────────────────────────────────────────────────
-// LOCK FILE CLEANUP
-// ──────────────────────────────────────────────────────────────
 const LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'SingletonTab']);
 
 function cleanupChromeLocks(dir) {
@@ -66,9 +63,6 @@ try {
     console.warn(`⚠️  Pre-launch lock cleanup skipped: ${e.message}\n`);
 }
 
-// ──────────────────────────────────────────────────────────────
-// WHATSAPP CLIENT - FIXED PUPPETEER ARGS
-// ──────────────────────────────────────────────────────────────
 const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: AUTH_PATH,
@@ -122,9 +116,6 @@ const client = new Client({
     }
 });
 
-// ──────────────────────────────────────────────────────────────
-// STARTUP TIMEOUT WATCHDOG
-// ──────────────────────────────────────────────────────────────
 const STARTUP_TIMEOUT_MS = 120 * 1000;
 let startupResolved = false;
 const startupWatchdog = setTimeout(() => {
@@ -137,9 +128,6 @@ const startupWatchdog = setTimeout(() => {
 startupWatchdog.unref();
 let isReady = false;
 
-// ──────────────────────────────────────────────────────────────
-// EVENT HANDLERS
-// ──────────────────────────────────────────────────────────────
 client.on('qr', (qr) => {
     startupResolved = true;
     console.log('\n╔════════════════════════════════════════════════════════╗');
@@ -147,14 +135,12 @@ client.on('qr', (qr) => {
     console.log('║  Settings → Linked Devices → Link a Device             ║');
     console.log('╚════════════════════════════════════════════════════════╝\n');
 
-    // PRIMARY: Render minimal QR code with scale:1 for production logs
     try {
         qrcode.generate(qr, { small: true, scale: 1 });
     } catch (e) {
         console.warn(`⚠️  QR rendering error: ${e.message}`);
     }
 
-    // FALLBACK: QR Server URL for cloud deployments where ASCII fails
     const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
     console.log('\n📱 Or open this link on your phone if QR code above is unclear:');
     console.log(`🔗 ${qrServerUrl}\n`);
@@ -215,10 +201,6 @@ client.on('message', async (message) => {
         console.log(`📝 Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
 
         if (!isAuthorized) {
-            // Not your main (Safaricom) number — don't auto-reply or block.
-            // Let the message sit as a normal WhatsApp chat on this device
-            // (Airtel) so you can read/reply to it yourself. The bot only
-            // auto-responds with analytics for messages from MAIN_NUMBER.
             console.log('👤 Non-main sender — leaving for manual reply');
             return;
         }
@@ -293,9 +275,6 @@ client.on('disconnected', (reason) => {
     console.log('🔄 Attempting to reconnect...\n');
 });
 
-// ──────────────────────────────────────────────────────────────
-// DAILY SUMMARY CRON — 9:00 PM Africa/Nairobi, every day
-// ──────────────────────────────────────────────────────────────
 const mainNumeric = MAIN_NUMBER.replace(/@.*$/, '');
 const DAILY_SUMMARY_CHAT_ID = MAIN_NUMBER.includes('@') ? MAIN_NUMBER : `${mainNumeric}@c.us`;
 
@@ -317,9 +296,6 @@ cron.schedule('0 21 * * *', async () => {
 
 console.log('📅 Daily summary scheduled for 9:00 PM Africa/Nairobi every day\n');
 
-// ──────────────────────────────────────────────────────────────
-// BUDGET ALERT CRON — proactive near/over-budget pings, every 2 hours
-// ──────────────────────────────────────────────────────────────
 cron.schedule('0 */2 * * *', async () => {
     console.log('\n⏰ Running scheduled budget check job...');
     if (!isReady) {

@@ -1,4 +1,3 @@
-# src/anomaly_detector.py
 """
 Smarter anomaly detection engine for PesaPilot.
 
@@ -29,18 +28,10 @@ from sklearn.ensemble import IsolationForest
 
 logger = logging.getLogger(__name__)
 
-# A category needs at least this many historical debit transactions before
-# we trust an IsolationForest trained on it. Below this, per-category ML is
-# too noisy to be meaningful, so we fall back to a robust statistical check
-# (median absolute deviation) instead of pretending we have a model.
 MIN_SAMPLES_FOR_ML = 8
 
-# Expected fraction of outliers IsolationForest should look for within a
-# category's own history. Kept low — anomalies should be rare by definition.
 CONTAMINATION = 0.08
 
-# Fallback threshold for the MAD-based check used on sparse categories.
-# A "modified z-score" (Iglewicz & Hoaglin) above this is flagged.
 MAD_FLAG_THRESHOLD = 3.5
 
 MODEL_NAME = "isolation_forest_v1"
@@ -86,8 +77,6 @@ def _mad_scores(amounts: pd.Series) -> Tuple[pd.Series, float, float]:
     median = amounts.median()
     mad = (amounts - median).abs().median()
     if mad == 0:
-        # Degenerate case (all values identical or near-identical) — avoid
-        # divide-by-zero; nothing is flagged since there's no spread.
         return pd.Series([0.0] * len(amounts), index=amounts.index), median, mad
     modified_z = 0.6745 * (amounts - median).abs() / mad
     return modified_z, median, mad
@@ -166,14 +155,14 @@ def detect_anomalies(transactions: List[Dict]) -> List[Dict]:
                     random_state=42,
                 )
                 model.fit(X)
-                predictions = model.predict(X)          # -1 = outlier
-                raw_scores = model.decision_function(X)  # higher = more normal
+                predictions = model.predict(X)          
+                raw_scores = model.decision_function(X)  
 
                 for i, is_outlier in enumerate(predictions):
                     if is_outlier != -1:
                         continue
                     row = group.iloc[i]
-                    anomaly_score = round(float(-raw_scores[i] * 10), 3)  # flip + scale for readability
+                    anomaly_score = round(float(-raw_scores[i] * 10), 3)  
                     flagged.append({
                         "transaction_id": row["id"],
                         "amount": float(row["amount"]),
@@ -186,8 +175,6 @@ def detect_anomalies(transactions: List[Dict]) -> List[Dict]:
             except Exception as e:
                 logger.error(f"IsolationForest failed for category={category}: {e}")
         else:
-            # Sparse category — not enough history to trust a model, fall
-            # back to a robust statistical check instead of skipping it.
             modified_z, _, _ = _mad_scores(group["amount"])
             for i, z in modified_z.items():
                 if z <= MAD_FLAG_THRESHOLD:

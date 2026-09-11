@@ -1,4 +1,3 @@
-# src/analyzer.py
 import logging
 from typing import Dict, List, Optional
 from src.database import PostgresDB
@@ -39,9 +38,6 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
             "count": len(vals),
         }
 
-    # Group the primary numeric column (prefer 'amount') by the first
-    # categorical column present, so the model gets a ranked breakdown
-    # without needing to sum raw rows itself.
     amount_col = 'amount' if 'amount' in numeric_cols else (numeric_cols[0] if numeric_cols else None)
     for group_col in ('merchant_category', 'recipient', 'type'):
         if group_col in sample and amount_col:
@@ -56,7 +52,7 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
                 agg[f"by_{group_col}"] = [
                     {"key": k, "total": round(v, 2)} for k, v in ranked
                 ]
-            break  # one grouping is enough — keep the payload compact
+            break  
 
     return agg
 
@@ -199,7 +195,6 @@ class MpesaAnalyzer:
             logger.error(f"get_dashboard_data failed: {e}")
             return {}
 
-    # ── FORECAST (NEW) ─────────────────────────────────────────────────────
     def get_forecast(self, horizon_days: int = 7) -> Dict:
         """Generate (or reuse a cached) Prophet spending forecast for the given
         horizon, aggregating the existing transaction history into daily totals,
@@ -235,9 +230,7 @@ class MpesaAnalyzer:
             'horizon_7': self.get_forecast(horizon_days=7),
             'horizon_30': self.get_forecast(horizon_days=30),
         }
-    # ── END FORECAST ───────────────────────────────────────────────────────
 
-    # ── SMARTER ANOMALY DETECTION (NEW) ─────────────────────────────────────
     def get_smart_anomalies(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
         """Run the per-category ML anomaly model (src/anomaly_detector.py)
         over recent transactions, persist the results (baselines + flagged
@@ -260,9 +253,6 @@ class MpesaAnalyzer:
             if flagged:
                 self.db.save_anomalies(flagged)
 
-            # Re-read from the DB (rather than using `flagged` directly) so
-            # the response reflects any human `reviewed` flags already set,
-            # and stays consistent with what the dashboard queries.
             saved = self.db.get_saved_anomalies(days=days, limit=None)
             insight = self.groq.generate_anomaly_insights(saved) if saved else ""
 
@@ -282,9 +272,7 @@ class MpesaAnalyzer:
                 'count': 0,
                 'insight': "Could not run anomaly detection right now. Please try again later.",
             }
-    # ── END SMARTER ANOMALY DETECTION ───────────────────────────────────────
 
-    # ── BUDGET GOALS + ALERTS (NEW) ──────────────────────────────────────────
     def set_budget(self, category: str, limit_amount: float, period: str = 'monthly',
                     alert_threshold_pct: int = 80) -> Dict:
         """Create or update a budget goal for a category."""
@@ -342,9 +330,7 @@ class MpesaAnalyzer:
         except Exception as e:
             logger.error(f"check_budget_alerts failed: {e}")
             return []
-    # ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────
 
-    # ── DYNAMIC CHARTS (NEW) ──────────────────────────────────────────────
     def generate_dynamic_chart(self, description: str, dark: bool = True) -> Dict:
         """Natural-language chart request -> matplotlib figure. Replaces the
         old fixed keyword->hardcoded-chart mapping: the user can describe
@@ -357,7 +343,6 @@ class MpesaAnalyzer:
         sent over WhatsApp."""
         from src import chart_generator
         return chart_generator.generate_dynamic_chart(self, description, dark=dark)
-    # ── END DYNAMIC CHARTS ───────────────────────────────────────────────
 
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
         """Parse a single M-Pesa SMS text and insert it into the database.
@@ -377,28 +362,17 @@ class MpesaAnalyzer:
         df = pd.DataFrame([tx])
         inserted = self.db.insert_transactions(df)
         self._cache.clear()
-        self.groq.invalidate_cache()  # new transactions → stale Groq responses
-        forecasting.invalidate_cache()  # new transactions → stale forecast
+        self.groq.invalidate_cache()  
+        forecasting.invalidate_cache()  
 
         if inserted == 0:
-            # upsert succeeded but row already existed — still a success
             pass
 
         tx_type = tx.get('type', 'debit')
         amount = tx.get('amount', 0) or 0
         recipient = tx.get('recipient', 'Unknown')
-        # tx.get('balance', 0) only falls back to 0 when the key is MISSING —
-        # _extract_balance() returns an explicit None when no "balance is Ksh..."
-        # phrase is found (e.g. airtime/bundle SMS), so the key IS present with
-        # value None and the default above is skipped. Formatting None with
-        # ':,.2f' raises TypeError, which crashed manual SMS entry for any
-        # message without a balance line. `or 0` catches that None case too.
         balance = tx.get('balance', 0) or 0
         category = tx.get('merchant_category', 'other')
-        # transaction_cost is always a real number now (0 when the SMS
-        # stated no fee), so the Fee line is shown for every outgoing
-        # transaction — including "Fee: KES 0.00" — rather than being
-        # hidden whenever there's nothing to report.
         cost = tx.get('transaction_cost') or 0
 
         if tx_type == 'credit':
@@ -429,6 +403,6 @@ class MpesaAnalyzer:
             return 0
         count = self.db.insert_transactions(df)
         self._cache.clear()
-        self.groq.invalidate_cache()  # new transactions → stale Groq responses
-        forecasting.invalidate_cache()  # new transactions → stale forecast
+        self.groq.invalidate_cache()  
+        forecasting.invalidate_cache()  
         return count

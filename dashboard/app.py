@@ -1,4 +1,3 @@
-# dashboard/app.py
 import sys
 import os
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -74,9 +73,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================
-# PLOTLY_DARK – removed xaxis/yaxis to avoid conflicts
-# ============================================================
 PLOTLY_DARK: dict[str, Any] = dict(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
@@ -84,15 +80,6 @@ PLOTLY_DARK: dict[str, Any] = dict(
     margin=dict(l=0, r=0, t=40, b=0),
 )
 
-# ============================================================
-# ASK-AI ROUTING — duplicated from whatsapp/whatsapp_api.py so the
-# dashboard chat understands the same commands as the WhatsApp bot
-# (budget plans, investment advice, forecasts, chart requests, daily/
-# summary shortcuts, help). Charts are re-implemented in Plotly here
-# instead of matplotlib so they match the dashboard's dark theme.
-# Kept intentionally independent of whatsapp_api.py — if you change
-# behavior in one, mirror it here by hand.
-# ============================================================
 
 DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC']
 
@@ -105,21 +92,16 @@ BUDGET_KEYWORDS = ['budget plan', 'budget', 'how should i budget', 'monthly plan
 INVEST_KEYWORDS = ['invest', 'investment', 'where to invest', 'grow my money', 'grow savings', 'mmf', 'money market fund',
                     'treasury bill', 't-bill', 'sacco', 'put my money']
 
-# ── SMARTER ANOMALY DETECTION (kept in sync with whatsapp/whatsapp_api.py) ──
 ANOMALY_KEYWORDS = [
     'anomaly', 'anomalies', 'unusual spending', 'unusual transaction', 'weird transaction',
     'strange transaction', 'suspicious transaction', 'flagged transaction', 'odd spending',
     'out of pattern', 'is anything unusual',
 ]
-# ── END SMARTER ANOMALY DETECTION ────────────────────────────────────────────
 
-# ── BUDGET GOALS + ALERTS (kept in sync with whatsapp/whatsapp_api.py) ──────
 BUDGET_STATUS_KEYWORDS = [
     'my budgets', 'budget status', 'how are my budgets', 'budget check',
     'check my budget', 'am i over budget', 'am i within budget', 'budget progress',
 ]
-# Matches things like: "set budget food 5000", "set budget for food to 5000",
-# "budget limit transport 3000 weekly", "set food budget 5,000"
 SET_BUDGET_PATTERN = re.compile(
     r'(?:'
         r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
@@ -131,7 +113,6 @@ SET_BUDGET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _HAS_DIGIT = re.compile(r'\d')
-# ── END BUDGET GOALS + ALERTS ────────────────────────────────────────────────
 
 CATEGORY_SYNONYMS = {
     'food': ['food', 'groceries', 'grocery', 'eating', 'restaurant', 'eats', 'lunch', 'dinner', 'kibanda', 'mama mboga'],
@@ -147,15 +128,6 @@ CATEGORY_SYNONYMS = {
     'other': ['other', 'miscellaneous', 'misc'],
 }
 
-# ── DYNAMIC CHARTS (NEW) ─────────────────────────────────────────────────
-# Replaces the old fixed keyword -> hardcoded-chart dict. This list is now
-# only used to DETECT that a message is a chart request; once detected, the
-# actual chart type/dates/grouping/metric are resolved by an LLM call in
-# src/chart_generator.py, so the user can describe charts freely instead of
-# being limited to these exact phrases (e.g. "show me a pie chart of my
-# transport spending for August" works even though none of these phrases
-# match it word-for-word — this list just needs to catch that it's a chart
-# request at all).
 CHART_TRIGGER_WORDS = [
     'bar chart', 'pie chart', 'line chart', 'area chart', 'scatter chart', 'scatter plot',
     'bar', 'pie', 'trend', 'line', 'area', 'heatmap', 'heat map', 'histogram', 'distribution',
@@ -166,7 +138,6 @@ CHART_TRIGGER_WORDS = [
     'how did i spend', 'proportion', 'percentage of my spending', 'compare my spending',
     'show me my spending', 'show my spending', 'transaction costs', 'transaction fees',
 ]
-# ── END DYNAMIC CHARTS ───────────────────────────────────────────────────
 
 HELP_TEXT = """🤖 **PesaPilot v2.1 - Your AI Financial Assistant**
 
@@ -326,8 +297,6 @@ def generate_summary_text(analyzer: "MpesaAnalyzer", days: int) -> str:
     return "📭 No transactions in this period. Start tracking now!"
 
 
-# ── Plotly chart builders for the Ask-AI chat (dark-themed equivalents of
-#    the matplotlib charts in whatsapp_api.py) ──────────────────────────────
 
 def chat_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str) -> Optional[go.Figure]:
     if df is None or df.empty or category_col not in df.columns or value_col not in df.columns:
@@ -415,18 +384,7 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
     question_lower = question.lower().strip()
 
-    # NOTE: check order below is intentionally identical to whatsapp_api.py's
-    # /ask endpoint: set-budget → budget-status → budget-plan → invest →
-    # forecast → anomaly → chart → help → daily/today → summary → fallback.
-    # Do not reorder — question_lower substring checks overlap (e.g. 'daily
-    # trend' contains both a chart keyword and 'daily'), so whichever branch
-    # runs first wins, and the bot and dashboard must agree on which one
-    # that is.
 
-    # ── BUDGET GOALS + ALERTS: set a budget ─────────────────────────────────
-    # Checked BEFORE BUDGET_KEYWORDS below, since "set budget food 5000"
-    # would otherwise just be caught by the word "budget" and routed to the
-    # generic budget-PLAN advice instead.
     if (question_lower.startswith('set budget') or question_lower.startswith('budget limit')
             or (question_lower.startswith('set ') and 'budget' in question_lower
                 and _HAS_DIGIT.search(question_lower))):
@@ -448,7 +406,6 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
             content = "❌ Couldn't read that. Try: \"set budget food 5000\" or \"set budget transport 3000 weekly\""
         return {'content': clean_response(content), 'sql': None, 'results': None, 'fig': None}
 
-    # ── BUDGET GOALS + ALERTS: check status ─────────────────────────────────
     if any(k in question_lower for k in BUDGET_STATUS_KEYWORDS):
         logger.info("🎯 BUDGET STATUS")
         status_rows = analyzer.get_budgets_overview()
@@ -468,21 +425,18 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
             content = "\n".join(lines)
         return {'content': clean_response(content), 'sql': None, 'results': None, 'fig': None}
 
-    # ── BUDGET PLAN ───────────────────────────────────────────────────────
     if any(k in question_lower for k in BUDGET_KEYWORDS):
         logger.info("📋 BUDGET PLAN")
         context = analyzer.build_context_string(days=30)
         analysis = analyzer.groq.budget_plan(context=context)
         return {'content': clean_response(analysis), 'sql': None, 'results': None, 'fig': None}
 
-    # ── INVESTMENT ADVICE ─────────────────────────────────────────────────
     if any(k in question_lower for k in INVEST_KEYWORDS):
         logger.info("📈 INVESTMENT ADVICE")
         context = analyzer.build_context_string(days=30)
         analysis = analyzer.groq.investment_advice(context=context)
         return {'content': clean_response(analysis), 'sql': None, 'results': None, 'fig': None}
 
-    # ── FORECAST ──────────────────────────────────────────────────────────
     if any(k in question_lower for k in FORECAST_KEYWORDS):
         logger.info("🔮 FORECAST")
         horizon = parse_forecast_horizon(question_lower, default=7)
@@ -508,7 +462,6 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         content = clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else ""))
         return {'content': content, 'sql': None, 'results': None, 'fig': fig}
 
-    # ── SMARTER ANOMALY DETECTION ────────────────────────────────────────────
     if any(k in question_lower for k in ANOMALY_KEYWORDS):
         logger.info("🕵️ ML ANOMALY DETECTION")
         anomaly_days = parse_days_from_question(question_lower, default=90)
@@ -528,13 +481,7 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
         content = clean_response(header + result.get('insight', ''))
         return {'content': content, 'sql': None, 'results': None, 'fig': fig}
-    # ── END SMARTER ANOMALY DETECTION ────────────────────────────────────────
 
-    # ── DYNAMIC CHARTS (NEW) ─────────────────────────────────────────────────
-    # Replaces the old fixed keyword -> hardcoded-chart-function dict. The
-    # user now describes the chart freely (type, dates, grouping, category)
-    # and an LLM resolves it into a spec; src/chart_generator.py renders any
-    # of bar/line/pie/area/scatter/histogram/heatmap from one data pull.
     if any(w in question_lower for w in CHART_TRIGGER_WORDS):
         logger.info("📊 DYNAMIC CHART")
         chart_result = analyzer.generate_dynamic_chart(question, dark=True)
@@ -545,22 +492,17 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         spec = chart_result['spec']
         content = f"📊 **{spec.get('title')}**\n\n{chart_result['summary']}\n✅ Chart generated"
         return {'content': content, 'sql': None, 'results': None, 'fig': fig}
-    # ── END DYNAMIC CHARTS ───────────────────────────────────────────────────
 
-    # ── HELP ──────────────────────────────────────────────────────────────
     if question_lower == 'help':
         return {'content': HELP_TEXT, 'sql': None, 'results': None, 'fig': None}
 
-    # ── DAILY / TODAY ─────────────────────────────────────────────────────
     if 'daily' in question_lower or 'today' in question_lower:
         return {'content': generate_daily_summary_text(analyzer), 'sql': None, 'results': None, 'fig': None}
 
-    # ── SUMMARY ───────────────────────────────────────────────────────────
     if 'summary' in question_lower:
         days = parse_days_from_question(question_lower, default=30)
         return {'content': generate_summary_text(analyzer, days), 'sql': None, 'results': None, 'fig': None}
 
-    # ── FALLBACK: free-form question → analyzer.ask_question (SQL+AI) ─────
     result = analyzer.ask_question(question)
     if result.get('error'):
         content = f"⚠️ {clean_response(result.get('error', 'Error'))}"
@@ -577,7 +519,6 @@ def main() -> None:
     """Main Streamlit application."""
     analyzer: MpesaAnalyzer = get_analyzer()
 
-    # Sidebar
     with st.sidebar:
         st.markdown("## 💸 PesaPilot")
         st.markdown("*Your M-Pesa Financial Advisor*")
@@ -592,7 +533,6 @@ def main() -> None:
             st.cache_data.clear()
             st.rerun()
 
-    # Load dashboard data
     with st.spinner("Loading your financial data..."):
         data: dict[str, Any] = analyzer.get_dashboard_data(days=days)
 
@@ -603,12 +543,10 @@ def main() -> None:
     recent_txs: list[dict[str, Any]] = data.get('recent_transactions', [])
     insights: str = data.get('insights', '')
 
-    # ── DASHBOARD ──────────────────────────────────────────────────────────
     if page == "📊 Dashboard":
         st.title("📊 Financial Dashboard")
         st.caption(f"Last {days} days · M-Pesa transaction analysis")
 
-        # ── Row 1: metrics ──
         c1, c2, c3, c4 = st.columns(4)
         metrics: list[tuple[Any, str, Any]] = [
             (c1, "Total Transactions", summary.get('total_transactions', 0)),
@@ -627,7 +565,6 @@ def main() -> None:
 
         st.markdown("")
 
-        # ── Row 2: trend + category pie ──
         col_left, col_right = st.columns([1.2, 0.8])
 
         with col_left:
@@ -681,7 +618,6 @@ def main() -> None:
             else:
                 st.info("No category data available.")
 
-        # ── Row 3: top merchants + AI insights ──
         col_l2, col_r2 = st.columns(2)
 
         with col_l2:
@@ -721,7 +657,6 @@ def main() -> None:
             else:
                 st.info("Load transactions to generate insights.")
 
-        # ── Row 4: heatmap + histogram ──
         st.markdown("---")
         col_h1, col_h2 = st.columns(2)
 
@@ -808,7 +743,6 @@ def main() -> None:
             else:
                 st.info("No transaction data available.")
 
-    # ── FORECAST ────────────────────────────────────────────────────────────
     elif page == "🔮 Forecast":
         st.title("🔮 Spending Forecast")
         st.caption("AI-projected spending based on your real transaction history")
@@ -863,7 +797,6 @@ def main() -> None:
 
             st.caption(f"Based on {forecast_data.get('history_days', 0)} days of spending history")
 
-    # ── BUDGETS (NEW) ──────────────────────────────────────────────────────
     elif page == "🎯 Budgets":
         st.title("🎯 Budget Goals")
         st.caption("Set spending limits per category and track progress live")
@@ -941,7 +874,6 @@ def main() -> None:
             else:
                 st.success("✅ Nothing new to report — no budgets have newly crossed their threshold.")
 
-    # ── ASK AI ─────────────────────────────────────────────────────────────
     elif page == "💬 Ask AI":
         st.title("💬 Ask PesaPilot")
         st.caption("Ask anything about your M-Pesa transactions — same commands as the WhatsApp bot")
@@ -976,12 +908,8 @@ def main() -> None:
                 if msg.get('fig') is not None:
                     fig_obj = msg['fig']
                     if hasattr(fig_obj, 'savefig'):
-                        # matplotlib Figure — produced by the dynamic chart
-                        # engine (src/chart_generator.py)
                         st.pyplot(fig_obj, use_container_width=True)
                     else:
-                        # plotly Figure — the anomaly/forecast charts still
-                        # use plotly directly
                         st.plotly_chart(fig_obj, use_container_width=True, key=f"chat_fig_{i}")
                 if msg.get('sql'):
                     with st.expander("View SQL", expanded=False):
@@ -1007,7 +935,6 @@ def main() -> None:
             st.session_state.chat_history.append(bot_msg)
             st.rerun()
 
-    # ── TRANSACTIONS ────────────────────────────────────────────────────────
     elif page == "📋 Transactions":
         st.title("📋 Recent Transactions")
         if recent_txs:
@@ -1038,7 +965,6 @@ def main() -> None:
         else:
             st.info("No transactions found. Load your M-Pesa XML backup to get started.")
 
-    # ── ANOMALIES (ML-based, matches whatsapp_api.py's /anomalies) ──────────
     elif page == "🕵️ Anomalies":
         st.title("🕵️ Unusual Transactions")
         st.caption(

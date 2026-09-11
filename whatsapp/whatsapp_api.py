@@ -147,7 +147,7 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
         ax.set_title(title, fontsize=15, fontweight='bold', pad=20, color='#333333')
         ax.grid(axis='x', alpha=0.3, linestyle='--', color='#cccccc')
 
-        for i, (bar, value) in enumerate(zip(bars, chart_data.values)):
+        for bar, value in zip(bars, chart_data.values, strict=True):
             ax.text(value, bar.get_y() + bar.get_height()/2, f' KES {value:,.0f}',
                    va='center', ha='left', fontsize=10, fontweight='bold', color='#333333')
 
@@ -540,7 +540,7 @@ async def ask_question(request: QuestionRequest):
 **Analytics:**
 - Daily Average: KES {spent / max(days, 1):,.0f}
 - Per Transaction: KES {spent / max(transactions, 1):,.0f}
-- Spending Trend: {'📈 Increasing' if spent > received else '📉 Decreasing'}"""
+- Net Position: {'⚠️ Deficit (spent more than received)' if spent > received else '✅ Surplus (received more than spent)'}"""
             else:
                 analysis = "📭 No transactions in this period. Start tracking now!"
 
@@ -556,11 +556,11 @@ async def ask_question(request: QuestionRequest):
 
         return AnalysisResponse(question=request.question, analysis=analysis, error=result.get('error'))
 
-    except HTTPException as e:
-        raise e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Server error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)[:100]}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)[:100]}") from e
 
 @app.post("/parse-sms", response_model=ParseSMSResponse)
 async def parse_sms(request: ParseSMSRequest):

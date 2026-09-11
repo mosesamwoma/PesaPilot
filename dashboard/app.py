@@ -288,7 +288,7 @@ def generate_summary_text(analyzer: "MpesaAnalyzer", days: int) -> str:
 **Analytics:**
 - Daily Average: KES {spent / max(days, 1):,.0f}
 - Per Transaction: KES {spent / max(transactions, 1):,.0f}
-- Spending Trend: {'📈 Increasing' if spent > received else '📉 Decreasing'}"""
+- Net Position: {'⚠️ Deficit (spent more than received)' if spent > received else '✅ Surplus (received more than spent)'}"""
 
     return "📭 No transactions in this period. Start tracking now!"
 

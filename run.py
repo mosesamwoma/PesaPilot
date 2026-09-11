@@ -111,11 +111,16 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    for name, proc in processes:
-        try:
-            proc.wait()
-        except KeyboardInterrupt:
-            signal_handler(None, None)
+    try:
+        while True:
+            for name, proc in processes:
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    print(f"\n{RED}❌ {name} exited unexpectedly (code {exit_code}){RESET}")
+                    signal_handler(None, None)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        signal_handler(None, None)
 
 if __name__ == "__main__":
     main()

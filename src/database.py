@@ -118,7 +118,7 @@ class PostgresDB:
         try:
             self._pool = pg_pool.ThreadedConnectionPool(1, 10, **conn_kwargs)
         except Exception as e:
-            raise ValueError(f"Could not connect to Postgres: {e}")
+            raise ValueError(f"Could not connect to Postgres: {e}") from e
         logger.info("Postgres connection pool initialized")
 
     def close(self) -> None:

@@ -395,7 +395,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                     textprops={'color': theme['text'], 'fontsize': 9}, pctdistance=0.8,
                     wedgeprops={'edgecolor': theme['bg'], 'linewidth': 1.2},
                 )
-                for wedge, autotext in zip(wedges, autotexts):
+                for wedge, autotext in zip(wedges, autotexts, strict=True):
                     r, g, b, _ = wedge.get_facecolor()
                     luminance = 0.299 * r + 0.587 * g + 0.114 * b
                     autotext.set_color('#111111' if luminance > 0.6 else '#ffffff')
@@ -416,7 +416,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 colors = sns.color_palette(_PALETTE_SEQUENTIAL, n_colors=len(grouped))
                 bars = ax.barh(grouped.index.astype(str), grouped.values, color=colors,
                                 edgecolor=theme['bg'], linewidth=0.6)
-                for bar, val in zip(bars, grouped.values):
+                for bar, val in zip(bars, grouped.values, strict=True):
                     ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" KES {val:,.0f}",
                             va='center', color=theme['text'], fontsize=8)
                 ax.set_xlabel(f'{metric_label} (KES)')

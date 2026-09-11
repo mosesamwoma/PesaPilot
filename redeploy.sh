@@ -31,7 +31,6 @@ rsync -avz --progress \
   --exclude '.git' \
   --exclude 'sessions' \
   --exclude '.baileys_auth' \
-  --exclude 'whatsapp-sessions' \
   --exclude '*.log' \
   --exclude '__pycache__' \
   --exclude '.wwebjs_auth' \

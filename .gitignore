@@ -14,9 +14,9 @@ baileys_error.log
 dist/
 data/raw/*
 data/processed/*
-data/sessions/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/sessions/.gitkeep
 assets/whatsapp.mp4
-sessions/
+sessions/*
+!sessions/.gitkeep

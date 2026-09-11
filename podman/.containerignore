@@ -35,7 +35,6 @@ dist/
 
 # App runtime data that should be created in container
 data/
-whatsapp-sessions/
 sessions/
 .wwebjs_auth/
 .baileys_auth/

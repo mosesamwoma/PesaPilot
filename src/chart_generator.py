@@ -13,11 +13,15 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 import seaborn as sns
 
 logger = logging.getLogger(__name__)
 
-CHART_TYPES = ('bar', 'line', 'pie', 'area', 'scatter', 'histogram', 'heatmap')
+CHART_TYPES = (
+    'bar', 'line', 'pie', 'donut', 'area', 'scatter',
+    'histogram', 'heatmap', 'box', 'violin', 'stacked_bar',
+)
 METRICS = ('amount', 'count', 'transaction_cost')
 GROUP_BY_COLUMNS = ('merchant_category', 'recipient', 'type', 'date', 'weekday', 'hour')
 TRANSACTION_TYPES = ('spending', 'income', 'all')
@@ -35,6 +39,7 @@ DEFAULT_SPEC: Dict[str, Any] = {
 }
 
 _SPENDING_TYPES = ('debit', 'payment', 'withdrawal', 'transfer', 'airtime')
+_NO_DISTRIBUTION_METRIC = ('histogram', 'box', 'violin')
 
 
 def _today() -> str:
@@ -66,10 +71,14 @@ Rules:
 - A month name with no year means the most recent occurrence of that month (this year if it
   hasn't passed yet, otherwise last year).
 - If no chart type is stated, choose the best fit: ranking categories/recipients -> "bar";
-  share/percentage of a whole -> "pie"; a trend across days -> "line" (or "area" if they ask to
-  see it "filled" or "cumulative" or "area chart"); how transaction sizes are spread out ->
-  "histogram"; category-by-weekday patterns -> "heatmap"; relationship between two numeric
-  things, or "correlate" -> "scatter".
+  share/percentage of a whole -> "pie" (or "donut" if they say "donut"/"doughnut"); a trend
+  across days -> "line" (or "area" if they ask to see it "filled" or "cumulative" or "area
+  chart"); how transaction sizes are spread out overall -> "histogram"; how amounts vary or
+  spread WITHIN each category/recipient (variability, consistency, outliers) -> "box"; a
+  richer view of that same per-group spread -> "violin"; category-by-weekday patterns as one
+  cell per combination -> "heatmap"; the same category-by-weekday breakdown as bars piled on
+  top of each other -> "stacked_bar"; relationship between two numeric things, or "correlate"
+  -> "scatter".
 - "spending"/"expenses"/"paid"/"spent" -> transaction_type "spending". "received"/"income"/
   "got paid"/"credited" -> "income". Otherwise "all".
 - "transaction cost"/"fees"/"charges"/"how much m-pesa charged me" mentioned -> metric
@@ -105,7 +114,7 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
         spec["group_by"] = None if spec["chart_type"] == "histogram" else "merchant_category"
     if spec.get("transaction_type") not in TRANSACTION_TYPES:
         spec["transaction_type"] = "spending"
-    if spec.get("chart_type") == "histogram" and spec.get("metric") == "count":
+    if spec.get("chart_type") in _NO_DISTRIBUTION_METRIC and spec.get("metric") == "count":
         spec["metric"] = "amount"
     try:
         spec["top_n"] = max(3, min(30, int(spec.get("top_n") or 12)))
@@ -132,10 +141,19 @@ def _heuristic_spec(description: str) -> Dict[str, Any]:
     def has(word: str) -> bool:
         return re.search(rf'\b{re.escape(word)}\b', text) is not None
 
-    if has('pie'):
+    if has('donut') or has('doughnut'):
+        spec['chart_type'] = 'donut'
+    elif has('pie'):
         spec['chart_type'] = 'pie'
+    elif has('stacked') and ('bar' in text or 'day' in text or 'week' in text):
+        spec['chart_type'] = 'stacked_bar'
     elif has('heatmap') or 'heat map' in text:
         spec['chart_type'] = 'heatmap'
+    elif has('violin'):
+        spec['chart_type'] = 'violin'
+    elif (has('box') or has('boxen') or has('spread') or has('outlier') or has('outliers')
+          or has('variability') or has('consistency')):
+        spec['chart_type'] = 'box'
     elif has('histogram') or has('distribution'):
         spec['chart_type'] = 'histogram'
         spec['group_by'] = None
@@ -188,6 +206,8 @@ def _default_title(spec: Dict[str, Any]) -> str:
         period = f" ({spec['date_from']} to {spec['date_to']})"
     elif spec.get('date_from'):
         period = f" (since {spec['date_from']})"
+    elif spec.get('date_to'):
+        period = f" (until {spec['date_to']})"
     cat = f" — {str(spec['category_filter']).title()}" if spec.get('category_filter') else ""
     group_label = (spec.get('group_by') or 'day').replace('_', ' ')
     return f"{metric_label} by {group_label}{cat}{period}".strip()
@@ -229,14 +249,18 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
 
 
 _DARK = dict(bg='#0f1117', panel='#1e2130', grid='#2d3250', text='#c8cdd8',
-             accent='#00d4aa', accent2='#ff4b6e')
+             accent='#00d4aa', accent2='#ff4b6e', muted='#8892a4')
 _LIGHT = dict(bg='white', panel='#fbfbfd', grid='#e0e0e0', text='#333333',
-              accent='#2E86AB', accent2='#ff4b6e')
+              accent='#2E86AB', accent2='#ff4b6e', muted='#6b7280')
 
 _PALETTE_CATEGORICAL = 'Set2'
 _PALETTE_SEQUENTIAL = 'crest'
 _PALETTE_HEATMAP = 'rocket_r'
 _PALETTE_SCATTER = 'flare'
+_PALETTE_DISTRIBUTION = 'mako'
+_PALETTE_STACKED = 'viridis'
+
+_DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 
 def _seaborn_rc(theme: dict) -> dict:
@@ -251,6 +275,7 @@ def _seaborn_rc(theme: dict) -> dict:
         'grid.color': theme['grid'],
         'grid.alpha': 0.4,
         'font.size': 11,
+        'font.family': 'DejaVu Sans',
     }
 
 
@@ -259,6 +284,53 @@ def _style(ax, fig, theme: dict, title: str) -> None:
     sns.despine(fig=fig, ax=ax, left=False, bottom=False)
     ax.xaxis.label.set_color(theme['text'])
     ax.yaxis.label.set_color(theme['text'])
+
+
+def _watermark(fig, theme: dict) -> None:
+    fig.text(0.995, 0.01, 'PesaPilot', ha='right', va='bottom', fontsize=8,
+              color=theme['muted'], alpha=0.55, style='italic')
+
+
+def _top_groups(df: pd.DataFrame, key: str, metric: str, top_n: int) -> pd.Series:
+    totals = df.groupby(key)[metric].sum().sort_values(ascending=False)
+    return totals[totals != 0].head(top_n)
+
+
+def _pie_like(ax, fig, df, spec, theme, metric, metric_label, title, donut: bool):
+    key = spec['group_by'] or 'merchant_category'
+    grouped = df.groupby(key)[spec['metric']].sum().sort_values(ascending=False)
+    grouped = grouped[grouped > 0]
+    if grouped.empty:
+        return None, "No positive totals to chart for that grouping."
+    top_n = spec.get('top_n', 12)
+    if len(grouped) > top_n:
+        other = grouped.iloc[top_n:].sum()
+        grouped = grouped.iloc[:top_n].copy()
+        if other > 0:
+            grouped['Other'] = other
+    colors = sns.color_palette(_PALETTE_CATEGORICAL, n_colors=len(grouped))
+    wedge_kwargs = dict(edgecolor=theme['bg'], linewidth=1.2)
+    if donut:
+        wedge_kwargs['width'] = 0.42
+    wedges, _labels, autotexts = ax.pie(
+        grouped.values, labels=grouped.index.astype(str), autopct='%1.1f%%', colors=colors,
+        textprops={'color': theme['text'], 'fontsize': 9}, pctdistance=0.8 if not donut else 0.82,
+        wedgeprops=wedge_kwargs, startangle=90,
+    )
+    for wedge, autotext in zip(wedges, autotexts, strict=True):
+        r, g, b, _ = wedge.get_facecolor()
+        luminance = 0.299 * r + 0.587 * g + 0.114 * b
+        autotext.set_color('#111111' if luminance > 0.6 else '#ffffff')
+    if donut:
+        total = grouped.sum()
+        ax.text(0, 0.08, f"KES {total:,.0f}", ha='center', va='center',
+                fontsize=15, fontweight='bold', color=theme['text'])
+        ax.text(0, -0.14, 'total', ha='center', va='center', fontsize=9, color=theme['muted'])
+    ax.set_title(title, fontsize=14, fontweight='bold', color=theme['text'], pad=14)
+    top_label = grouped.index[0]
+    total = grouped.sum()
+    summary = f"{top_label} is the largest share at KES {grouped.iloc[0]:,.0f} ({grouped.iloc[0] / total * 100:.0f}%)."
+    return summary, None
 
 
 def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
@@ -298,11 +370,70 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 summary = (f"Average KES {mean_val:,.0f}, median KES {values.median():,.0f}, "
                            f"across {len(values)} transactions.")
 
+            elif chart_type in ('box', 'violin'):
+                key = group_by or 'merchant_category'
+                totals = _top_groups(df, key, metric, spec.get('top_n', 12) if chart_type == 'box'
+                                      else min(spec.get('top_n', 12), 8))
+                if totals.empty:
+                    plt.close(fig)
+                    return None, "No data to chart for that grouping."
+                sub = df[df[key].isin(totals.index) & (df[metric] > 0)].copy()
+                min_samples = 2 if chart_type == 'box' else 3
+                counts = sub[key].value_counts()
+                valid_keys = counts[counts >= min_samples].index
+                sub = sub[sub[key].isin(valid_keys)]
+                if sub.empty:
+                    plt.close(fig)
+                    return None, "Not enough repeat transactions per group for a spread chart."
+                order = sub.groupby(key)[metric].median().sort_values(ascending=False).index
+                if chart_type == 'box':
+                    sns.boxenplot(data=sub, x=key, y=metric, order=order, hue=key, legend=False,
+                                   ax=ax, palette=_PALETTE_DISTRIBUTION, saturation=0.9,
+                                   line_kws={'color': theme['text'], 'linewidth': 1})
+                else:
+                    sns.violinplot(data=sub, x=key, y=metric, order=order, hue=key, legend=False,
+                                    ax=ax, palette=_PALETTE_DISTRIBUTION, inner='quartile', cut=0,
+                                    density_norm='width', linewidth=1, linecolor=theme['bg'])
+                ax.set_xlabel('')
+                ax.set_ylabel(f'{metric_label} (KES)')
+                ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+                plt.setp(ax.get_xticklabels(), rotation=35, ha='right')
+                _style(ax, fig, theme, title)
+                widest = sub.groupby(key)[metric].std().idxmax()
+                summary = (f"{len(order)} groups compared — {widest} shows the widest spread "
+                           f"in {metric_label.lower()}.")
+
+            elif chart_type == 'stacked_bar':
+                key = group_by or 'merchant_category'
+                pivot = df.pivot_table(values=metric, index=key, columns='weekday',
+                                        aggfunc='sum', fill_value=0)
+                cols = [d for d in _DAY_ORDER if d in pivot.columns]
+                if not cols or pivot.empty or pivot.values.max() == 0:
+                    plt.close(fig)
+                    return None, "Not enough data yet for a stacked breakdown."
+                pivot = pivot[cols]
+                totals = pivot.sum(axis=1).sort_values(ascending=False)
+                top_n = spec.get('top_n', 12)
+                keep = totals.head(top_n).index
+                pivot = pivot.loc[keep].loc[keep[::-1]]
+                colors = sns.color_palette(_PALETTE_STACKED, n_colors=len(cols))
+                left = pd.Series(0.0, index=pivot.index)
+                for day, color in zip(cols, colors):
+                    ax.barh(pivot.index.astype(str), pivot[day], left=left, color=color,
+                            label=day, edgecolor=theme['bg'], linewidth=0.4)
+                    left = left + pivot[day]
+                ax.set_xlabel(f'{metric_label} (KES)')
+                ax.legend(title='Day', bbox_to_anchor=(1.02, 1), loc='upper left',
+                          frameon=False, labelcolor=theme['text'], fontsize=8, title_fontsize=9)
+                _style(ax, fig, theme, title)
+                top_label = totals.index[0]
+                summary = (f"{top_label} leads at KES {totals.iloc[0]:,.0f} across {len(cols)} "
+                           f"weekdays — see the breakdown by day in the legend.")
+
             elif chart_type == 'heatmap':
                 pivot = df.pivot_table(values=metric, index='merchant_category', columns='weekday',
                                         aggfunc='sum', fill_value=0)
-                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                cols = [d for d in day_order if d in pivot.columns]
+                cols = [d for d in _DAY_ORDER if d in pivot.columns]
                 if not cols or pivot.empty or pivot.values.max() == 0:
                     plt.close(fig)
                     return None, "Not enough data yet for a heatmap."
@@ -376,33 +507,12 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 summary = (f"Peak: {peak['date']} at KES {peak[metric]:,.0f}. "
                            f"Average KES {avg_val:,.0f}/day across {len(daily)} days.")
 
-            elif chart_type == 'pie':
-                key = group_by or 'merchant_category'
-                grouped = df.groupby(key)[metric].sum().sort_values(ascending=False)
-                grouped = grouped[grouped > 0]
-                if grouped.empty:
+            elif chart_type in ('pie', 'donut'):
+                summary, error = _pie_like(ax, fig, df, spec, theme, metric, metric_label, title,
+                                            donut=(chart_type == 'donut'))
+                if error:
                     plt.close(fig)
-                    return None, "No positive totals to chart for that grouping."
-                top_n = spec.get('top_n', 12)
-                if len(grouped) > top_n:
-                    other = grouped.iloc[top_n:].sum()
-                    grouped = grouped.iloc[:top_n].copy()
-                    if other > 0:
-                        grouped['Other'] = other
-                colors = sns.color_palette(_PALETTE_CATEGORICAL, n_colors=len(grouped))
-                wedges, _labels, autotexts = ax.pie(
-                    grouped.values, labels=grouped.index.astype(str), autopct='%1.1f%%', colors=colors,
-                    textprops={'color': theme['text'], 'fontsize': 9}, pctdistance=0.8,
-                    wedgeprops={'edgecolor': theme['bg'], 'linewidth': 1.2},
-                )
-                for wedge, autotext in zip(wedges, autotexts, strict=True):
-                    r, g, b, _ = wedge.get_facecolor()
-                    luminance = 0.299 * r + 0.587 * g + 0.114 * b
-                    autotext.set_color('#111111' if luminance > 0.6 else '#ffffff')
-                ax.set_title(title, fontsize=14, fontweight='bold', color=theme['text'], pad=14)
-                top_label = grouped.index[0]
-                total = grouped.sum()
-                summary = f"{top_label} is the largest share at KES {grouped.iloc[0]:,.0f} ({grouped.iloc[0] / total * 100:.0f}%)."
+                    return None, error
 
             else:
                 key = group_by or 'merchant_category'
@@ -415,8 +525,10 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 grouped = grouped.tail(top_n)
                 colors = sns.color_palette(_PALETTE_SEQUENTIAL, n_colors=len(grouped))
                 bars = ax.barh(grouped.index.astype(str), grouped.values, color=colors,
-                                edgecolor=theme['bg'], linewidth=0.6)
+                                edgecolor=theme['bg'], linewidth=0.6, height=0.65)
                 for bar, val in zip(bars, grouped.values, strict=True):
+                    ax.plot(val, bar.get_y() + bar.get_height() / 2, marker='o',
+                            markersize=4, color=theme['accent2'], zorder=3)
                     ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" KES {val:,.0f}",
                             va='center', color=theme['text'], fontsize=8)
                 ax.set_xlabel(f'{metric_label} (KES)')
@@ -426,6 +538,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
 
             fig.patch.set_facecolor(theme['bg'])
             ax.set_facecolor(theme['panel'])
+            _watermark(fig, theme)
             plt.tight_layout()
             return fig, summary
         except Exception as e:

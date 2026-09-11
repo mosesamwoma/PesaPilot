@@ -443,9 +443,12 @@ async def ask_question(request: QuestionRequest):
             return AnalysisResponse(question=request.question, analysis=analysis, chart=chart_img)
 
         CHART_TRIGGER_WORDS = [
-            'bar chart', 'pie chart', 'line chart', 'area chart', 'scatter chart', 'scatter plot',
-            'bar', 'pie', 'trend', 'line', 'area', 'heatmap', 'heat map', 'histogram', 'distribution',
-            'chart', 'graph', 'plot', 'draw', 'diagram', 'visualize', 'visualise',
+            'bar chart', 'pie chart', 'donut chart', 'doughnut chart', 'line chart', 'area chart',
+            'scatter chart', 'scatter plot', 'box plot', 'boxplot', 'boxen plot', 'violin plot',
+            'stacked bar', 'stacked chart',
+            'bar', 'pie', 'donut', 'doughnut', 'trend', 'line', 'area', 'heatmap', 'heat map',
+            'histogram', 'distribution', 'spread', 'variability', 'consistency', 'outlier', 'outliers',
+            'violin', 'stacked', 'chart', 'graph', 'plot', 'draw', 'diagram', 'visualize', 'visualise',
             'over days', 'over time', 'spending over', 'daily trend', 'weekly',
             'merchants', 'top merchants', 'top recipients', 'recipients', 'top spending',
             'breakdown of', 'spending by', 'spending per', 'where did i spend', 'where did my money go',
@@ -469,13 +472,17 @@ async def ask_question(request: QuestionRequest):
 
 📊 **CHARTS** (Describe what you want, in your own words):
   • "Pie chart of my spending by category last month"
+  • "Donut chart of my spending by category"
   • "Bar chart of my top 5 recipients in August"
   • "Show my transport spending as a line chart this year"
   • "How much has M-Pesa charged me in fees this month?"
   • "Heatmap of my spending by day of the week"
+  • "Stacked bar of my spending by category and day"
   • "Distribution of my transaction amounts last 90 days"
-  • Any chart type (bar/pie/line/area/scatter/histogram/heatmap) + any date
-    range (a specific month, "last week", "Q1", exact dates, "all time")
+  • "Spread of my food spending" or "Violin plot of my spending by category"
+  • Any chart type (bar/pie/donut/line/area/scatter/histogram/heatmap/
+    box/violin/stacked bar) + any date range (a specific month, "last
+    week", "Q1", exact dates, "all time")
 
 💬 **QUESTIONS** (Ask naturally):
   • "What did I spend on food?"

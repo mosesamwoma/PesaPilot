@@ -1,4 +1,4 @@
-# src/parse_sms.py - COMPLETE FINAL VERSION
+# src/parse_sms.py - COMPLETE FINAL VERSION (recipient extraction fixed)
 import re
 import pandas as pd
 from lxml import etree
@@ -20,6 +20,29 @@ class MpesaParser:
         'savings': ['sacco', 'chama', 'savings', 'investment', 'shares'],
         'business': ['till', 'lipa na mpesa', 'paybill', 'buy goods', 'pochi la biashara', 'pochi'],
     }
+
+    # ------------------------------------------------------------------
+    # Recipient extraction — see _extract_recipient() below for the fix.
+    # A trigger phrase ("paid to", "from", etc.) marks where the name
+    # starts; NAME_BOUNDARY_RE then finds where it *ends* by looking for
+    # whichever comes first: the word "on"/"for", a phone number/account
+    # digit run, "New M-PESA...", a period/comma, or end of string.
+    # ------------------------------------------------------------------
+    _RECIPIENT_TRIGGERS = [
+        r'paid to\s+',
+        r'sent to\s+',
+        r'pay to\s+',
+        r'received\s+Ksh[\d,.]+\s+from\s+',
+        r'\bfrom\s+',
+        r'\bto\s+',
+        r'\bfor\s+',
+    ]
+    _NAME_BOUNDARY_RE = re.compile(
+        r'([A-Za-z][A-Za-z0-9\s\.\-]{0,58}?)'
+        r'(?=\s+(?:on\b|for\b|New\s+M-?PESA\b)|\s+[\d\*]{3,}|[.,]|$)',
+        re.IGNORECASE,
+    )
+    _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')  # strips "410650 - " agent codes
 
     def parse_xml_to_csv(self, xml_path: str, output_path: str = None) -> pd.DataFrame:
         logger.info(f"Parsing XML: {xml_path}")
@@ -215,22 +238,35 @@ class MpesaParser:
         return 'debit'
 
     def _extract_recipient(self, body: str) -> str:
-        patterns = [
-            # Outgoing: "paid to FRANCIS MULINGE MUNGALI. on"
-            r'(?:paid to|sent to|pay to)\s+([A-Z][A-Z\s\-]+?)(?:\s+on|\s+for|\s+Ksh|\.|$)',
-            # Incoming: "received Ksh200.00 from IM BANK LIMITED- APP on"
-            r'received\s+Ksh[\d,.]+\s+from\s+([A-Z][A-Z\s\-]+?)\s+on\b',
-            # Incoming shorter: "from NAME on"
-            r'\bfrom\s+([A-Z][A-Z\s\-]{2,40}?)\s+on\b',
-            # Generic "to NAME account/for/on"
-            r'to\s+([A-Z][A-Z\s]+?)\s+(?:account|for|on)',
-            # Fallback generic
-            r'(?:to|for)\s+([A-Z][A-Z\s]{2,30})',
-        ]
-        for p in patterns:
-            m = re.search(p, body, re.IGNORECASE)
-            if m:
-                name = m.group(1).strip().rstrip('.-').strip()
+        """Extract the other party's name — the merchant/person paid, or
+        the sender for a 'received' (credit) SMS.
+
+        THE FIX: the old version required the name to be followed
+        immediately by the word "on" (e.g. "paid to NAME on ..."). But on
+        a 'received' SMS the phone number sits between the name and "on"
+        — "from Felix  Amwoma 0715***629 on 3/9/26" — and the old regex's
+        character class didn't allow digits/'*', so it could never match
+        and always fell back to 'Unknown'. That's why credit (received)
+        transactions in particular kept showing "Unknown" as the sender.
+
+        This version: find a trigger phrase ("paid to", "sent to", "from",
+        etc.), then read the name forward until we hit whichever comes
+        first — "on"/"for", a run of 3+ digits/asterisks (a phone number
+        or account code), "New M-PESA...", a period/comma, or the end of
+        the string. That correctly stops at the name boundary whether or
+        not a phone number follows it.
+        """
+        for trigger in self._RECIPIENT_TRIGGERS:
+            m = re.search(trigger, body, re.IGNORECASE)
+            if not m:
+                continue
+            tail = body[m.end():]
+            tail = self._AGENT_PREFIX_RE.sub('', tail)  # drop "410650 - " agent prefixes
+            name_match = self._NAME_BOUNDARY_RE.match(tail)
+            if not name_match:
+                continue
+            name = re.sub(r'\s+', ' ', name_match.group(1)).strip(' .-')
+            if len(name) >= 2 and re.search(r'[A-Za-z]', name):
                 return name.title()
         return 'Unknown'
 

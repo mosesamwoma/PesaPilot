@@ -166,7 +166,7 @@ for i in {1..20}; do
     fi
 done
 
-echo -e "${YELLOW}📱 Step 8: Starting WhatsApp Bot (Baileys)...${NC}\n"
+echo -e "${YELLOW}📱 Step 7: Starting WhatsApp Bot (Baileys)...${NC}\n"
 
 export API_URL=${API_URL}
 export BAILEYS_AUTH_PATH=${AUTH_PATH}

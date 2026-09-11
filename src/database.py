@@ -39,10 +39,6 @@ def _serialize_row(row: dict) -> dict:
 
 
 def _since(days: Optional[int]) -> Optional[datetime]:
-    """Convert a `days` window into a cutoff datetime. days=None means
-    'full history' (used throughout analyzer.py, e.g. build_context_string
-    and ask_question default to days=None), so this returns None rather
-    than passing None into timedelta(), which raises TypeError."""
     return datetime.now() - timedelta(days=days) if days is not None else None
 
 
@@ -54,16 +50,10 @@ _FORBIDDEN_SQL_KEYWORDS = re.compile(
 
 
 def _running_in_docker() -> bool:
-    """Docker (and Docker-based tools) create /.dockerenv in every
-    container's root filesystem. Podman deliberately does NOT create this
-    file, which is what lets us tell the two runtimes apart below."""
     return os.path.exists('/.dockerenv')
 
 
 def _running_in_podman() -> bool:
-    """Podman creates /run/.containerenv in every container it starts, and
-    also sets the `container=podman` env var. Check both since either is
-    sufficient and neither is set by plain Docker."""
     return os.path.exists('/run/.containerenv') or os.getenv('container') == 'podman'
 
 
@@ -77,24 +67,6 @@ def _resolves(hostname: str) -> bool:
 
 
 def _detect_postgres_host() -> str:
-    """Pick the right Postgres host for whatever environment this process
-    is running in, with no env var needed. Postgres itself always runs
-    outside the app container (on the host or another server) — this only
-    figures out how to *reach* the host from inside the sandbox we're in.
-
-    - Bare metal (no container runtime at all): 127.0.0.1 — Postgres is
-      right there on the same machine.
-    - Docker: host.docker.internal. Docker Desktop (Mac/Windows) wires
-      this up automatically; on Linux it only resolves if the compose
-      file adds `extra_hosts: ["host.docker.internal:host-gateway"]`
-      (this project's docker-compose.yml does). If it doesn't resolve —
-      e.g. someone ran `docker run` by hand without that flag — fall
-      back to 172.17.0.1, the default gateway address of Docker's
-      default `bridge` network, which reaches the host on most Linux
-      installs without any extra config.
-    - Podman: host.containers.internal, which Podman resolves for every
-      container automatically — no extra_hosts entry needed.
-    """
     if _running_in_podman():
         return 'host.containers.internal'
     if _running_in_docker():
@@ -110,20 +82,6 @@ def _detect_postgres_host() -> str:
 
 
 def _pg_connection_kwargs() -> Dict[str, str]:
-    """Read the separate POSTGRES_* env vars and return connection kwargs
-    for psycopg2. These are the SAME names the official Postgres Docker
-    image reads for POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB, so
-    if you're using this project's docker-compose.yml your `db` service
-    and the app read from one consistent set of names. Passed as separate
-    kwargs (not assembled into a URL), so passwords never need URL-encoding
-    no matter what characters they contain.
-
-    POSTGRES_HOST supports a special value: "auto" (also the default when
-    the var is unset), which detects bare metal vs. Docker vs. Podman at
-    startup and picks the right host automatically — see
-    _detect_postgres_host(). Set POSTGRES_HOST to an explicit hostname/IP
-    to skip detection entirely, e.g. when Postgres runs on a remote VPS.
-    """
     user = os.getenv('POSTGRES_USER')
     password = os.getenv('POSTGRES_PASSWORD')
     db = os.getenv('POSTGRES_DB')
@@ -164,9 +122,6 @@ class PostgresDB:
         logger.info("Postgres connection pool initialized")
 
     def close(self) -> None:
-        """Close every pooled connection. Call this once on app shutdown
-        (e.g. in a `finally:` block or a FastAPI/Flask shutdown hook) so
-        Postgres doesn't hold open connections after the process exits."""
         try:
             self._pool.closeall()
             logger.info("Postgres connection pool closed")
@@ -335,12 +290,6 @@ class PostgresDB:
 
     def get_transactions_range(self, date_from: Optional[str] = None,
                                 date_to: Optional[str] = None, limit: int = 20000) -> List[Dict]:
-        """Flexible, explicit-calendar-bounds transaction pull for the dynamic
-        chart engine (src/chart_generator.py). Unlike get_transactions()'s
-        rolling 'last N days' window, this accepts concrete YYYY-MM-DD bounds
-        so a user can ask for a specific month, a named week, or a custom
-        date range and get exactly that slice — either bound (or both) may
-        be omitted for 'from the beginning' / 'up to now' / full history."""
         conditions = []
         params: list = []
         if date_from:
@@ -873,11 +822,6 @@ class PostgresDB:
             return False
 
     def get_daily_trend_running(self, days: Optional[int] = 30) -> List[Dict]:
-        """Same shape as get_daily_trend() but computed inside Postgres via
-        daily_trend_running() (schema/init_db.sql): adds a running
-        cumulative total, a 7-day rolling average, and day-over-day change,
-        all via window functions over a CTE of daily totals — no pandas
-        needed on this side."""
         try:
             return self._fetch_all(
                 "SELECT * FROM daily_trend_running(%s) ORDER BY day",
@@ -888,9 +832,6 @@ class PostgresDB:
             return []
 
     def get_category_month_trend(self, months_back: Optional[int] = 6) -> List[Dict]:
-        """Monthly per-category totals with a within-month rank and
-        month-over-month % change, via category_month_trend()
-        (schema/init_db.sql, RANK + LAG over a monthly CTE)."""
         try:
             return self._fetch_all(
                 "SELECT * FROM category_month_trend(%s)",
@@ -902,10 +843,6 @@ class PostgresDB:
 
     def get_top_merchants_ranked(self, days: Optional[int] = 30,
                                   limit: Optional[int] = 10) -> List[Dict]:
-        """Like get_top_merchants() but ranked with DENSE_RANK and annotated
-        with each merchant's % share of total spend plus a running
-        cumulative % (a Pareto view — "these N merchants are 80% of
-        spend"), via top_merchants_ranked() (schema/init_db.sql)."""
         try:
             return self._fetch_all(
                 "SELECT * FROM top_merchants_ranked(%s, %s)",
@@ -917,14 +854,6 @@ class PostgresDB:
 
     def get_category_anomalies(self, z_threshold: float = 2.5,
                                 days: Optional[int] = 90) -> List[Dict]:
-        """Per-category anomaly detection: mean/stddev of amount computed
-        PER merchant_category (window functions partitioned by category)
-        instead of one global mean/stddev, via detect_category_anomalies()
-        (schema/init_db.sql). This is the per-category upgrade
-        over the global z-score in get_anomalies() above — a KES 3,000
-        food transaction and a KES 3,000 transport transaction are now
-        judged against their own category's normal range instead of one
-        blended one."""
         try:
             return self._fetch_all(
                 "SELECT * FROM detect_category_anomalies(%s, %s)",
@@ -935,12 +864,6 @@ class PostgresDB:
             return []
 
     def get_budget_pace(self) -> List[Dict]:
-        """For every active budget: days elapsed in the current period,
-        average daily spend so far, a straight-line projection of the
-        full-period spend at that pace, % of the limit already used, and a
-        RANK ordering budgets by how close to (or over) their limit they
-        are, via budget_pace() (schema/init_db.sql) — the
-        most at-risk budget comes back first."""
         try:
             return self._fetch_all("SELECT * FROM budget_pace()")
         except Exception as e:
@@ -948,12 +871,6 @@ class PostgresDB:
             return []
 
     def get_recipient_gaps(self, days: Optional[int] = 180) -> List[Dict]:
-        """Days between consecutive transactions to the SAME recipient
-        (LAG partitioned by recipient, ordered by time), via
-        recipient_gaps() (schema/init_db.sql). Useful for
-        spotting recurring/subscription-like payments — a merchant whose
-        gaps cluster around ~30 days is probably a monthly bill — without
-        a separate subscriptions table."""
         try:
             return self._fetch_all(
                 "SELECT * FROM recipient_gaps(%s)",

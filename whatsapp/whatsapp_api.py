@@ -119,7 +119,7 @@ def _encode_figure() -> str:
 
 def _empty_chart(title: str) -> str:
     fig, ax = plt.subplots(figsize=(11, 7), facecolor='white', edgecolor='#e0e0e0')
-    ax.text(0.5, 0.5, '📊 No data available\n\nAdd transactions to generate charts', 
+    ax.text(0.5, 0.5, '📊 No data available\n\nAdd transactions to generate charts',
             ha='center', va='center', fontsize=14, color='#666666', weight='bold', family='monospace')
     ax.set_title(title, fontsize=16, fontweight='bold', pad=20, color='#333333')
     ax.axis('off')
@@ -148,7 +148,7 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
         ax.grid(axis='x', alpha=0.3, linestyle='--', color='#cccccc')
 
         for i, (bar, value) in enumerate(zip(bars, chart_data.values)):
-            ax.text(value, bar.get_y() + bar.get_height()/2, f' KES {value:,.0f}', 
+            ax.text(value, bar.get_y() + bar.get_height()/2, f' KES {value:,.0f}',
                    va='center', ha='left', fontsize=10, fontweight='bold', color='#333333')
 
         ax.set_ylim(-0.5, len(chart_data)-0.5)
@@ -159,7 +159,6 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
         return None
 
 def parse_days_from_question(question_lower: str, default: int = 30) -> int:
-    """Read an explicit time window out of natural language. Falls back to `default`."""
     if 'all time' in question_lower or 'year' in question_lower or re.search(r'\b365\b', question_lower):
         return 365
     if re.search(r'\b180\b', question_lower) or '6 months' in question_lower:
@@ -194,7 +193,6 @@ CATEGORY_SYNONYMS = {
 }
 
 def extract_category_filter(question_lower: str) -> Optional[str]:
-    """If the question names a known spending category, return its canonical name."""
     for category, synonyms in CATEGORY_SYNONYMS.items():
         for synonym in synonyms:
             if synonym in question_lower:
@@ -202,8 +200,6 @@ def extract_category_filter(question_lower: str) -> Optional[str]:
     return None
 
 def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending Forecast") -> Optional[str]:
-    """Render historical spend + forecast spend + confidence band as a single
-    line chart, in the same matplotlib style as the other WhatsApp charts."""
     try:
         hist_pts = forecast_data.get('historical', [])[-60:]
         fcst_pts = forecast_data.get('forecast', [])
@@ -238,8 +234,6 @@ def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending For
         return None
 
 def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
-    """Read an explicit forecast horizon out of natural language. Defaults to 7 days.
-    Only 7 and 30 are supported horizons; anything else falls back to `default`."""
     if 'month' in question_lower or re.search(r'\b30\b', question_lower):
         return 30
     if 'week' in question_lower or re.search(r'\b7\b', question_lower):
@@ -249,15 +243,15 @@ def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
 def generate_daily_summary() -> str:
     try:
         summary = analyzer.db.get_today_summary()
-        
+
         if not summary or summary.get('total_transactions', 0) == 0:
             return "📭 No transactions recorded today.\n\nStart tracking by sending M-Pesa SMS or manual entry: PIN-SMS_CONTENT"
-        
+
         spent = summary.get('total_spent', 0)
         received = summary.get('total_received', 0)
         balance = summary.get('balance', 0)
         transactions = summary.get('total_transactions', 0)
-        
+
         return f"""📊 **Today's Financial Summary**
 
 💰 Total Transactions: {transactions}
@@ -288,16 +282,10 @@ analyzer = MpesaAnalyzer()
 
 @app.get("/daily-summary")
 async def daily_summary():
-    """Returns today's financial summary text. Used by the WhatsApp bot's
-    daily cron job (9PM Africa/Nairobi) to push the summary proactively."""
     return {"summary": generate_daily_summary()}
 
 @app.get("/budget-check", response_model=BudgetAlertsResponse)
 async def budget_check():
-    """Evaluates all active budgets against current spend and returns any
-    NEW near/over-budget alerts (already de-duplicated + recorded as sent).
-    Called by the WhatsApp bot's periodic cron job to proactively ping the
-    user — see setupBudgetCheck() in whatsapp_bot.ts."""
     try:
         alerts = analyzer.check_budget_alerts()
         return BudgetAlertsResponse(alerts=alerts, count=len(alerts))
@@ -307,7 +295,6 @@ async def budget_check():
 
 @app.get("/budgets")
 async def list_budgets():
-    """Live status (spent vs limit, % used) for every active budget."""
     return {"budgets": analyzer.get_budgets_overview()}
 
 @app.post("/budgets")
@@ -324,8 +311,6 @@ async def create_budget(request: SetBudgetRequest):
 
 @app.get("/anomalies")
 async def list_anomalies(days: int = 90):
-    """ML-flagged unusual transactions (per-category IsolationForest, see
-    src/anomaly_detector.py) for the dashboard or external tools."""
     return analyzer.get_smart_anomalies(days=days, force_refresh=False)
 
 @app.get("/health")
@@ -543,7 +528,7 @@ async def ask_question(request: QuestionRequest):
                 received = summary.get('total_received', 0)
                 balance = summary.get('balance', 0)
                 transactions = summary.get('total_transactions', 0)
-                
+
                 analysis = f"""📊 **{days}-Day Financial Summary**
 
 💰 Transactions: {transactions}
@@ -581,17 +566,17 @@ async def ask_question(request: QuestionRequest):
 async def parse_sms(request: ParseSMSRequest):
     try:
         sms_content = request.sms_content.strip()
-        
+
         if not sms_content:
             raise HTTPException(status_code=400, detail="SMS content required")
-        
+
         if not is_valid_mpesa_sms(sms_content):
             return ParseSMSResponse(success=False, summary="❌ Not an M-Pesa SMS")
-        
+
         logger.info(f"📨 SMS: {sms_content[:50]}")
-        
+
         result = analyzer.parse_and_insert_sms(sms_content)
-        
+
         if result.get('success'):
             return ParseSMSResponse(
                 success=True,
@@ -602,7 +587,7 @@ async def parse_sms(request: ParseSMSRequest):
                 success=False,
                 summary=f"❌ {result.get('error', 'Could not parse SMS')}"
             )
-    
+
     except Exception as e:
         logger.error(f"SMS parse error: {str(e)}")
         return ParseSMSResponse(success=False, summary=f"❌ Error: {str(e)[:100]}")

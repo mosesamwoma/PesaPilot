@@ -38,7 +38,7 @@ rsync -avz --progress \
   --exclude '.wwebjs_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
 
-ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yaml $VPS_PATH/.containerignore"
+ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yml $VPS_PATH/.containerignore"
 
 if [ "$DO_BUILD" = true ]; then
   echo "==> Rebuilding and restarting container on VPS..."

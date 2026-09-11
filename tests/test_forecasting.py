@@ -8,7 +8,6 @@ from src import forecasting
 
 
 def _make_transactions(num_days: int, start: datetime.date = datetime.date(2026, 1, 1)):
-    """Build synthetic debit transactions spanning `num_days` distinct days."""
     txs = []
     for i in range(num_days):
         d = start + datetime.timedelta(days=i)
@@ -105,8 +104,6 @@ def test_cache_roundtrip():
 
 
 def test_generate_forecast_with_prophet():
-    """Full end-to-end forecast when Prophet is available in the environment.
-    Skips just this one test (not the whole module) if prophet isn't installed."""
     pytest.importorskip("prophet")
     txs = _make_transactions(40)
     result = forecasting.generate_forecast(txs, horizon_days=7)

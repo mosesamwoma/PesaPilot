@@ -1,15 +1,3 @@
-"""
-Spending Forecasting engine for PesaPilot.
-
-Aggregates raw M-Pesa transactions into a daily spending series and uses
-Meta's Prophet to project future spending, with an in-memory TTL cache so
-the model is not retrained on every request.
-
-This module has no knowledge of Supabase/Groq/Streamlit/FastAPI — it is a
-plain function-based engine that `src/analyzer.py` calls into, matching the
-existing project pattern (database.py / groq_client.py are similarly
-self-contained and orchestrated by MpesaAnalyzer).
-"""
 import hashlib
 import logging
 import time
@@ -24,7 +12,7 @@ MIN_HISTORY_DAYS = 14
 
 TRAIN_HISTORY_DAYS = 180
 
-CACHE_TTL_SECONDS = 6 * 60 * 60  
+CACHE_TTL_SECONDS = 6 * 60 * 60
 
 TREND_INCREASING = "Increasing"
 TREND_DECREASING = "Decreasing"
@@ -36,7 +24,6 @@ RISK_HIGH = "High"
 
 
 class _ForecastCache:
-    """Caches a trained forecast result per (data fingerprint, horizon)."""
 
     def __init__(self):
         self._store: Dict[str, Dict] = {}
@@ -76,27 +63,14 @@ _cache = _ForecastCache()
 
 
 def invalidate_cache() -> None:
-    """Clear all cached forecasts. Call whenever new transactions are inserted."""
     _cache.clear()
 
 
 def cache_size() -> int:
-    """Return number of live (non-expired) cached forecasts."""
     return _cache.size
 
 
 def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
-    """
-    Aggregate raw transaction rows (as returned by SupabaseDB.get_transactions)
-    into a complete, zero-filled daily spending series.
-
-    Only debit-style transactions count as "spending" (credits are excluded,
-    matching the convention used throughout database.py / analyzer.py).
-
-    Returns a DataFrame with columns ['date', 'amount'], one row per calendar
-    day in the observed range (including days with zero spend), sorted
-    ascending by date.
-    """
     if not transactions:
         return pd.DataFrame(columns=["date", "amount"])
 
@@ -134,13 +108,6 @@ def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
 
 
 def _fingerprint(daily_df: pd.DataFrame) -> str:
-    """
-    Stable fingerprint of the training data. This makes the cache
-    self-invalidating: as soon as a new day's spend (or a backdated/edited
-    transaction) changes the aggregate series, the fingerprint changes and a
-    fresh model is trained automatically — on top of the explicit
-    invalidate_cache() calls triggered by new transaction inserts.
-    """
     if daily_df.empty:
         return "empty"
     raw = (
@@ -151,7 +118,6 @@ def _fingerprint(daily_df: pd.DataFrame) -> str:
 
 
 def _classify_trend(predicted_values: List[float]) -> str:
-    """Compare the first half vs second half of the forecast horizon."""
     if len(predicted_values) < 2:
         return TREND_STABLE
 
@@ -179,10 +145,6 @@ def _classify_risk(
     horizon_days: int,
     volatility_ratio: float,
 ) -> str:
-    """
-    Risk reflects how far the projected spend overshoots what the user's own
-    historical pace would predict, plus how volatile their daily spending is.
-    """
     baseline_total = historical_avg_daily * horizon_days
     if baseline_total <= 0:
         return RISK_LOW
@@ -197,15 +159,6 @@ def _classify_risk(
 
 
 def generate_forecast(transactions: List[Dict], horizon_days: int = 7) -> Dict:
-    """
-    Train (or reuse a cached) Prophet model on daily spending history and
-    return historical + forecast series, a confidence band, summary metrics,
-    a trend classification, and a risk level.
-
-    Returns a dict. When there isn't enough history, 'sufficient_data' is
-    False and a human-readable 'message' explains why — callers should
-    surface that message rather than attempting to read forecast fields.
-    """
     daily_df = build_daily_series(transactions)
 
     if daily_df.empty or len(daily_df) < MIN_HISTORY_DAYS:

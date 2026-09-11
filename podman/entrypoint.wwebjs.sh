@@ -203,7 +203,7 @@ for i in {1..20}; do
     fi
 done
 
-echo -e "${YELLOW}📱 Step 8: Starting WhatsApp Bot...${NC}\n"
+echo -e "${YELLOW}📱 Step 7: Starting WhatsApp Bot...${NC}\n"
 
 export PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/google-chrome-stable}
 export API_URL=${API_URL}

@@ -10,11 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> Dict:
-    """Turn raw SQL result rows into Python-computed aggregates (sums/avgs/
-    counts) so the LLM narrates numbers instead of eyeballing/recomputing
-    them from a dumped row list. Generic — works for whatever columns the
-    dynamically-generated SQL happened to return.
-    """
     if not results:
         return {"row_count": 0}
 
@@ -52,7 +47,7 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
                 agg[f"by_{group_col}"] = [
                     {"key": k, "total": round(v, 2)} for k, v in ranked
                 ]
-            break  
+            break
 
     return agg
 
@@ -64,9 +59,6 @@ class MpesaAnalyzer:
         self._cache: Dict = {}
 
     def build_context_string(self, days: Optional[int] = None) -> str:
-        """Build a rich, human-readable context block from current financial data
-        so the AI has the full picture instead of just the raw question.
-        days=None (the default) pulls the user's entire transaction history."""
         try:
             summary = self.db.get_range_summary(days=days) or {}
             category_data = self.db.get_spending_by_category(days=days) or []
@@ -126,9 +118,6 @@ class MpesaAnalyzer:
             return ""
 
     def ask_question(self, question: str, days: Optional[int] = None, row_limit: Optional[int] = None) -> Dict:
-        """days=None and row_limit=None (the defaults) give the question full,
-        unrestricted access to the user's entire transaction history — no
-        artificial date window or row cap."""
         try:
             context = self.build_context_string(days=days)
             schema = self.db.get_schema()
@@ -196,9 +185,6 @@ class MpesaAnalyzer:
             return {}
 
     def get_forecast(self, horizon_days: int = 7) -> Dict:
-        """Generate (or reuse a cached) Prophet spending forecast for the given
-        horizon, aggregating the existing transaction history into daily totals,
-        plus a Groq-generated natural-language summary of the projection."""
         try:
             transactions = self.db.get_transactions(days=forecasting.TRAIN_HISTORY_DAYS, limit=None)
             result = forecasting.generate_forecast(transactions, horizon_days=horizon_days)
@@ -224,20 +210,12 @@ class MpesaAnalyzer:
             }
 
     def get_forecast_bundle(self) -> Dict:
-        """Convenience helper for the dashboard: both the 7-day and 30-day
-        forecasts in a single call (each independently cached by horizon)."""
         return {
             'horizon_7': self.get_forecast(horizon_days=7),
             'horizon_30': self.get_forecast(horizon_days=30),
         }
 
     def get_smart_anomalies(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
-        """Run the per-category ML anomaly model (src/anomaly_detector.py)
-        over recent transactions, persist the results (baselines + flagged
-        transactions) so the dashboard doesn't need to recompute them on
-        every load, and return a Groq-narrated summary alongside the raw
-        list. Set force_refresh=True to re-run detection even if a cached
-        version exists (e.g. after new transactions land)."""
         cache_key = f'smart_anomalies_{days}'
         if not force_refresh and cache_key in self._cache:
             return self._cache[cache_key]
@@ -275,7 +253,6 @@ class MpesaAnalyzer:
 
     def set_budget(self, category: str, limit_amount: float, period: str = 'monthly',
                     alert_threshold_pct: int = 80) -> Dict:
-        """Create or update a budget goal for a category."""
         budget = self.db.upsert_budget(category, limit_amount, period, alert_threshold_pct)
         self._cache.clear()
         if not budget:
@@ -283,20 +260,9 @@ class MpesaAnalyzer:
         return {'success': True, 'budget': budget}
 
     def get_budgets_overview(self) -> List[Dict]:
-        """Live status (spent vs limit, % used) for every active budget —
-        used by the dashboard and by 'my budgets' WhatsApp queries."""
         return self.db.get_budget_status()
 
     def check_budget_alerts(self) -> List[Dict]:
-        """Evaluate every active budget against the current period's spend
-        and return the WhatsApp-ready messages for any NEW breach (near or
-        over budget) that hasn't already been sent this period. Recording
-        an alert as sent happens here, so calling this twice in a row
-        won't double-ping the user for the same breach.
-
-        Returns a list of {category, alert_level, message} dicts, empty if
-        nothing new needs to be sent.
-        """
         try:
             status_rows = self.db.get_budget_status()
             if not status_rows:
@@ -332,21 +298,10 @@ class MpesaAnalyzer:
             return []
 
     def generate_dynamic_chart(self, description: str, dark: bool = True) -> Dict:
-        """Natural-language chart request -> matplotlib figure. Replaces the
-        old fixed keyword->hardcoded-chart mapping: the user can describe
-        chart type, date range (a specific month/week/quarter/custom dates),
-        grouping, and category filter all in their own words. See
-        src/chart_generator.py for the full pipeline (LLM spec parsing +
-        flexible data pull + a single renderer covering bar/line/pie/area/
-        scatter/histogram/heatmap). `dark=True` matches the Streamlit
-        dashboard's theme; pass `dark=False` for the white-background PNGs
-        sent over WhatsApp."""
         from src import chart_generator
         return chart_generator.generate_dynamic_chart(self, description, dark=dark)
 
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
-        """Parse a single M-Pesa SMS text and insert it into the database.
-        Called by the WhatsApp /parse-sms endpoint for manual PIN-based entry."""
         from src.parse_sms import MpesaParser
         parser = MpesaParser()
         tx = parser._parse_sms_text(sms_content)
@@ -362,11 +317,11 @@ class MpesaAnalyzer:
         df = pd.DataFrame([tx])
         inserted = self.db.insert_transactions(df)
         self._cache.clear()
-        self.groq.invalidate_cache()  
-        forecasting.invalidate_cache()  
+        self.groq.invalidate_cache()
+        forecasting.invalidate_cache()
 
         if inserted == 0:
-            pass
+            return {'success': False, 'error': 'Could not save transaction to the database'}
 
         tx_type = tx.get('type', 'debit')
         amount = tx.get('amount', 0) or 0
@@ -403,6 +358,6 @@ class MpesaAnalyzer:
             return 0
         count = self.db.insert_transactions(df)
         self._cache.clear()
-        self.groq.invalidate_cache()  
-        forecasting.invalidate_cache()  
+        self.groq.invalidate_cache()
+        forecasting.invalidate_cache()
         return count

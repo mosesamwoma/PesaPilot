@@ -1,39 +1,18 @@
-"""
-Budget goals + proactive alert engine for PesaPilot.
-
-Works off the `budgets`, `budget_alerts`, and `budget_status` objects that
-already exist in schema/init_db.sql:
-  - budgets        : the category limits the user has set
-  - budget_status  : a VIEW that computes spent_this_period live per budget
-  - budget_alerts  : a log of alerts already sent, so the same breach never
-                      pings the user twice in the same period
-
-This module has no knowledge of Supabase/Groq/WhatsApp — it is a plain
-function-based engine (mirrors src/forecasting.py's design) that decides
-WHICH alerts are due given the current budget_status rows and a set of
-alerts already sent. `src/analyzer.py` does the DB reads/writes and calls
-into this module for the actual decision logic, then `whatsapp_api.py`
-turns the result into WhatsApp messages.
-"""
 import logging
 from datetime import date, timedelta
 from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-ALERT_WARNING = "warning"   
-ALERT_OVER = "over"         
-
+ALERT_WARNING = "warning"
+ALERT_OVER = "over"
 
 
 def period_start_for(period: str, today: date = None) -> date:
-    """The first day of the CURRENT budget period, matching the same
-    date_trunc('week'/'month', NOW()) logic used by the budget_status SQL
-    view, so alert de-duplication keys line up with what the view reports."""
     today = today or date.today()
     period = (period or "monthly").lower()
     if period == "weekly":
-        return today - timedelta(days=today.weekday())  
+        return today - timedelta(days=today.weekday())
     return today.replace(day=1)
 
 
@@ -41,14 +20,6 @@ def evaluate_budgets(
     budget_status_rows: List[Dict],
     already_alerted: Set[Tuple[str, str, str]],
 ) -> List[Dict]:
-    """Given the live budget_status rows and a set of
-    (budget_id, period_start_iso, alert_level) tuples that have ALREADY
-    been sent, return the list of NEW alerts that are due right now.
-
-    Each budget_status row is expected to have:
-      budget_id, category, period, limit_amount, alert_threshold_pct,
-      spent_this_period
-    """
     due: List[Dict] = []
 
     for row in budget_status_rows or []:
@@ -81,7 +52,7 @@ def evaluate_budgets(
                     "amount_spent": spent,
                     "pct_used": round(pct_used, 1),
                 })
-            continue  
+            continue
 
         if pct_used >= threshold_pct:
             key = (budget_id, p_start, ALERT_WARNING)

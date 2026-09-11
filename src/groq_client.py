@@ -42,18 +42,9 @@ STYLE RULES:
 """
 
 class _ResponseCache:
-    """
-    Lightweight TTL cache keyed on a SHA-256 hash of (system, user).
-
-    TTL buckets (seconds):
-      - SQL generation       →  1 hour   (schema never changes mid-session)
-      - Insights / summary   →  10 min   (data changes only when new SMS is added)
-      - Budget / investment  →  15 min   (advice is stable over a session)
-      - General chat         →  5 min    (conversational — shorter freshness)
-    """
 
     def __init__(self):
-        self._store: dict = {}   
+        self._store: dict = {}
 
     @staticmethod
     def _key(system: str, user: str) -> str:
@@ -93,10 +84,10 @@ class _ResponseCache:
 _cache = _ResponseCache()
 
 
-TTL_SQL        = 3600   
-TTL_INSIGHTS   =  600   
-TTL_ADVICE     =  900   
-TTL_CHAT       =  300   
+TTL_SQL        = 3600
+TTL_INSIGHTS   =  600
+TTL_ADVICE     =  900
+TTL_CHAT       =  300
 
 
 _FORBIDDEN_SQL_KEYWORDS = re.compile(
@@ -107,23 +98,13 @@ _FORBIDDEN_SQL_KEYWORDS = re.compile(
 
 
 def is_safe_select_sql(sql: str) -> bool:
-    """Cheap guard before any LLM-generated SQL touches the DB.
-
-    Checks:
-      - Non-empty, starts with SELECT
-      - No stacked statements (a stray ';' before the end)
-      - No DDL/DML keywords (DROP, DELETE, UPDATE, INSERT, ALTER, ...)
-
-    This is a belt-and-suspenders check, not a substitute for running
-    queries against a read-only DB role/user.
-    """
     if not sql:
         return False
     cleaned = sql.strip()
     if not cleaned.upper().startswith('SELECT'):
         return False
     body = cleaned.rstrip(';').strip()
-    if ';' in body:                          
+    if ';' in body:
         return False
     if _FORBIDDEN_SQL_KEYWORDS.search(body):
         return False
@@ -184,23 +165,19 @@ class GroqClient:
         if cached is not None:
             return cached
         response = self._chat(system, user, model=model, max_tokens=max_tokens)
-        if response:                          
+        if response:
             _cache.set(system, user, response, ttl=ttl)
         return response
 
     @staticmethod
     def invalidate_cache():
-        """Clear all cached responses. Call whenever new transactions are added."""
         _cache.clear()
 
     @staticmethod
     def cache_size() -> int:
-        """Return number of live (non-expired) cache entries."""
         return _cache.size
 
     def generate_sql(self, question: str, schema: str, days: int = None, row_limit: int = None) -> str:
-        """days=None and row_limit=None (the defaults) give the generated query
-        access to the user's ENTIRE transaction history with no row cap."""
         date_rule = (
             f"- Filter to the last {days} days" if days is not None
             else "- No default date filter — query the full transaction history unless the question specifies a time range"
@@ -229,8 +206,6 @@ Rules:
         return sql
 
     def analyze_results(self, question: str, sql: str, aggregates: dict, context: str = "") -> str:
-        """Explain query results using Python-computed aggregates (sums/avgs/counts),
-        never raw rows — keeps the LLM from doing arithmetic over dumped data."""
         system = KENYA_SYSTEM_PROMPT + """
 
 You are answering a question backed by pre-computed aggregate numbers from real transaction data (already summed/averaged/counted in Python — trust these numbers exactly, do not recompute or estimate them yourself). Ground your answer strictly in the numbers given. Apply Rules 1-7. Max 180 words."""
@@ -259,8 +234,6 @@ Answer the user's question conversationally and helpfully. Apply Rules 1-7 where
         return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
 
     def generate_chart_spec(self, description: str, system_prompt: str) -> str:
-        """Returns raw JSON text (see src/chart_generator.py for the schema
-        and parsing/validation) describing how to build the requested chart."""
         return self._cached_chat(system_prompt, description, ttl=TTL_CHAT, model=self.model_fast, max_tokens=400)
 
     def budget_plan(self, context: str = "") -> str:
@@ -288,8 +261,6 @@ Never mention Fuliza or name a specific bank/provider. Apply Rules 1-7. Max 220 
         return self._cached_chat(system, user, ttl=TTL_ADVICE, model=self.model_smart, max_tokens=1800)
 
     def generate_forecast_insights(self, forecast_data: dict) -> str:
-        """Turn a Prophet forecast result (see src/forecasting.py) into a short,
-        plain-English explanation — clearly framed as a projection, not a fact."""
         horizon = forecast_data.get('horizon_days', 7)
         system = KENYA_SYSTEM_PROMPT + f"""
 
@@ -306,10 +277,6 @@ You are explaining a {horizon}-day spending FORECAST produced by a statistical m
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
 
     def generate_anomaly_insights(self, anomalies: list) -> str:
-        """Explain a batch of ML-flagged unusual transactions (from
-        src/anomaly_detector.py's per-category IsolationForest, not a
-        global z-score) in plain language. `anomalies` items look like:
-        {amount, recipient, merchant_category, timestamp, score, model}."""
         if not anomalies:
             return ""
         system = KENYA_SYSTEM_PROMPT + """
@@ -325,9 +292,6 @@ You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
 
     def budget_alert_message(self, alert: dict) -> str:
-        """Turn one due budget alert (see src/budget_monitor.py) into a
-        short, proactive WhatsApp ping. Kept short since this is pushed
-        unprompted, not asked for."""
         category = str(alert.get('category', 'this category')).title()
         spent = alert.get('amount_spent', 0)
         limit = alert.get('limit_amount', 0)

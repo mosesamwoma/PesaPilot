@@ -16,7 +16,6 @@ def groq():
 
 
 def test_groq_connection(groq):
-    """Groq client initializes"""
     assert groq.client is not None
 
 def test_groq_chat(groq):

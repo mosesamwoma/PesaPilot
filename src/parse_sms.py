@@ -34,7 +34,7 @@ class MpesaParser:
         r'(?=\s+(?:on\b|for\b|New\s+M-?PESA\b)|\s+[\d\*]{3,}|[.,]|$)',
         re.IGNORECASE,
     )
-    _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')  
+    _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')
 
     def parse_xml_to_csv(self, xml_path: str, output_path: str = None) -> pd.DataFrame:
         logger.info(f"Parsing XML: {xml_path}")
@@ -69,7 +69,6 @@ class MpesaParser:
         return bool(re.search(r'M-PESA|MPESA|Ksh|KSh', body, re.IGNORECASE))
 
     def _parse_sms(self, elem) -> dict:
-        """Parse SMS from XML element"""
         body = elem.get('body', '')
         raw_date = elem.get('date', '')
         readable_date = elem.get('readable_date', '')
@@ -111,7 +110,6 @@ class MpesaParser:
             return None
 
     def _parse_sms_text(self, body: str) -> dict:
-        """Parse SMS from plain text (WhatsApp manual entry)"""
         try:
             amount = self._extract_amount(body)
             if amount is None:
@@ -145,12 +143,6 @@ class MpesaParser:
             return None
 
     def _extract_amount(self, body: str):
-        """Extract the primary transaction amount.
-
-        M-Pesa SMS always leads with the transaction amount as the FIRST Ksh figure.
-        Later occurrences are balance, transaction cost, or daily limit — skip them.
-        We also guard against grabbing a Ksh0.00 transaction-cost line as the amount.
-        """
         patterns = [
             r'Ksh\s?([\d,]+\.?\d*)',
             r'KSh\s?([\d,]+\.?\d*)',
@@ -165,18 +157,11 @@ class MpesaParser:
                         v2 = float(m2.group(1).replace(',', ''))
                         if v2 > 0:
                             return v2
-                    return value  
+                    return value
                 return value
         return None
 
     def _extract_transaction_cost(self, body: str) -> float:
-        """Extract the M-Pesa transaction cost/fee. Returns 0.0 (never None)
-        when the SMS has no "Transaction cost, Ksh..." line — plain P2P
-        sends and airtime top-ups usually don't carry one — so the column
-        is always a real number in the database, exactly like `amount` and
-        `balance`, and can always be summed/charted without extra NULL
-        handling downstream.
-        """
         m = re.search(r'transaction\s*cost,?\s*Ksh\.?\s?([\d,]+\.?\d*)', body, re.IGNORECASE)
         if m:
             try:
@@ -186,17 +171,6 @@ class MpesaParser:
         return 0.0
 
     def _extract_balance(self, body: str):
-        """Extract the new M-PESA balance after the transaction.
-
-        Handles all real-world Safaricom SMS variants:
-          • "New M-PESA balance is Ksh200.38"      (most common)
-          • "New balance is Ksh200.38"
-          • "M-PESA balance is Ksh200.38"
-          • "balance is Ksh200.38"
-          • "balance: Ksh200.38"
-        The balance always follows the keyword 'balance' (case-insensitive)
-        and optionally 'is', then a Ksh amount.
-        """
         patterns = [
             r'(?:new\s+)?(?:m-?pesa\s+)?balance\s+is\s+Ksh\s?([\d,]+\.?\d*)',
             r'balance[:\s]+Ksh\s?([\d,]+\.?\d*)',
@@ -222,30 +196,12 @@ class MpesaParser:
         return 'debit'
 
     def _extract_recipient(self, body: str) -> str:
-        """Extract the other party's name — the merchant/person paid, or
-        the sender for a 'received' (credit) SMS.
-
-        THE FIX: the old version required the name to be followed
-        immediately by the word "on" (e.g. "paid to NAME on ..."). But on
-        a 'received' SMS the phone number sits between the name and "on"
-        — "from Felix  Amwoma 0715***629 on 3/9/26" — and the old regex's
-        character class didn't allow digits/'*', so it could never match
-        and always fell back to 'Unknown'. That's why credit (received)
-        transactions in particular kept showing "Unknown" as the sender.
-
-        This version: find a trigger phrase ("paid to", "sent to", "from",
-        etc.), then read the name forward until we hit whichever comes
-        first — "on"/"for", a run of 3+ digits/asterisks (a phone number
-        or account code), "New M-PESA...", a period/comma, or the end of
-        the string. That correctly stops at the name boundary whether or
-        not a phone number follows it.
-        """
         for trigger in self._RECIPIENT_TRIGGERS:
             m = re.search(trigger, body, re.IGNORECASE)
             if not m:
                 continue
             tail = body[m.end():]
-            tail = self._AGENT_PREFIX_RE.sub('', tail)  
+            tail = self._AGENT_PREFIX_RE.sub('', tail)
             name_match = self._NAME_BOUNDARY_RE.match(tail)
             if not name_match:
                 continue
@@ -259,7 +215,7 @@ class MpesaParser:
         return m.group(1) if m else None
 
     def _extract_transaction_id(self, body: str) -> str:
-        m = re.search(r'\b([A-Z0-9]{10,})\b', body)
+        m = re.search(r'\b([A-Z][A-Z0-9]{9,})\b', body)
         if not m:
             return None
         tx_id = m.group(1)

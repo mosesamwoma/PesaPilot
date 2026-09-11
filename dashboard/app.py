@@ -203,7 +203,6 @@ def clean_response(text: str) -> str:
 
 
 def parse_days_from_question(question_lower: str, default: int = 30) -> int:
-    """Read an explicit time window out of natural language. Falls back to `default`."""
     if 'all time' in question_lower or 'year' in question_lower or re.search(r'\b365\b', question_lower):
         return 365
     if re.search(r'\b180\b', question_lower) or '6 months' in question_lower:
@@ -225,8 +224,6 @@ def parse_days_from_question(question_lower: str, default: int = 30) -> int:
 
 
 def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
-    """Read an explicit forecast horizon out of natural language. Defaults to 7 days.
-    Only 7 and 30 are supported horizons; anything else falls back to `default`."""
     if 'month' in question_lower or re.search(r'\b30\b', question_lower):
         return 30
     if 'week' in question_lower or re.search(r'\b7\b', question_lower):
@@ -235,7 +232,6 @@ def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
 
 
 def extract_category_filter(question_lower: str) -> Optional[str]:
-    """If the question names a known spending category, return its canonical name."""
     for category, synonyms in CATEGORY_SYNONYMS.items():
         for synonym in synonyms:
             if synonym in question_lower:
@@ -295,7 +291,6 @@ def generate_summary_text(analyzer: "MpesaAnalyzer", days: int) -> str:
 - Spending Trend: {'📈 Increasing' if spent > received else '📉 Decreasing'}"""
 
     return "📭 No transactions in this period. Start tracking now!"
-
 
 
 def chat_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str) -> Optional[go.Figure]:
@@ -358,22 +353,16 @@ def chat_forecast_chart(forecast_data: dict, title: str) -> Optional[go.Figure]:
 
 @st.cache_resource
 def get_analyzer() -> MpesaAnalyzer:
-    """Return a cached instance of the analyzer."""
     return MpesaAnalyzer()
 
 
 def fmt_ksh(amount: Optional[float]) -> str:
-    """Format a number as Kenyan Shillings."""
     if amount is None:
         return "KES 0"
     return f"KES {float(amount):,.0f}"
 
 
 def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
-    """Mirrors the routing logic in whatsapp/whatsapp_api.py's /ask endpoint,
-    so the dashboard chat understands the same commands as the WhatsApp bot.
-    Returns a dict with keys: content (str), sql (str|None), results (list|None),
-    fig (plotly Figure|None)."""
 
     if not question or len(question) < 2 or len(question) > 500:
         return {'content': "⚠️ Question too short or too long (2-500 chars).", 'sql': None, 'results': None, 'fig': None}
@@ -516,7 +505,6 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         'fig': None,
     }
 def main() -> None:
-    """Main Streamlit application."""
     analyzer: MpesaAnalyzer = get_analyzer()
 
     with st.sidebar:

@@ -1,31 +1,3 @@
-"""
-Dynamic, natural-language-driven chart generation for PesaPilot.
-
-OLD behaviour (dashboard/app.py and whatsapp/whatsapp_api.py before this):
-a fixed dictionary mapped a handful of exact keywords ("bar chart", "pie
-chart", "heatmap"...) straight onto one hardcoded chart function each, and
-only understood a few fixed day-count windows ("7 days", "90 days", "all
-time"). Anything outside that vocabulary either fell through to the wrong
-chart or wasn't picked up as a chart request at all.
-
-NEW behaviour: the user describes the chart in plain English — chart type,
-metric, date range (a specific month, a named week, "last quarter", exact
-dates), grouping, category filter — and an LLM call (GroqClient.
-generate_chart_spec) turns that into a small structured JSON spec. One
-flexible data pull (PostgresDB.get_transactions_range) and one flexible
-renderer then produce the chart, instead of a hardcoded function per chart
-type. This single module is shared by both the Streamlit dashboard
-(figure via st.pyplot) and the WhatsApp bot (figure encoded to base64 PNG)
-— one engine, two front ends.
-
-RENDERING: built on matplotlib, styled and drawn with seaborn — seaborn's
-`axes_style`/`plotting_context` context managers drive the theme (so this
-module never mutates global matplotlib/seaborn state that other callers
-rely on), `sns.color_palette` supplies every categorical/sequential color
-ramp, and `sns.histplot` / `sns.heatmap` / `sns.scatterplot` replace the
-hand-rolled matplotlib equivalents for a noticeably cleaner, more
-"designed" look than plain matplotlib defaults.
-"""
 from __future__ import annotations
 
 import io
@@ -67,7 +39,6 @@ _SPENDING_TYPES = ('debit', 'payment', 'withdrawal', 'transfer', 'airtime')
 
 def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
-
 
 
 def _spec_system_prompt() -> str:
@@ -113,9 +84,6 @@ Rules:
 
 
 def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
-    """Ask the LLM to turn `description` into a validated chart spec dict.
-    Falls back to a small keyword heuristic if the LLM call or JSON parse
-    fails outright, so the feature degrades gracefully instead of erroring."""
     spec = dict(DEFAULT_SPEC)
     raw = ""
     try:
@@ -158,16 +126,6 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
 
 
 def _heuristic_spec(description: str) -> Dict[str, Any]:
-    """Keyword-only fallback used only when the LLM call fails entirely
-    (network error, empty response, malformed JSON) — covers the most
-    common phrasing so the feature never hard-fails.
-
-    Uses \\b word-boundary matching rather than plain substring checks:
-    short tokens like "pie", "area", "line" are common substrings of
-    ordinary words ("recipients" contains "pie", "clearance" contains
-    "area", "airline" contains "line"), so a naive `in` check would
-    misfire on totally unrelated requests.
-    """
     text = description.lower()
     spec: Dict[str, Any] = {}
 
@@ -235,7 +193,6 @@ def _default_title(spec: Dict[str, Any]) -> str:
     return f"{metric_label} by {group_label}{cat}{period}".strip()
 
 
-
 def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     rows = db.get_transactions_range(
         date_from=spec.get('date_from'), date_to=spec.get('date_to'), limit=20000,
@@ -253,7 +210,7 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     df['transaction_cost'] = pd.to_numeric(df.get('transaction_cost'), errors='coerce').fillna(0)
     df['merchant_category'] = df.get('merchant_category').fillna('other')
     df['recipient'] = df.get('recipient').fillna('Unknown')
-    df['count'] = 1  
+    df['count'] = 1
 
     ttype = spec.get('transaction_type', 'spending')
     if ttype == 'spending':
@@ -271,22 +228,18 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     return df
 
 
-
 _DARK = dict(bg='#0f1117', panel='#1e2130', grid='#2d3250', text='#c8cdd8',
              accent='#00d4aa', accent2='#ff4b6e')
 _LIGHT = dict(bg='white', panel='#fbfbfd', grid='#e0e0e0', text='#333333',
               accent='#2E86AB', accent2='#ff4b6e')
 
-_PALETTE_CATEGORICAL = 'Set2'      
-_PALETTE_SEQUENTIAL = 'crest'      
-_PALETTE_HEATMAP = 'rocket_r'      
-_PALETTE_SCATTER = 'flare'         
+_PALETTE_CATEGORICAL = 'Set2'
+_PALETTE_SEQUENTIAL = 'crest'
+_PALETTE_HEATMAP = 'rocket_r'
+_PALETTE_SCATTER = 'flare'
 
 
 def _seaborn_rc(theme: dict) -> dict:
-    """rc overrides layered on top of seaborn's 'darkgrid'/'whitegrid' base
-    style so the plot matches PesaPilot's own dark/light palette instead of
-    seaborn's stock colors."""
     return {
         'figure.facecolor': theme['bg'],
         'axes.facecolor': theme['panel'],
@@ -302,9 +255,6 @@ def _seaborn_rc(theme: dict) -> dict:
 
 
 def _style(ax, fig, theme: dict, title: str) -> None:
-    """Cosmetic finishing touches applied after the data is drawn — title,
-    spines. `sns.despine` (drop the top/right border) is the one bit of
-    polish plain matplotlib doesn't give you for free."""
     ax.set_title(title, fontsize=14, fontweight='bold', color=theme['text'], pad=14)
     sns.despine(fig=fig, ax=ax, left=False, bottom=False)
     ax.xaxis.label.set_color(theme['text'])
@@ -312,8 +262,6 @@ def _style(ax, fig, theme: dict, title: str) -> None:
 
 
 def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
-    """Returns (fig, summary_text) on success, or (None, message) when
-    there's nothing to plot — `message` is then a user-facing explanation."""
     theme = _DARK if dark else _LIGHT
     metric = spec['metric']
     chart_type = spec['chart_type']
@@ -456,7 +404,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 total = grouped.sum()
                 summary = f"{top_label} is the largest share at KES {grouped.iloc[0]:,.0f} ({grouped.iloc[0] / total * 100:.0f}%)."
 
-            else:  
+            else:
                 key = group_by or 'merchant_category'
                 grouped = df.groupby(key)[metric].sum().sort_values(ascending=True)
                 grouped = grouped[grouped != 0]
@@ -486,16 +434,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
             return None, f"Couldn't build that chart: {e}"
 
 
-
 def generate_dynamic_chart(analyzer, description: str, dark: bool = True) -> Dict[str, Any]:
-    """Full pipeline: free-text description -> spec -> data -> figure.
-    `analyzer` is a src.analyzer.MpesaAnalyzer instance (used for its .groq
-    and .db). Returns a dict with keys:
-      fig     - matplotlib Figure, or None if nothing could be plotted
-      spec    - the resolved chart spec (useful for logging/debugging)
-      summary - one-line, human-readable takeaway from the chart (None on error)
-      error   - user-facing explanation (None on success)
-    """
     spec = parse_chart_request(analyzer.groq, description)
     df = fetch_chart_data(analyzer.db, spec)
     fig, message = build_figure(df, spec, dark=dark)
@@ -508,9 +447,6 @@ def generate_dynamic_chart(analyzer, description: str, dark: bool = True) -> Dic
 
 
 def figure_to_base64(fig) -> Optional[str]:
-    """Encode a matplotlib figure as a base64 PNG string, matching the
-    format the WhatsApp bot (whatsapp/whatsapp_api.py) already expects from
-    its other chart functions. Closes the figure after encoding."""
     if fig is None:
         return None
     buf = io.BytesIO()

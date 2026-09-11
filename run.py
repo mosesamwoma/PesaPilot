@@ -1,6 +1,3 @@
-"""
-PesaPilot - Start all services
-"""
 import subprocess
 import os
 import sys
@@ -22,14 +19,12 @@ def print_header():
     """)
 
 def check_env():
-    """Check if .env exists"""
     if not os.path.exists(".env"):
         print(f"{RED}❌ .env file not found!{RESET}")
         print(f"{YELLOW}Please create .env file with required variables{RESET}")
         sys.exit(1)
 
 def start_services():
-    """Start FastAPI and Streamlit"""
     print(f"{GREEN}Starting services...{RESET}\n")
 
     processes = []

@@ -10,7 +10,6 @@ def db():
     return PostgresDB()
 
 def test_connection(db):
-    """Postgres connection pool initializes without error"""
     assert db._pool is not None
 
 def test_get_schema(db):
@@ -58,7 +57,6 @@ def test_get_anomalies(db):
     assert isinstance(result, list)
 
 def test_insert_and_retrieve(db):
-    """Insert a dummy transaction and verify it lands"""
     import pandas as pd
     from datetime import datetime
     dummy = pd.DataFrame([{

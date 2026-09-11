@@ -163,6 +163,16 @@ class PostgresDB:
             raise ValueError(f"Could not connect to Postgres: {e}")
         logger.info("Postgres connection pool initialized")
 
+    def close(self) -> None:
+        """Close every pooled connection. Call this once on app shutdown
+        (e.g. in a `finally:` block or a FastAPI/Flask shutdown hook) so
+        Postgres doesn't hold open connections after the process exits."""
+        try:
+            self._pool.closeall()
+            logger.info("Postgres connection pool closed")
+        except Exception as e:
+            logger.error(f"Error closing connection pool: {e}")
+
     def _fetch_all(self, sql: str, params: tuple = None) -> List[Dict]:
         conn = self._pool.getconn()
         try:
@@ -480,10 +490,6 @@ class PostgresDB:
 
             debits = df[df['type'].isin(['debit', 'payment', 'withdrawal', 'transfer', 'airtime'])]
             credits = df[df['type'] == 'credit']
-            # Transaction fees only ever apply to outgoing transactions (withdrawals,
-            # paybill/buy-goods payments) — never to money received — so we sum the
-            # cost column only over debits. .fillna(0) because most SMS variants
-            # (plain P2P sends, airtime) never state a cost line at all.
             total_cost = (
                 float(debits['transaction_cost'].fillna(0).sum())
                 if not debits.empty and 'transaction_cost' in debits.columns
@@ -868,6 +874,97 @@ class PostgresDB:
             logger.error(f"record_budget_alert failed: {e}")
             return False
 
+    def get_daily_trend_running(self, days: Optional[int] = 30) -> List[Dict]:
+        """Same shape as get_daily_trend() but computed inside Postgres via
+        daily_trend_running() (schema/init_db.sql): adds a running
+        cumulative total, a 7-day rolling average, and day-over-day change,
+        all via window functions over a CTE of daily totals — no pandas
+        needed on this side."""
+        try:
+            return self._fetch_all(
+                "SELECT * FROM daily_trend_running(%s) ORDER BY day",
+                (days,),
+            )
+        except Exception as e:
+            logger.error(f"get_daily_trend_running failed: {e}")
+            return []
+
+    def get_category_month_trend(self, months_back: Optional[int] = 6) -> List[Dict]:
+        """Monthly per-category totals with a within-month rank and
+        month-over-month % change, via category_month_trend()
+        (schema/init_db.sql, RANK + LAG over a monthly CTE)."""
+        try:
+            return self._fetch_all(
+                "SELECT * FROM category_month_trend(%s)",
+                (months_back,),
+            )
+        except Exception as e:
+            logger.error(f"get_category_month_trend failed: {e}")
+            return []
+
+    def get_top_merchants_ranked(self, days: Optional[int] = 30,
+                                  limit: Optional[int] = 10) -> List[Dict]:
+        """Like get_top_merchants() but ranked with DENSE_RANK and annotated
+        with each merchant's % share of total spend plus a running
+        cumulative % (a Pareto view — "these N merchants are 80% of
+        spend"), via top_merchants_ranked() (schema/init_db.sql)."""
+        try:
+            return self._fetch_all(
+                "SELECT * FROM top_merchants_ranked(%s, %s)",
+                (days, limit),
+            )
+        except Exception as e:
+            logger.error(f"get_top_merchants_ranked failed: {e}")
+            return []
+
+    def get_category_anomalies(self, z_threshold: float = 2.5,
+                                days: Optional[int] = 90) -> List[Dict]:
+        """Per-category anomaly detection: mean/stddev of amount computed
+        PER merchant_category (window functions partitioned by category)
+        instead of one global mean/stddev, via detect_category_anomalies()
+        (schema/init_db.sql). This is the per-category upgrade
+        over the global z-score in get_anomalies() above — a KES 3,000
+        food transaction and a KES 3,000 transport transaction are now
+        judged against their own category's normal range instead of one
+        blended one."""
+        try:
+            return self._fetch_all(
+                "SELECT * FROM detect_category_anomalies(%s, %s)",
+                (z_threshold, days),
+            )
+        except Exception as e:
+            logger.error(f"get_category_anomalies failed: {e}")
+            return []
+
+    def get_budget_pace(self) -> List[Dict]:
+        """For every active budget: days elapsed in the current period,
+        average daily spend so far, a straight-line projection of the
+        full-period spend at that pace, % of the limit already used, and a
+        RANK ordering budgets by how close to (or over) their limit they
+        are, via budget_pace() (schema/init_db.sql) — the
+        most at-risk budget comes back first."""
+        try:
+            return self._fetch_all("SELECT * FROM budget_pace()")
+        except Exception as e:
+            logger.error(f"get_budget_pace failed: {e}")
+            return []
+
+    def get_recipient_gaps(self, days: Optional[int] = 180) -> List[Dict]:
+        """Days between consecutive transactions to the SAME recipient
+        (LAG partitioned by recipient, ordered by time), via
+        recipient_gaps() (schema/init_db.sql). Useful for
+        spotting recurring/subscription-like payments — a merchant whose
+        gaps cluster around ~30 days is probably a monthly bill — without
+        a separate subscriptions table."""
+        try:
+            return self._fetch_all(
+                "SELECT * FROM recipient_gaps(%s)",
+                (days,),
+            )
+        except Exception as e:
+            logger.error(f"get_recipient_gaps failed: {e}")
+            return []
+
     def get_schema(self) -> str:
         return """
 Table: transactions
@@ -886,4 +983,22 @@ Columns:
   - readable_date (text)
   - raw_date (text)
   - created_at (timestamp)
+
+Analytics functions (call with SELECT * FROM function_name(...) — all
+parameters are optional and default to full history / no limit):
+  - daily_trend_running(days INT) -> day, total_spent, total_received,
+    cumulative_spent, spend_7day_avg, spend_change_from_prev_day
+  - category_month_trend(months_back INT) -> month, merchant_category,
+    total_amount, category_rank_in_month, prev_month_amount, mom_pct_change
+  - top_merchants_ranked(days INT, limit_count INT) -> recipient,
+    total_amount, transaction_count, merchant_rank, pct_of_total_spend,
+    cumulative_pct
+  - detect_category_anomalies(z_threshold NUMERIC, lookback_days INT) ->
+    id, transaction_id, amount, recipient, merchant_category,
+    tx_timestamp, category_mean, category_stddev, zscore
+  - budget_pace() -> budget_id, category, period, limit_amount,
+    period_start, period_end, spent_so_far, days_elapsed,
+    avg_daily_spend, projected_period_spend, pct_of_limit_used, risk_rank
+  - recipient_gaps(days INT) -> recipient, tx_timestamp, amount,
+    prev_timestamp, days_since_prev
 """

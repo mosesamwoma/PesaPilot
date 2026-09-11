@@ -408,7 +408,7 @@ You'll be prompted for:
 Then for your SSH password (may be asked more than once, since sync, rebuild, and status checks each open a separate SSH connection).
 
 The script then:
-1. **Syncs** your local project to the VPS via `rsync` (skipping `node_modules`, `venv`, `dist`, `.git`, `sessions`, `.baileys_auth`, `whatsapp-sessions`, logs, and caches)
+1. **Syncs** your local project to the VPS via `rsync` (skipping `node_modules`, `venv`, `dist`, `.git`, `sessions`, `.baileys_auth`, logs, and caches)
 2. **Rebuilds** the Docker image on the VPS (`docker compose up -d --build`), which recompiles the TypeScript bot and restarts the container
 3. **Shows** the container status so you can confirm it came up healthy
 

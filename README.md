@@ -164,12 +164,10 @@ CREATE DATABASE pesapilot OWNER pesapilot_user;
 3. Import the schema:
 
 ```bash
-# Local/VPS PostgreSQL install:
 PGPASSWORD="StrongPassword123!" psql -h 127.0.0.1 -p 5432 -U pesapilot_user -d pesapilot -f schema/init_db.sql
-
-# Or, if Postgres is running in Docker (docker-compose.yml's `db` service):
-docker exec -i pesapilot-db psql -U pesapilot -d pesapilot < schema/init_db.sql
 ```
+
+> **PostgreSQL never runs inside Docker in this project.** `docker-compose.yml` only builds and runs the app/bot container — it has no `db` service, and there is no `pesapilot-db` container to `docker exec` into. Postgres always runs on the host machine (or a separate remote server), and `POSTGRES_HOST=auto` in `src/database.py` is what lets the containerized app reach it from inside Docker. Always run the `psql` command above from a machine that has `psql` installed and network access to that Postgres server — never via `docker exec`.
 
 This creates the `transactions` table (including `transaction_cost`, for tracking M-Pesa fees separately from the transaction amount), indexes, and supporting tables required by the app.
 

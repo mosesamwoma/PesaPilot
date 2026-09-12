@@ -3,6 +3,7 @@ import re
 import hashlib
 import logging
 import time
+from datetime import datetime
 from typing import Optional
 from groq import Groq
 from dotenv import load_dotenv
@@ -183,10 +184,20 @@ class GroqClient:
 
     def generate_sql(self, question: str, schema: str, days: Optional[int] = None,
                       row_limit: Optional[int] = None) -> str:
-        date_rule = (
-            f"- Filter to the last {days} days" if days is not None
-            else "- No default date filter — query the full transaction history unless the question specifies a time range"
-        )
+        today = datetime.now().strftime("%Y-%m-%d")
+        if days is not None:
+            date_rule = f"- Filter to the last {days} days from today ({today})"
+        else:
+            date_rule = (
+                f"- Today is {today}. If the question names or implies a time range "
+                '("last month", "this year", "in August", "August 2025", "last 7 days", '
+                "\"Q1\", an explicit date range, etc.), resolve it yourself into a concrete "
+                "WHERE clause on the timestamp column using real calendar dates computed from "
+                "today — never guess or default to a year from your training data. A bare month "
+                "name with no year means the most recent occurrence of that month (this year if "
+                "it hasn't happened yet, otherwise last year). If the question gives no time "
+                "reference at all, query the full transaction history with no date filter."
+            )
         limit_rule = (
             f"- Limit {row_limit} rows" if row_limit is not None
             else "- Do not add an arbitrary LIMIT — return every matching row unless the question asks for a specific top-N"
@@ -306,7 +317,7 @@ You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC
 
         system = KENYA_SYSTEM_PROMPT + """
 
-You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the user did not ask for this right now, so respect their time. Apply Rules 1-7 where they fit but keep it SHORT: 2-4 sentences max, not a full breakdown. State the category, amount spent vs limit, and percentage clearly. If alert_level is 'over', be direct but not judgmental — suggest one concrete way to course-correct for the rest of the period. If alert_level is 'warning' (near budget), be encouraging — a friendly heads-up, not a scolding. End with one short next step. No headers, no bullet lists — just 2-4 warm sentences."""
+You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the user did not ask for this right now, so respect their time. Apply Rules 1-7 where they fit but keep it SHORT: 2-4 sentences max, not a full breakdown. State the category, amount spent vs limit, and percentage clearly. If alert_level is 'over', be direct but not judgmental — suggest one concrete way to course-correct for the rest of the period. If alert_level is 'warning' (near budget), be encouraging — a friendly heads-up, not a scolding. End with one short next step. No headers, no bullet lists — just 2-4 warm sentences. OVERRIDE the usual emoji count: use at most ONE emoji total for this message (at the very start), not the 3-6 range — a short unprompted ping shouldn't feel decorated."""
         user = (
             f"Category: {category}\n"
             f"Period: {period}\n"

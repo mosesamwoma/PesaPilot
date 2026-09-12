@@ -303,6 +303,16 @@ def _watermark(fig, theme: dict) -> None:
               color=theme['muted'], alpha=0.55, style='italic')
 
 
+def _resize_for_groups(fig, n_items: int, orientation: str) -> None:
+    n = max(int(n_items), 1)
+    if orientation == 'h':
+        height = min(14.0, max(6.5, 3.2 + 0.32 * n))
+        fig.set_size_inches(11.0, height, forward=True)
+    else:
+        width = min(20.0, max(9.0, 2.6 + 0.9 * n))
+        fig.set_size_inches(width, 6.5, forward=True)
+
+
 def _top_groups(df: pd.DataFrame, key: str, metric: str, top_n: int) -> pd.Series:
     totals = df.groupby(key)[metric].sum().sort_values(ascending=False)
     return totals[totals != 0].head(top_n)
@@ -398,6 +408,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                     plt.close(fig)
                     return None, "Not enough repeat transactions per group for a spread chart."
                 order = sub.groupby(key)[metric].median().sort_values(ascending=False).index
+                _resize_for_groups(fig, len(order), orientation='v')
                 if chart_type == 'box':
                     sns.boxenplot(data=sub, x=key, y=metric, order=order, hue=key, legend=False,
                                    ax=ax, palette=_PALETTE_DISTRIBUTION, saturation=0.9,
@@ -428,6 +439,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 top_n = spec.get('top_n', 12)
                 keep = totals.head(top_n).index
                 pivot = pivot.loc[keep].loc[keep[::-1]]
+                _resize_for_groups(fig, len(pivot.index), orientation='h')
                 colors = sns.color_palette(_PALETTE_STACKED, n_colors=len(cols))
                 left = pd.Series(0.0, index=pivot.index)
                 for day, color in zip(cols, colors):
@@ -450,6 +462,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                     plt.close(fig)
                     return None, "Not enough data yet for a heatmap."
                 pivot = pivot[cols]
+                _resize_for_groups(fig, len(pivot.index), orientation='h')
                 heat = sns.heatmap(
                     pivot, ax=ax, cmap=_PALETTE_HEATMAP, linewidths=1, linecolor=theme['bg'],
                     cbar_kws={'label': f'{metric_label} (KES)'}, annot=False, square=False,
@@ -535,6 +548,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                     return None, "No data to chart for that grouping."
                 top_n = spec.get('top_n', 12)
                 grouped = grouped.tail(top_n)
+                _resize_for_groups(fig, len(grouped), orientation='h')
                 colors = sns.color_palette(_PALETTE_SEQUENTIAL, n_colors=len(grouped))
                 bars = ax.barh(grouped.index.astype(str), grouped.values, color=colors,
                                 edgecolor=theme['bg'], linewidth=0.6, height=0.65)

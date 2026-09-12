@@ -2,6 +2,7 @@ import re
 import pandas as pd
 from lxml import etree
 from datetime import datetime
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class MpesaParser:
     )
     _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')
 
-    def parse_xml_to_csv(self, xml_path: str, output_path: str = None) -> pd.DataFrame:
+    def parse_xml_to_csv(self, xml_path: str, output_path: Optional[str] = None) -> pd.DataFrame:
         logger.info(f"Parsing XML: {xml_path}")
         transactions = []
 
@@ -68,7 +69,7 @@ class MpesaParser:
     def _is_mpesa(self, body: str) -> bool:
         return bool(re.search(r'M-PESA|MPESA|Ksh|KSh', body, re.IGNORECASE))
 
-    def _parse_sms(self, elem) -> dict:
+    def _parse_sms(self, elem) -> Optional[dict]:
         body = elem.get('body', '')
         raw_date = elem.get('date', '')
         readable_date = elem.get('readable_date', '')
@@ -109,7 +110,7 @@ class MpesaParser:
             logger.debug(f"Failed to parse SMS: {e}")
             return None
 
-    def _parse_sms_text(self, body: str) -> dict:
+    def _parse_sms_text(self, body: str) -> Optional[dict]:
         try:
             amount = self._extract_amount(body)
             if amount is None:
@@ -187,7 +188,7 @@ class MpesaParser:
             return 'credit'
         if any(k in body_lower for k in ['paid to', 'pay bill', 'paybill', 'buy goods', 'sent to', 'lipa na mpesa']):
             return 'payment'
-        if any(k in body_lower for k in ['withdrew', 'withdrawal', 'cash out']):
+        if any(k in body_lower for k in ['withdraw', 'withdrew', 'cash out']):
             return 'withdrawal'
         if any(k in body_lower for k in ['airtime', 'data bundle', 'bundle']):
             return 'airtime'
@@ -210,11 +211,11 @@ class MpesaParser:
                 return name.title()
         return 'Unknown'
 
-    def _extract_phone(self, body: str) -> str:
+    def _extract_phone(self, body: str) -> Optional[str]:
         m = re.search(r'(07\d{8}|2547\d{8}|\+2547\d{8})', body)
         return m.group(1) if m else None
 
-    def _extract_transaction_id(self, body: str) -> str:
+    def _extract_transaction_id(self, body: str) -> Optional[str]:
         m = re.search(r'\b([A-Z][A-Z0-9]{9,})\b', body)
         if not m:
             return None

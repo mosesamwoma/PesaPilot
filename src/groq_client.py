@@ -3,6 +3,7 @@ import re
 import hashlib
 import logging
 import time
+from typing import Optional
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -131,8 +132,8 @@ class GroqClient:
         self.reasoning_effort = os.getenv('LLM_REASONING_EFFORT', 'low')
         self.timeout = int(os.getenv('API_TIMEOUT', 20))
 
-    def _chat(self, system: str, user: str, model: str = None, timeout: int = None,
-              max_tokens: int = None) -> str:
+    def _chat(self, system: str, user: str, model: Optional[str] = None, timeout: Optional[int] = None,
+              max_tokens: Optional[int] = None) -> str:
         resolved_model = model or self.model_fast
         resolved_timeout = timeout if timeout is not None else self.timeout
         try:
@@ -162,8 +163,8 @@ class GroqClient:
             logger.error(f"Groq API error (model={resolved_model}, timeout={resolved_timeout}): {e}")
             return ""
 
-    def _cached_chat(self, system: str, user: str, ttl: int, model: str = None,
-                      max_tokens: int = None) -> str:
+    def _cached_chat(self, system: str, user: str, ttl: int, model: Optional[str] = None,
+                      max_tokens: Optional[int] = None) -> str:
         cached = _cache.get(system, user)
         if cached is not None:
             return cached
@@ -180,7 +181,8 @@ class GroqClient:
     def cache_size() -> int:
         return _cache.size
 
-    def generate_sql(self, question: str, schema: str, days: int = None, row_limit: int = None) -> str:
+    def generate_sql(self, question: str, schema: str, days: Optional[int] = None,
+                      row_limit: Optional[int] = None) -> str:
         date_rule = (
             f"- Filter to the last {days} days" if days is not None
             else "- No default date filter — query the full transaction history unless the question specifies a time range"

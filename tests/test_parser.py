@@ -30,6 +30,14 @@ def test_type_withdrawal():
     body = "Confirmed. Ksh1000 withdrew from Agent"
     assert parser._determine_type(body) == 'withdrawal'
 
+def test_type_withdrawal_standard_template():
+    body = "Withdraw Ksh1,000.00 from 4045678 - Agent Two, new M-PESA balance is Ksh500.00."
+    assert parser._determine_type(body) == 'withdrawal'
+
+def test_type_withdrawal_past_tense():
+    body = "Confirmed. Ksh1,000.00 withdrawn from 4045678 - AGENT NAME on 8/9/26 at 11:00 AM"
+    assert parser._determine_type(body) == 'withdrawal'
+
 def test_type_airtime():
     body = "Confirmed. Ksh50 airtime purchase"
     assert parser._determine_type(body) == 'airtime'

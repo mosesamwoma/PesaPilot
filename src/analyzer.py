@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, cast
 from src.database import PostgresDB
 from src.groq_client import GroqClient
 from src import forecasting
@@ -22,7 +22,10 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
     agg: Dict = {"row_count": len(results)}
 
     for col in numeric_cols:
-        vals = [r.get(col) for r in results if isinstance(r.get(col), (int, float))]
+        vals: List[Union[int, float]] = [
+            cast(Union[int, float], r.get(col))
+            for r in results if isinstance(r.get(col), (int, float))
+        ]
         if not vals:
             continue
         agg[col] = {
@@ -349,7 +352,7 @@ class MpesaAnalyzer:
 
         return {'success': True, 'summary': summary, 'transaction': tx}
 
-    def load_transactions(self, xml_path: str, csv_output: str = None) -> int:
+    def load_transactions(self, xml_path: str, csv_output: Optional[str] = None) -> int:
         from src.parse_sms import MpesaParser
         parser = MpesaParser()
         df = parser.parse_xml_to_csv(xml_path, output_path=csv_output)

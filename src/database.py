@@ -96,6 +96,8 @@ def _pg_connection_kwargs() -> Dict[str, str]:
             "auto-detection and 5432)."
         )
 
+    assert user is not None and password is not None and db is not None
+
     host_setting = os.getenv('POSTGRES_HOST', 'auto').strip()
     if host_setting.lower() == 'auto' or not host_setting:
         host = _detect_postgres_host()
@@ -128,7 +130,7 @@ class PostgresDB:
         except Exception as e:
             logger.error(f"Error closing connection pool: {e}")
 
-    def _fetch_all(self, sql: str, params: tuple = None) -> List[Dict]:
+    def _fetch_all(self, sql: str, params: Optional[tuple] = None) -> List[Dict]:
         conn = self._pool.getconn()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -142,7 +144,7 @@ class PostgresDB:
         finally:
             self._pool.putconn(conn)
 
-    def _fetch_one(self, sql: str, params: tuple = None) -> Optional[Dict]:
+    def _fetch_one(self, sql: str, params: Optional[tuple] = None) -> Optional[Dict]:
         conn = self._pool.getconn()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -156,7 +158,7 @@ class PostgresDB:
         finally:
             self._pool.putconn(conn)
 
-    def _execute(self, sql: str, params: tuple = None) -> None:
+    def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
         conn = self._pool.getconn()
         try:
             with conn.cursor() as cur:

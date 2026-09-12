@@ -226,10 +226,22 @@ def fetch_chart_data(db, spec: Dict[str, Any]) -> pd.DataFrame:
     if df.empty:
         return df
 
-    df['amount'] = pd.to_numeric(df.get('amount'), errors='coerce').fillna(0)
-    df['transaction_cost'] = pd.to_numeric(df.get('transaction_cost'), errors='coerce').fillna(0)
-    df['merchant_category'] = df.get('merchant_category').fillna('other')
-    df['recipient'] = df.get('recipient').fillna('Unknown')
+    if 'amount' in df.columns:
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+    else:
+        df['amount'] = 0
+    if 'transaction_cost' in df.columns:
+        df['transaction_cost'] = pd.to_numeric(df['transaction_cost'], errors='coerce').fillna(0)
+    else:
+        df['transaction_cost'] = 0
+    if 'merchant_category' in df.columns:
+        df['merchant_category'] = df['merchant_category'].fillna('other')
+    else:
+        df['merchant_category'] = 'other'
+    if 'recipient' in df.columns:
+        df['recipient'] = df['recipient'].fillna('Unknown')
+    else:
+        df['recipient'] = 'Unknown'
     df['count'] = 1
 
     ttype = spec.get('transaction_type', 'spending')

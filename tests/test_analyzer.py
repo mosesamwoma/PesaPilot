@@ -5,10 +5,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from src.analyzer import MpesaAnalyzer
 from src.groq_client import GroqClient
+from tests.conftest import require_test_database, require_groq_key
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _check_prereqs():
+    require_test_database()
+    require_groq_key()
+
 
 @pytest.fixture(scope='module')
 def analyzer():
-    return MpesaAnalyzer()
+    instance = MpesaAnalyzer()
+    yield instance
+    instance.db.close()
+
 
 @pytest.fixture(scope='module')
 def groq():
@@ -18,23 +31,31 @@ def groq():
 def test_groq_connection(groq):
     assert groq.client is not None
 
+
 def test_groq_chat(groq):
     response = groq.chat("Say hello in one word")
     assert isinstance(response, str)
     assert len(response) > 0
 
+
 def test_groq_generate_sql(groq):
     from src.database import PostgresDB
-    schema = PostgresDB().get_schema()
+    db = PostgresDB()
+    try:
+        schema = db.get_schema()
+    finally:
+        db.close()
     sql = groq.generate_sql("How much did I spend on food?", schema)
     assert isinstance(sql, str)
     assert sql.upper().startswith("SELECT"), f"Expected SELECT, got: {sql[:50]}"
+
 
 def test_groq_analyze_results(groq):
     results = [{'merchant_category': 'food', 'total': 3500}]
     analysis = groq.analyze_results("food spending", "SELECT ...", results)
     assert isinstance(analysis, str)
     assert len(analysis) > 10
+
 
 def test_groq_generate_insights(groq):
     summary = {
@@ -52,12 +73,14 @@ def test_analyzer_initializes(analyzer):
     assert analyzer.db is not None
     assert analyzer.groq is not None
 
+
 def test_get_dashboard_data(analyzer):
     data = analyzer.get_dashboard_data(days=30)
     assert isinstance(data, dict)
     expected_keys = ['summary', 'spending_by_category', 'daily_trend', 'anomalies', 'top_merchants']
     for key in expected_keys:
         assert key in data, f"Missing key: {key}"
+
 
 def test_ask_question_returns_structure(analyzer):
     result = analyzer.ask_question("What is my total spending?")
@@ -67,10 +90,12 @@ def test_ask_question_returns_structure(analyzer):
     assert 'sql' in result
     assert 'results' in result
 
+
 def test_ask_question_analysis_not_empty(analyzer):
     result = analyzer.ask_question("How much did I spend this month?")
     assert isinstance(result['analysis'], str)
     assert len(result['analysis']) > 0
+
 
 def test_ask_question_handles_bad_input(analyzer):
     result = analyzer.ask_question("xyzzy nonsense question ???")

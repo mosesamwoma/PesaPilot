@@ -53,7 +53,10 @@ def compute_baselines(transactions: List[Dict]) -> List[Dict]:
         return []
 
     df = df[df["type"].isin(DEBIT_TYPES)].copy()
-    df["merchant_category"] = df.get("merchant_category", "other").fillna("other")
+    if "merchant_category" in df.columns:
+        df["merchant_category"] = df["merchant_category"].fillna("other")
+    else:
+        df["merchant_category"] = "other"
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     df = df.dropna(subset=["amount"])
 
@@ -85,7 +88,10 @@ def detect_anomalies(transactions: List[Dict]) -> List[Dict]:
     if df.empty:
         return []
 
-    df["merchant_category"] = df.get("merchant_category", "other").fillna("other")
+    if "merchant_category" in df.columns:
+        df["merchant_category"] = df["merchant_category"].fillna("other")
+    else:
+        df["merchant_category"] = "other"
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     df["timestamp"] = pd.to_datetime(df.get("timestamp"), format='ISO8601', errors="coerce")
     df = df.dropna(subset=["amount", "timestamp"])

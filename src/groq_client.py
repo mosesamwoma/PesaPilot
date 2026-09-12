@@ -129,16 +129,19 @@ class GroqClient:
 
         self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 1536))
         self.reasoning_effort = os.getenv('LLM_REASONING_EFFORT', 'low')
+        self.timeout = int(os.getenv('API_TIMEOUT', 20))
 
-    def _chat(self, system: str, user: str, model: str = None, timeout: int = 20,
+    def _chat(self, system: str, user: str, model: str = None, timeout: int = None,
               max_tokens: int = None) -> str:
         resolved_model = model or self.model_fast
+        resolved_timeout = timeout if timeout is not None else self.timeout
         try:
             resp = self.client.chat.completions.create(
                 model=resolved_model,
                 temperature=self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
                 reasoning_effort=self.reasoning_effort,
+                timeout=resolved_timeout,
                 messages=[
                     {'role': 'system', 'content': system},
                     {'role': 'user',   'content': user},
@@ -156,7 +159,7 @@ class GroqClient:
 
             return content
         except Exception as e:
-            logger.error(f"Groq API error (model={resolved_model}): {e}")
+            logger.error(f"Groq API error (model={resolved_model}, timeout={resolved_timeout}): {e}")
             return ""
 
     def _cached_chat(self, system: str, user: str, ttl: int, model: str = None,

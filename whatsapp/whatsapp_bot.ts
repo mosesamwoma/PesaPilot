@@ -93,9 +93,9 @@ function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
     console.log('🤖 PesaPilot WhatsApp Bot v2.1 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
-    console.log(`✅ Phone Number : ${config.mainNumber}`);
+    console.log(`✅ Phone Number : configured`);
     console.log(`✅ LID          : configured`);
-    console.log(`✅ PIN          : ${config.whatsappPin}`);
+    console.log(`✅ PIN          : configured`);
     console.log(`🔗 API URL      : ${config.apiUrl}`);
     console.log(`📂 Auth path    : ${config.authPath}`);
     console.log(`🔑 Login mode   : ${config.usePairingCode ? 'Pairing code' : 'QR code'}`);
@@ -447,7 +447,7 @@ async function startBaileys(): Promise<WASocket> {
                 console.log(`🤖 Bot WhatsApp ID : ${sock.user?.id || 'Unknown'}`);
                 console.log(`🔗 API             : ${config.apiUrl}`);
                 console.log('\n💬 Commands: Summary, Help, Bar chart, Pie chart, Trend');
-                console.log(`📝 Manual entry: ${config.whatsappPin}-SMS_CONTENT\n`);
+                console.log(`📝 Manual entry: PIN-SMS_CONTENT\n`);
             }
 
             if (connection === 'close') {

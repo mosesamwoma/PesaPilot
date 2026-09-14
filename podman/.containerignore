@@ -14,7 +14,6 @@ node_modules/
 .pytest_cache/
 .coverage
 htmlcov/
-
 # Local environment and secrets
 .env
 .env.*
@@ -22,7 +21,6 @@ htmlcov/
 .gitignore
 *.log
 *.log.*
-
 # Build output / generated artifacts
 build/
 dist/
@@ -32,13 +30,11 @@ dist/
 *.xlsx
 *.db
 *.sqlite3
-
 # App runtime data that should be created in container
 data/
 sessions/
 .wwebjs_auth/
 .baileys_auth/
-
 # Editors / OS noise
 .vscode/
 .idea/

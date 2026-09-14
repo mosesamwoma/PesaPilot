@@ -20,3 +20,4 @@ data/processed/*
 assets/whatsapp.mp4
 sessions/*
 !sessions/.gitkeep
+*.sqlite3

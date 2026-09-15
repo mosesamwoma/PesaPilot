@@ -91,7 +91,7 @@ validateConfig(config);
 
 function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
-    console.log('🤖 PesaPilot WhatsApp Bot v2.1 (Baileys TypeScript)');
+    console.log('🤖 PesaPilot WhatsApp Bot v1.2 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`✅ Phone Number : configured`);
     console.log(`✅ LID          : configured`);

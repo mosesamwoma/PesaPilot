@@ -261,7 +261,7 @@ def generate_daily_summary() -> str:
         logger.error(f"Daily summary error: {e}")
         return "⚠️ Could not generate summary. Please try again."
 
-app = FastAPI(title="PesaPilot API", version="2.1")
+app = FastAPI(title="PesaPilot API", version="1.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -311,7 +311,7 @@ async def health():
     return {
         "status": "healthy",
         "service": "PesaPilot API",
-        "version": "2.1",
+        "version": "1.2",
         "port": WHATSAPP_API_PORT,
         "timestamp": datetime.now().isoformat()
     }
@@ -461,7 +461,7 @@ async def ask_question(request: QuestionRequest):
             return AnalysisResponse(question=question, analysis=analysis, chart=chart_img)
 
         if question_lower == 'help':
-            help_text = """🤖 **PesaPilot v2.1 - Your AI Financial Assistant**
+            help_text = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
 
 📊 **CHARTS** (Describe what you want, in your own words):
   • "Pie chart of my spending by category last month"

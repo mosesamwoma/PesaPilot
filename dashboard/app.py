@@ -142,7 +142,7 @@ CHART_TRIGGER_WORDS = [
     'show me my spending', 'show my spending', 'transaction costs', 'transaction fees',
 ]
 
-HELP_TEXT = """🤖 **PesaPilot v2.1 - Your AI Financial Assistant**
+HELP_TEXT = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
 
 📊 **CHARTS** (Describe what you want, in your own words):
   • "Pie chart of my spending by category last month"

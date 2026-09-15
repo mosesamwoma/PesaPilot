@@ -22,7 +22,7 @@ if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
 }
 
 console.log('\n═══════════════════════════════════════════════════════');
-console.log('🤖 PesaPilot WhatsApp Bot v2.1');
+console.log('🤖 PesaPilot WhatsApp Bot v1.2');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`✅ Phone Number : configured`);
 console.log(`✅ LID          : configured`);

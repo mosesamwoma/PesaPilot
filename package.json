@@ -1,6 +1,6 @@
 {
   "name": "pesapilot",
-  "version": "2.1.0",
+  "version": "1.2.0",
   "description": "AI-powered M-Pesa financial assistant. Parses your SMS transaction history, stores it in a self-hosted PostgreSQL database, and gives you real-time spending insights powered by Groq AI.",
   "main": "dist/whatsapp_bot.js",
   "directories": {

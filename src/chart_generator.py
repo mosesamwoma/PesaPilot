@@ -438,7 +438,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                 totals = pivot.sum(axis=1).sort_values(ascending=False)
                 top_n = spec.get('top_n', 12)
                 keep = totals.head(top_n).index
-                pivot = pivot.loc[keep].loc[keep[::-1]]
+                pivot = pivot.loc[keep[::-1]]
                 _resize_for_groups(fig, len(pivot.index), orientation='h')
                 colors = sns.color_palette(_PALETTE_STACKED, n_colors=len(cols))
                 left = pd.Series(0.0, index=pivot.index)

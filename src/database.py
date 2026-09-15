@@ -197,7 +197,8 @@ class PostgresDB:
                     rec[k] = v.isoformat()
             tx_id = rec.get('transaction_id')
             if tx_id is None or str(tx_id).strip() == '':
-                logger.warning(f"Skipping transaction with no ID: {rec.get('body')[:80] if rec.get('body') else rec}")
+                body_preview = str(rec.get('body') or '(no body)')[:80]
+                logger.warning(f"Skipping transaction with no ID: {body_preview}")
                 continue
             rec['transaction_id'] = str(tx_id).strip()
             valid_records.append(rec)

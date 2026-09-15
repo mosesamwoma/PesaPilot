@@ -192,13 +192,6 @@ CATEGORY_SYNONYMS = {
     'other': ['other', 'miscellaneous', 'misc'],
 }
 
-def extract_category_filter(question_lower: str) -> Optional[str]:
-    for category, synonyms in CATEGORY_SYNONYMS.items():
-        for synonym in synonyms:
-            if synonym in question_lower:
-                return category
-    return None
-
 def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending Forecast") -> Optional[str]:
     try:
         hist_pts = forecast_data.get('historical', [])[-60:]

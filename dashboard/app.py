@@ -238,14 +238,6 @@ def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
     return default
 
 
-def extract_category_filter(question_lower: str) -> Optional[str]:
-    for category, synonyms in CATEGORY_SYNONYMS.items():
-        for synonym in synonyms:
-            if synonym in question_lower:
-                return category
-    return None
-
-
 def generate_daily_summary_text(analyzer: "MpesaAnalyzer") -> str:
     try:
         summary = analyzer.db.get_today_summary()

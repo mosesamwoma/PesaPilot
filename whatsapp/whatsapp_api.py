@@ -34,7 +34,7 @@ WHATSAPP_MAIN_NUMBER = os.getenv('WHATSAPP_MAIN_NUMBER')
 if not WHATSAPP_PIN:
     raise ValueError("WHATSAPP_PIN must be set in .env")
 
-DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC']
+DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'ATTACH', 'REPLACE', 'MERGE', 'CALL']
 
 FORECAST_KEYWORDS = [
     'forecast', 'spending prediction', 'predict my spending', 'spending forecast',

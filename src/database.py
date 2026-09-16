@@ -266,7 +266,7 @@ class PostgresDB:
             logger.error(f"Query failed: {e}")
             return []
 
-    def get_transactions(self, days: Optional[int] = 30, limit: int = 1000) -> List[Dict]:
+    def get_transactions(self, days: Optional[int] = 30, limit: Optional[int] = 1000) -> List[Dict]:
         since = _since(days)
         try:
             if since is None:
@@ -532,7 +532,7 @@ class PostgresDB:
             logger.error(f"get_daily_trend failed: {e}")
             return []
 
-    def get_top_merchants(self, days: Optional[int] = 30, limit: int = 10) -> List[Dict]:
+    def get_top_merchants(self, days: Optional[int] = 30, limit: Optional[int] = 10) -> List[Dict]:
         since = _since(days)
         try:
             if since is None:

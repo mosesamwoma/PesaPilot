@@ -81,7 +81,7 @@ PLOTLY_DARK: dict[str, Any] = dict(
 )
 
 
-DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC']
+DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'ATTACH', 'REPLACE', 'MERGE', 'CALL']
 
 FORECAST_KEYWORDS = [
     'forecast', 'spending prediction', 'predict my spending', 'spending forecast',

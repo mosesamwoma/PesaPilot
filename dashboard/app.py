@@ -114,6 +114,16 @@ SET_BUDGET_PATTERN = re.compile(
 )
 _HAS_DIGIT = re.compile(r'\d')
 
+
+def _keyword_pattern(word: str) -> re.Pattern:
+    if ' ' in word:
+        return re.compile(re.escape(word), re.IGNORECASE)
+    return re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
+
+
+def _matches_any_keyword(text: str, keywords) -> bool:
+    return any(_keyword_pattern(k).search(text) for k in keywords)
+
 CATEGORY_SYNONYMS = {
     'food': ['food', 'groceries', 'grocery', 'eating', 'restaurant', 'eats', 'lunch', 'dinner', 'kibanda', 'mama mboga'],
     'transport': ['transport', 'fare', 'matatu', 'uber', 'bolt', 'taxi', 'fuel', 'petrol', 'boda'],
@@ -470,7 +480,7 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         content = clean_response(header + result.get('insight', ''))
         return {'content': content, 'sql': None, 'results': None, 'fig': fig}
 
-    if any(w in question_lower for w in CHART_TRIGGER_WORDS):
+    if _matches_any_keyword(question_lower, CHART_TRIGGER_WORDS):
         logger.info("📊 DYNAMIC CHART")
         chart_result = analyzer.generate_dynamic_chart(question, dark=True)
         fig = chart_result['fig']

@@ -63,6 +63,14 @@ SET_BUDGET_PATTERN = re.compile(
 )
 _HAS_DIGIT = re.compile(r'\d')
 
+def _keyword_pattern(word: str) -> re.Pattern:
+    if ' ' in word:
+        return re.compile(re.escape(word), re.IGNORECASE)
+    return re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
+
+def _matches_any_keyword(text: str, keywords) -> bool:
+    return any(_keyword_pattern(k).search(text) for k in keywords)
+
 class QuestionRequest(BaseModel):
     question: str
 
@@ -448,7 +456,7 @@ async def ask_question(request: QuestionRequest):
             'how did i spend', 'proportion', 'percentage of my spending', 'compare my spending',
             'show me my spending', 'show my spending', 'transaction costs', 'transaction fees',
         ]
-        if any(w in question_lower for w in CHART_TRIGGER_WORDS):
+        if _matches_any_keyword(question_lower, CHART_TRIGGER_WORDS):
             logger.info("📊 DYNAMIC CHART")
             chart_result = analyzer.generate_dynamic_chart(question, dark=False)
             fig = chart_result['fig']

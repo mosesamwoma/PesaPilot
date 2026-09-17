@@ -705,7 +705,7 @@ class PostgresDB:
             logger.error(f"save_anomalies failed: {e}")
             return 0
 
-    def get_saved_anomalies(self, days: Optional[int] = 90, limit: int = 20) -> List[Dict]:
+    def get_saved_anomalies(self, days: Optional[int] = 90, limit: Optional[int] = 20) -> List[Dict]:
         try:
             anomaly_rows = self._fetch_all(
                 """

@@ -82,6 +82,7 @@ PLOTLY_DARK: dict[str, Any] = dict(
 
 
 DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'ATTACH', 'REPLACE', 'MERGE', 'CALL']
+_DANGEROUS_KEYWORDS_RE = re.compile(r'\b(?:' + '|'.join(DANGEROUS_KEYWORDS) + r')\b', re.IGNORECASE)
 
 FORECAST_KEYWORDS = [
     'forecast', 'spending prediction', 'predict my spending', 'spending forecast',
@@ -203,10 +204,8 @@ HELP_TEXT = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
 
 
 def is_safe_question(question: str) -> bool:
-    question_upper = question.upper()
-    for keyword in DANGEROUS_KEYWORDS:
-        if keyword in question_upper:
-            return False
+    if _DANGEROUS_KEYWORDS_RE.search(question):
+        return False
     if '--' in question or '/*' in question:
         return False
     return True
@@ -215,7 +214,7 @@ def is_safe_question(question: str) -> bool:
 def clean_response(text: str) -> str:
     jargon = ['postgresql', 'postgres', 'schema', 'database', 'query', 'sql', 'rpc']
     for word in jargon:
-        text = re.sub(word, '', text, flags=re.IGNORECASE)
+        text = re.sub(rf'\b{re.escape(word)}\b', '', text, flags=re.IGNORECASE)
     return re.sub(r' +', ' ', text).strip()
 
 

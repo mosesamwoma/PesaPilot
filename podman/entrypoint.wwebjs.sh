@@ -188,14 +188,12 @@ fi
 
 echo -e "${BLUE}⏳ Waiting for API to initialize...${NC}"
 
-API_READY=false
 for i in {1..20}; do
     if curl -f "http://127.0.0.1:${API_PORT:-8000}/health" 2>/dev/null; then
-        API_READY=true
         echo -e "${GREEN}✅ API is healthy${NC}\n"
         break
     fi
-    if [ $i -eq 20 ]; then
+    if [ "$i" -eq 20 ]; then
         echo -e "${YELLOW}⚠️  API health check timeout (continuing anyway)${NC}\n"
     else
         echo -e "${BLUE}   Attempt $i/20...${NC}"
@@ -242,17 +240,17 @@ echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 cleanup() {
     echo -e "\n${YELLOW}🛑 Shutting down gracefully...${NC}"
 
-    if kill -0 $API_PID 2>/dev/null; then
+    if kill -0 "$API_PID" 2>/dev/null; then
         echo -e "${BLUE}   Stopping FastAPI (PID: $API_PID)...${NC}"
-        kill -TERM $API_PID 2>/dev/null || true
-        wait $API_PID 2>/dev/null || true
+        kill -TERM "$API_PID" 2>/dev/null || true
+        wait "$API_PID" 2>/dev/null || true
         echo -e "${GREEN}   ✅ FastAPI stopped${NC}"
     fi
 
-    if kill -0 $BOT_PID 2>/dev/null; then
+    if kill -0 "$BOT_PID" 2>/dev/null; then
         echo -e "${BLUE}   Stopping WhatsApp Bot (PID: $BOT_PID)...${NC}"
-        kill -TERM $BOT_PID 2>/dev/null || true
-        wait $BOT_PID 2>/dev/null || true
+        kill -TERM "$BOT_PID" 2>/dev/null || true
+        wait "$BOT_PID" 2>/dev/null || true
         echo -e "${GREEN}   ✅ WhatsApp Bot stopped${NC}"
     fi
 
@@ -267,8 +265,8 @@ wait -n
 echo -e "${RED}❌ A process exited unexpectedly${NC}"
 echo -e "${RED}   API PID: $API_PID, Bot PID: $BOT_PID${NC}"
 
-kill -TERM $API_PID 2>/dev/null || true
-kill -TERM $BOT_PID 2>/dev/null || true
+kill -TERM "$API_PID" 2>/dev/null || true
+kill -TERM "$BOT_PID" 2>/dev/null || true
 wait 2>/dev/null || true
 
 exit 1

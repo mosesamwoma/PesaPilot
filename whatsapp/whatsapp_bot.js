@@ -109,7 +109,6 @@ const client = new Client({
             '--no-default-browser-check',
             '--no-first-run',
             '--password-store=basic',
-            '--single-process',
             '--use-mock-keychain',
             '--window-size=1280,720'
         ]

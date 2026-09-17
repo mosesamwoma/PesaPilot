@@ -113,7 +113,7 @@ if [ -n "$API_URL" ]; then
     export API_URL="$API_URL"
     echo -e "${BLUE}   Using API_URL: $API_URL${NC}"
 else
-    export API_URL="http://127.0.0.1:${API_PORT:-8000}"
+    export API_URL="http://127.0.0.1:${WHATSAPP_API_PORT:-8000}"
     echo -e "${BLUE}   Default API_URL: $API_URL${NC}"
 fi
 
@@ -121,7 +121,7 @@ echo -e "${GREEN}✅ API_URL configured${NC}\n"
 
 echo -e "${YELLOW}🧹 Step 4: Cleaning Chrome lock files...${NC}"
 
-AUTH_PATH="/app/.wwebjs_auth"
+AUTH_PATH="${WWEBJS_AUTH_PATH:-/app/.wwebjs_auth}"
 
 if [ ! -d "$AUTH_PATH" ]; then
     mkdir -p "$AUTH_PATH"
@@ -180,7 +180,7 @@ if [ -f "/app/whatsapp/whatsapp_api.py" ]; then
     python -m whatsapp.whatsapp_api &
     API_PID=$!
     echo -e "${GREEN}✅ FastAPI started (PID: $API_PID)${NC}"
-    echo -e "${BLUE}   Listening on: http://0.0.0.0:${API_PORT:-8000}${NC}\n"
+    echo -e "${BLUE}   Listening on: http://0.0.0.0:${WHATSAPP_API_PORT:-8000}${NC}\n"
 else
     echo -e "${RED}❌ whatsapp/whatsapp_api.py not found!${NC}"
     exit 1
@@ -189,7 +189,7 @@ fi
 echo -e "${BLUE}⏳ Waiting for API to initialize...${NC}"
 
 for i in {1..20}; do
-    if curl -f "http://127.0.0.1:${API_PORT:-8000}/health" 2>/dev/null; then
+    if curl -f "http://127.0.0.1:${WHATSAPP_API_PORT:-8000}/health" 2>/dev/null; then
         echo -e "${GREEN}✅ API is healthy${NC}\n"
         break
     fi
@@ -232,7 +232,7 @@ echo -e "${GREEN}🚀 PesaPilot is ONLINE and READY${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
 
 echo -e "${BLUE}📊 Running processes:${NC}"
-echo -e "${BLUE}   API:  http://0.0.0.0:${API_PORT:-8000}${NC}"
+echo -e "${BLUE}   API:  http://0.0.0.0:${WHATSAPP_API_PORT:-8000}${NC}"
 echo -e "${BLUE}   Bot:  WhatsApp Web (Headless)${NC}"
 echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 

@@ -587,7 +587,7 @@ async def parse_sms(request: ParseSMSRequest):
         if result.get('success'):
             return ParseSMSResponse(
                 success=True,
-                summary=f"✅ {result.get('summary', 'SMS parsed successfully')}"
+                summary=result.get('summary', '✅ SMS parsed successfully')
             )
         else:
             return ParseSMSResponse(

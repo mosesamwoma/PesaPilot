@@ -37,10 +37,14 @@ def _feature_matrix(df: pd.DataFrame) -> np.ndarray:
 
 def _mad_scores(amounts: pd.Series) -> Tuple[pd.Series, float, float]:
     median = amounts.median()
-    mad = (amounts - median).abs().median()
+    deviations = (amounts - median).abs()
+    mad = deviations.median()
     if mad == 0:
-        return pd.Series([0.0] * len(amounts), index=amounts.index), median, mad
-    modified_z = 0.6745 * (amounts - median).abs() / mad
+        mean_ad = deviations.mean()
+        if not mean_ad or pd.isna(mean_ad):
+            return pd.Series([0.0] * len(amounts), index=amounts.index), median, mad
+        return deviations / (1.253314 * mean_ad), median, mad
+    modified_z = 0.6745 * deviations / mad
     return modified_z, median, mad
 
 

@@ -94,3 +94,13 @@ def test_evaluate_budgets_defaults_threshold_when_missing():
     due = budget_monitor.evaluate_budgets(rows, set())
     assert len(due) == 1
     assert due[0]['alert_level'] == budget_monitor.ALERT_WARNING
+
+
+def test_clamp_score_keeps_values_inside_decimal_6_3():
+    from src.database import _clamp_score
+
+    assert _clamp_score(33718.255) == 999.999
+    assert _clamp_score(-5000) == -999.999
+    assert _clamp_score(1.234) == 1.234
+    assert _clamp_score(None) is None
+    assert _clamp_score("not a number") is None

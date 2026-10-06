@@ -38,8 +38,8 @@ RUN node --version && npm --version && google-chrome-stable --version
 
 WORKDIR /app
 
-COPY podman/entrypoint.wwebjs.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY podman/entrypoint_wwebjs.sh /app/entrypoint_wwebjs.sh
+RUN chmod +x /app/entrypoint_wwebjs.sh
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
@@ -63,4 +63,4 @@ RUN mkdir -p data/raw data/processed data/sessions \
 ENV NODE_ENV=production
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["./entrypoint_wwebjs.sh"]

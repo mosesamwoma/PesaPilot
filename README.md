@@ -112,6 +112,10 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 | `WWEBJS_AUTH_PATH` | `./.wwebjs_auth` | whatsapp-web.js session storage |
 | `LLM_REASONING_EFFORT` | `low` | `low` / `medium` / `high` |
 | `API_TIMEOUT` | `20` | Seconds before a Groq call is aborted |
+| `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. The API has no authentication — only use `0.0.0.0` behind a firewall/reverse proxy |
+| `CORS_ORIGINS` | localhost origins | Comma-separated browser origins allowed to call the API |
+| `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log level |
+| `WHATSAPP_QR_LINK` | `false` | Also print a third-party (api.qrserver.com) image link for the login QR. Off by default because the QR is a device-linking secret |
 
 > `.env.example` also lists a few unused placeholders (`APP_ENV`, `DEBUG`, `SECRET_KEY`, etc.) — safe to ignore.
 
@@ -258,7 +262,7 @@ docker compose up -d --build
 docker compose logs -f pesapilot
 ```
 
-Health check: `http://YOUR_VPS_IP:8000/health`
+Health check (run on the VPS — the API is bound to `127.0.0.1` by default): `curl http://127.0.0.1:8000/health`
 
 **Persisted (bind mounts):**
 
@@ -284,11 +288,11 @@ docker compose exec pesapilot rm -rf /app/.baileys_auth
 docker compose restart pesapilot
 ```
 
-**Test the API:**
+**Test the API** (run these on the VPS, or via `ssh -L 8000:127.0.0.1:8000 user@YOUR_VPS_IP` from your laptop):
 ```bash
-curl http://YOUR_VPS_IP:8000/health
+curl http://127.0.0.1:8000/health
 
-curl -X POST http://YOUR_VPS_IP:8000/ask \
+curl -X POST http://127.0.0.1:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What did I spend on food?"}'
 ```

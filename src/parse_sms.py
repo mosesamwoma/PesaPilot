@@ -31,11 +31,21 @@ class MpesaParser:
         r'\bfor\s+',
     ]
     _NAME_BOUNDARY_RE = re.compile(
-        r'([A-Za-z][A-Za-z0-9\s\.\-]{0,58}?)'
+        r'([A-Za-z][A-Za-z0-9\s\.\-\'\u2019\\]{0,88}?)'
         r'(?=\s+(?:on\b|for\b|New\s+M-?PESA\b)|\s+[\d\*]{3,}|[.,]|$)',
         re.IGNORECASE,
     )
     _AGENT_PREFIX_RE = re.compile(r'^[\d]+\s*-\s*')
+    _NON_TRANSACTION_RE = re.compile(
+        r'account balance was|'
+        r'you have cancelled the transaction|'
+        r'transaction failed|'
+        r'cannot complete|'
+        r'do not have enough money|'
+        r'request (?:has\s+)?(?:been\s+)?cancelled|'
+        r'invalid input',
+        re.IGNORECASE,
+    )
 
     def parse_xml_to_csv(self, xml_path: str, output_path: Optional[str] = None) -> pd.DataFrame:
         logger.info(f"Parsing XML: {xml_path}")
@@ -69,6 +79,9 @@ class MpesaParser:
     def _is_mpesa(self, body: str) -> bool:
         return bool(re.search(r'M-PESA|MPESA|Ksh|KSh', body, re.IGNORECASE))
 
+    def _is_non_transaction(self, body: str) -> bool:
+        return bool(self._NON_TRANSACTION_RE.search(body))
+
     def _parse_sms(self, elem) -> Optional[dict]:
         body = elem.get('body', '')
         raw_date = elem.get('date', '')
@@ -76,6 +89,9 @@ class MpesaParser:
         address = elem.get('address', '')
 
         try:
+            if self._is_non_transaction(body):
+                return None
+
             amount = self._extract_amount(body)
             if amount is None:
                 return None
@@ -112,6 +128,9 @@ class MpesaParser:
 
     def _parse_sms_text(self, body: str) -> Optional[dict]:
         try:
+            if self._is_non_transaction(body):
+                return None
+
             amount = self._extract_amount(body)
             if amount is None:
                 return None
@@ -146,7 +165,6 @@ class MpesaParser:
     def _extract_amount(self, body: str):
         patterns = [
             r'Ksh\s?([\d,]+\.?\d*)',
-            r'KSh\s?([\d,]+\.?\d*)',
             r'KES\s?([\d,]+\.?\d*)',
         ]
         for p in patterns:
@@ -184,12 +202,12 @@ class MpesaParser:
 
     def _determine_type(self, body: str) -> str:
         body_lower = body.lower()
-        if any(k in body_lower for k in ['you have received', 'received ksh', 'money in']):
+        if any(k in body_lower for k in ['withdraw', 'withdrew', 'cash out']) or re.search(r'give\s+ksh[\d,.]*\s*cash\s+to', body_lower):
+            return 'withdrawal'
+        if any(k in body_lower for k in ['you have received', 'received ksh', 'money in']) or 'is credited to your m-pesa' in body_lower:
             return 'credit'
         if any(k in body_lower for k in ['paid to', 'pay bill', 'paybill', 'buy goods', 'sent to', 'lipa na mpesa']):
             return 'payment'
-        if any(k in body_lower for k in ['withdraw', 'withdrew', 'cash out']):
-            return 'withdrawal'
         if any(k in body_lower for k in ['airtime', 'data bundle', 'bundle']):
             return 'airtime'
         if any(k in body_lower for k in ['transferred', 'sent ksh', 'transfer']):
@@ -206,7 +224,8 @@ class MpesaParser:
             name_match = self._NAME_BOUNDARY_RE.match(tail)
             if not name_match:
                 continue
-            name = re.sub(r'\s+', ' ', name_match.group(1)).strip(' .-')
+            name = name_match.group(1).replace('\\', '')
+            name = re.sub(r'\s+', ' ', name).strip(' .-')
             if len(name) >= 2 and re.search(r'[A-Za-z]', name):
                 return name.title()
         return 'Unknown'
@@ -216,11 +235,14 @@ class MpesaParser:
         return m.group(1) if m else None
 
     def _extract_transaction_id(self, body: str) -> Optional[str]:
-        m = re.search(r'\b([A-Z][A-Z0-9]{9,})\b', body)
-        if not m:
-            return None
-        tx_id = m.group(1)
-        return tx_id if tx_id and tx_id.upper() != 'M-PESA' else None
+        for m in re.finditer(r'\b([A-Z][A-Z0-9]{9,})\b', body):
+            tx_id = m.group(1)
+            if tx_id.upper() == 'M-PESA':
+                continue
+            if not re.search(r'\d', tx_id):
+                continue
+            return tx_id
+        return None
 
     def _categorize(self, body: str, recipient: str) -> str:
         text = (body + ' ' + (recipient or '')).lower()

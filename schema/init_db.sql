@@ -66,11 +66,13 @@ CREATE TABLE IF NOT EXISTS anomalies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_id UUID REFERENCES transactions(id) ON DELETE CASCADE,
     model TEXT NOT NULL DEFAULT 'category_mad',
-    score DECIMAL(6,3),
+    score DECIMAL(10,3),
     reviewed BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(transaction_id, model)
 );
+
+ALTER TABLE anomalies ALTER COLUMN score TYPE DECIMAL(10,3);
 
 CREATE INDEX IF NOT EXISTS idx_anomalies_tx ON anomalies(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_anomalies_model ON anomalies(model);
@@ -359,8 +361,8 @@ AS $$
             st.period_start,
             st.period_end,
             st.spent_so_far,
-            GREATEST(EXTRACT(EPOCH FROM (LEAST(NOW(), st.period_end) - st.period_start)) / 86400.0, 1) AS days_elapsed,
-            EXTRACT(EPOCH FROM (st.period_end - st.period_start)) / 86400.0 AS period_total_days
+            GREATEST(EXTRACT(EPOCH FROM (LEAST(NOW(), st.period_end) - st.period_start))::numeric / 86400.0, 1) AS days_elapsed,
+            EXTRACT(EPOCH FROM (st.period_end - st.period_start))::numeric / 86400.0 AS period_total_days
         FROM spend_totals st
     )
     SELECT
@@ -407,7 +409,7 @@ AS $$
         tx.timestamp AS tx_timestamp,
         tx.amount,
         tx.prev_timestamp,
-        ROUND(EXTRACT(EPOCH FROM (tx.timestamp - tx.prev_timestamp)) / 86400.0, 1) AS days_since_prev
+        ROUND(EXTRACT(EPOCH FROM (tx.timestamp - tx.prev_timestamp))::numeric / 86400.0, 1) AS days_since_prev
     FROM tx
     WHERE tx.prev_timestamp IS NOT NULL
     ORDER BY tx.recipient, tx.timestamp;

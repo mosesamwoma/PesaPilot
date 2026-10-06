@@ -138,16 +138,19 @@ class GroqClient:
         resolved_model = model or self.model_fast
         resolved_timeout = timeout if timeout is not None else self.timeout
         try:
+            kwargs = {}
+            if 'gpt-oss' in resolved_model.lower():
+                kwargs['reasoning_effort'] = self.reasoning_effort
             resp = self.client.chat.completions.create(
                 model=resolved_model,
                 temperature=self.temperature,
                 max_tokens=max_tokens or self.max_tokens,
-                reasoning_effort=self.reasoning_effort,
                 timeout=resolved_timeout,
                 messages=[
                     {'role': 'system', 'content': system},
                     {'role': 'user',   'content': user},
-                ]
+                ],
+                **kwargs,
             )
             choice = resp.choices[0]
             content = (choice.message.content or "").strip()

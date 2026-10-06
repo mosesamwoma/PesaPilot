@@ -36,12 +36,12 @@ RUN node --version && npm --version
 WORKDIR /app
 
 # ----------------------------------------------------------------
-# Entrypoint (Baileys only — entrypoint.sh stays in the repo as a
-# local-dev/manual fallback for whatsapp-web.js, but is intentionally
-# NOT copied into the shipped image)
+# Entrypoint (Baileys only — podman/entrypoint_wwebjs.sh stays in the repo
+# for the whatsapp-web.js/Podman variant, but is intentionally NOT copied
+# into the shipped image)
 # ----------------------------------------------------------------
-COPY entrypoint.baileys.sh /app/entrypoint.baileys.sh
-RUN chmod +x /app/entrypoint.baileys.sh
+COPY entrypoint_baileys.sh /app/entrypoint_baileys.sh
+RUN chmod +x /app/entrypoint_baileys.sh
 
 # ----------------------------------------------------------------
 # Python deps
@@ -90,4 +90,4 @@ RUN mkdir -p data/raw data/processed data/sessions \
 
 ENV NODE_ENV=production
 
-ENTRYPOINT ["./entrypoint.baileys.sh"]
+ENTRYPOINT ["./entrypoint_baileys.sh"]

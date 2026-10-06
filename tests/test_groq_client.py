@@ -181,3 +181,23 @@ def test_groq_client_chat_warns_on_truncated_response(monkeypatch, caplog):
         result = client._chat('system prompt', 'user prompt')
     assert result == 'cut off'
     assert any('TRUNCATED' in record.message for record in caplog.records)
+
+
+def test_groq_client_only_sends_reasoning_effort_to_gpt_oss(monkeypatch):
+    monkeypatch.setenv('GROQ_API_KEY', 'test-key')
+    monkeypatch.setenv('LLM_REASONING_EFFORT', 'low')
+    client = groq_client.GroqClient()
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return _FakeResponse()
+
+    _install_fake_completions(client, _fake_create)
+
+    client._chat('s', 'u', model='openai/gpt-oss-20b')
+    assert captured['reasoning_effort'] == 'low'
+
+    client._chat('s', 'u', model='llama-3.3-70b-versatile')
+    assert 'reasoning_effort' not in captured

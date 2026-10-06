@@ -3,6 +3,7 @@ import {
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
     DisconnectReason,
+    normalizeMessageContent,
     proto,
 } from '@whiskeysockets/baileys';
 import type { WASocket } from '@whiskeysockets/baileys';
@@ -22,6 +23,7 @@ interface Config {
     apiUrl: string;
     authPath: string;
     usePairingCode: boolean;
+    showQrLink: boolean;
     logLevel: string;
 }
 
@@ -65,6 +67,7 @@ const config: Config = {
     apiUrl: process.env.API_URL || 'http://127.0.0.1:8000',
     authPath: process.env.BAILEYS_AUTH_PATH || './.baileys_auth',
     usePairingCode: (process.env.WHATSAPP_USE_PAIRING_CODE || 'false').toLowerCase() === 'true',
+    showQrLink: (process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true',
     logLevel: process.env.BAILEYS_LOG_LEVEL || 'info',
 };
 
@@ -133,8 +136,12 @@ function stripSuffix(jid: string): string {
     return (jid || '').replace(/@.*$/, '');
 }
 
+function toWhatsAppFormat(text: string): string {
+    return (text || '').replace(/\*\*(.+?)\*\*/g, '*$1*');
+}
+
 function extractText(msg: proto.IWebMessageInfo): string {
-    const m = msg.message;
+    const m = normalizeMessageContent(msg.message);
     if (!m) return '';
 
     if (m.conversation) return m.conversation;
@@ -241,10 +248,14 @@ async function handleManualSms(smsContent: string, sock: WASocket, jid: string, 
     try {
         const response = await callApi<ParseSMSResponse>('/parse-sms', 'POST', { sms_content: smsContent });
         if (response.success) {
-            await sock.sendMessage(jid, { text: response.summary }, { quoted: msg });
+            await sock.sendMessage(jid, { text: toWhatsAppFormat(response.summary) }, { quoted: msg });
             await react(sock, jid, msg.key, '✅');
         } else {
-            await sock.sendMessage(jid, { text: `❌ ${response.error}` }, { quoted: msg });
+            await sock.sendMessage(
+                jid,
+                { text: response.summary || (response.error ? `❌ ${response.error}` : '❌ Could not parse SMS') },
+                { quoted: msg }
+            );
             await react(sock, jid, msg.key, '❌');
         }
     } catch (error) {
@@ -260,18 +271,27 @@ async function handleQuestion(userMessage: string, sock: WASocket, jid: string, 
         const response = await callApi<MessageResponse>('/ask', 'POST', { question: userMessage });
 
         if (response.chart) {
+            const analysisText = toWhatsAppFormat(response.analysis || '');
+            const CAPTION_LIMIT = 1000;
             try {
                 const buffer = Buffer.from(response.chart, 'base64');
+                const captionFits = analysisText.length <= CAPTION_LIMIT;
                 await sock.sendMessage(
                     jid,
-                    { image: buffer, caption: response.analysis || '📊 Chart' },
+                    { image: buffer, caption: captionFits ? (analysisText || '📊 Chart') : '📊 Chart' },
                     { quoted: msg }
                 );
+                if (!captionFits) {
+                    for (const chunk of splitMessage(analysisText.substring(0, 4000), 3000)) {
+                        await sock.sendMessage(jid, { text: chunk }, { quoted: msg });
+                        await sleep(500);
+                    }
+                }
                 await react(sock, jid, msg.key, '📊');
             } catch (chartError) {
                 await sock.sendMessage(
                     jid,
-                    { text: `${response.analysis}\n\n(Chart unavailable)` },
+                    { text: `${analysisText}\n\n(Chart unavailable)` },
                     { quoted: msg }
                 );
                 await react(sock, jid, msg.key, '✅');
@@ -279,7 +299,7 @@ async function handleQuestion(userMessage: string, sock: WASocket, jid: string, 
             return;
         }
 
-        let analysis = response.analysis || 'No response';
+        let analysis = toWhatsAppFormat(response.analysis || 'No response');
         if (analysis.length > 4000) {
             analysis = analysis.substring(0, 4000) + '\n\n...(truncated)';
         }
@@ -431,10 +451,12 @@ async function startBaileys(): Promise<WASocket> {
                     console.warn(`⚠️  QR rendering error: ${(e as Error).message}`);
                 }
 
-                const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-                console.log('\n📱 QR Code data (if above is not visible):');
-                console.log(qr.substring(0, 100) + '...');
-                console.log(`\n🔗 Or open this link on your phone browser:\n${qrServerUrl}\n`);
+                if (config.showQrLink) {
+                    const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+                    console.log(`\n🔗 QR image link (third-party service, opt-in):\n${qrServerUrl}\n`);
+                } else {
+                    console.log('\n💡 QR unreadable in your terminal? Set WHATSAPP_USE_PAIRING_CODE=true to link with a code instead.');
+                }
                 console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
             }
 
@@ -461,7 +483,9 @@ async function startBaileys(): Promise<WASocket> {
                     console.error('\n❌ Session logged out. Clearing auth so you can re-pair.');
                     console.error('   Exiting; the container restart will show a fresh QR/pairing code.\n');
                     try {
-                        fs.rmSync(config.authPath, { recursive: true, force: true });
+                        for (const entry of fs.readdirSync(config.authPath)) {
+                            fs.rmSync(`${config.authPath}/${entry}`, { recursive: true, force: true });
+                        }
                     } catch (e) {
                         console.warn(`⚠️  Could not clear auth: ${(e as Error).message}`);
                     }
@@ -515,7 +539,7 @@ function setupDailySummary(): void {
         try {
             const response = await callApi<DailySummaryResponse>('/daily-summary');
             const summaryText = response?.summary || '⚠️ Could not generate summary.';
-            await currentSock.sendMessage(DAILY_SUMMARY_JID, { text: summaryText });
+            await currentSock.sendMessage(DAILY_SUMMARY_JID, { text: toWhatsAppFormat(summaryText) });
             console.log('✅ Daily summary sent successfully\n');
         } catch (error) {
             const err = error as Error;
@@ -553,7 +577,7 @@ function setupBudgetCheck(): void {
             for (const alert of alerts) {
                 const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
                 await currentSock.sendMessage(BUDGET_ALERT_JID, {
-                    text: `${icon} ${alert.message}`,
+                    text: `${icon} ${toWhatsAppFormat(alert.message)}`,
                 });
                 await sleep(500);
             }
@@ -570,7 +594,7 @@ function setupBudgetCheck(): void {
 setupBudgetCheck();
 
 
-async function shutdown(signal: string): Promise<void> {
+async function shutdown(signal: string, exitCode = 0): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n👋 Received ${signal}, shutting down...`);
@@ -581,7 +605,7 @@ async function shutdown(signal: string): Promise<void> {
     } catch (e) {
         console.warn(`⚠️  Error during shutdown: ${(e as Error).message}`);
     }
-    process.exit(0);
+    process.exit(exitCode);
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -593,7 +617,7 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught exception:', err);
-    shutdown('uncaughtException');
+    shutdown('uncaughtException', 1);
 });
 
 

@@ -38,6 +38,18 @@ def _serialize_row(row: dict) -> dict:
     return {k: _serialize_value(v) for k, v in row.items()}
 
 
+_MAX_SCORE = 999.999
+
+
+def _clamp_score(score):
+    if score is None:
+        return None
+    try:
+        return max(-_MAX_SCORE, min(_MAX_SCORE, float(score)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _since(days: Optional[int]) -> Optional[datetime]:
     return datetime.now() - timedelta(days=days) if days is not None else None
 
@@ -695,7 +707,7 @@ class PostgresDB:
                 (
                     a['transaction_id'],
                     a.get('model', 'isolation_forest_v1'),
-                    a.get('score'),
+                    _clamp_score(a.get('score')),
                 )
                 for a in anomalies
             ]

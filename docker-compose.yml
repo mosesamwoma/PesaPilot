@@ -14,7 +14,10 @@ services:
     container_name: pesapilot-bot
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # The API has no authentication, so it is published on the host's
+      # loopback only. To expose it elsewhere set API_BIND=0.0.0.0 in .env
+      # (and put it behind a firewall / reverse proxy with auth).
+      - "${API_BIND:-127.0.0.1}:8000:8000"
     environment:
       # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}
@@ -39,6 +42,8 @@ services:
       - LLM_MODEL_SMART=${LLM_MODEL_SMART:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.6}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-1536}
+      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-low}
+      - API_TIMEOUT=${API_TIMEOUT:-20}
 
       # WhatsApp
       - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
@@ -49,6 +54,9 @@ services:
 
       # Baileys auth storage path (inside the container)
       - BAILEYS_AUTH_PATH=/app/.baileys_auth
+      - BAILEYS_LOG_LEVEL=${BAILEYS_LOG_LEVEL:-info}
+      - WHATSAPP_USE_PAIRING_CODE=${WHATSAPP_USE_PAIRING_CODE:-false}
+      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-false}
 
       # Node
       - NODE_ENV=production

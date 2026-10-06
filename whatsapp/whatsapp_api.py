@@ -116,6 +116,16 @@ def clean_response(text: str) -> str:
         text = re.sub(rf'\b{re.escape(word)}\b', '', text, flags=re.IGNORECASE)
     return re.sub(r' +', ' ', text).strip()
 
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]+",
+    flags=re.UNICODE,
+)
+
+
+def _plain(text: str) -> str:
+    return re.sub(r'\s{2,}', ' ', _EMOJI_RE.sub('', text or '')).strip()
+
+
 def _encode_figure() -> str:
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='white')
@@ -126,9 +136,9 @@ def _encode_figure() -> str:
 
 def _empty_chart(title: str) -> str:
     fig, ax = plt.subplots(figsize=(11, 7), facecolor='white', edgecolor='#e0e0e0')
-    ax.text(0.5, 0.5, '📊 No data available\n\nAdd transactions to generate charts',
+    ax.text(0.5, 0.5, 'No data available\n\nAdd transactions to generate charts',
             ha='center', va='center', fontsize=14, color='#666666', weight='bold', family='monospace')
-    ax.set_title(title, fontsize=16, fontweight='bold', pad=20, color='#333333')
+    ax.set_title(_plain(title), fontsize=16, fontweight='bold', pad=20, color='#333333')
     ax.axis('off')
     ax.spines['top'].set_visible(False)
     ax.spines['bottom'].set_visible(False)
@@ -151,7 +161,7 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
         bars = ax.barh(chart_data.index, chart_data.values, color=colors, edgecolor='#333333', linewidth=1.2)
 
         ax.set_xlabel('Amount (KES)', fontsize=12, fontweight='bold', color='#333333')
-        ax.set_title(title, fontsize=15, fontweight='bold', pad=20, color='#333333')
+        ax.set_title(_plain(title), fontsize=15, fontweight='bold', pad=20, color='#333333')
         ax.grid(axis='x', alpha=0.3, linestyle='--', color='#cccccc')
 
         for bar, value in zip(bars, chart_data.values, strict=True):
@@ -223,7 +233,7 @@ def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending For
 
         ax.set_xlabel('Date', fontsize=12, fontweight='bold', color='#333333')
         ax.set_ylabel('Amount (KES)', fontsize=12, fontweight='bold', color='#333333')
-        ax.set_title(title, fontsize=15, fontweight='bold', pad=20, color='#333333')
+        ax.set_title(_plain(title), fontsize=15, fontweight='bold', pad=20, color='#333333')
         ax.grid(True, alpha=0.3, linestyle='--', color='#cccccc')
         ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
         plt.xticks(rotation=45, ha='right')
@@ -270,11 +280,17 @@ def generate_daily_summary() -> str:
 
 app = FastAPI(title="PesaPilot API", version="1.2")
 
+_cors_origins = [
+    o.strip() for o in os.getenv(
+        'CORS_ORIGINS',
+        'http://localhost:8501,http://127.0.0.1:8501,http://localhost:8000,http://127.0.0.1:8000',
+    ).split(',') if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -355,7 +371,7 @@ async def ask_question(request: QuestionRequest):
                 result = analyzer.set_budget(category, amount, period=period)
                 if result.get('success'):
                     analysis = (
-                        f"🎯 Budget set: {category.title()} — KES {amount:,.0f} per {period}.\n"
+                        f"🎯 Budget set: {category.title()} — KES {amount:,.0f} per {'week' if period == 'weekly' else 'month'}.\n"
                         f"I'll ping you here if you get close to or go over it."
                     )
                 else:
@@ -595,6 +611,8 @@ async def parse_sms(request: ParseSMSRequest):
                 summary=f"❌ {result.get('error', 'Could not parse SMS')}"
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"SMS parse error: {str(e)}")
         return ParseSMSResponse(success=False, summary=f"❌ Error: {str(e)[:100]}")

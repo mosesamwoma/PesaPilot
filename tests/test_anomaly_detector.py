@@ -113,3 +113,22 @@ def test_detect_anomalies_drops_rows_with_bad_timestamp():
     })
     flagged = anomaly_detector.detect_anomalies(txs)
     assert all(f['transaction_id'] != 'bad' for f in flagged)
+
+
+def test_mad_scores_fall_back_when_mad_is_zero():
+    import pandas as pd
+    from src.anomaly_detector import _mad_scores, MAD_FLAG_THRESHOLD
+
+    amounts = pd.Series([10.0, 10.0, 11.0, 10.0, 10.0, 9.0, 50000.0])
+    scores, _, mad = _mad_scores(amounts)
+    assert mad == 0
+    assert scores.iloc[-1] > MAD_FLAG_THRESHOLD
+    assert (scores.iloc[:-1] < MAD_FLAG_THRESHOLD).all()
+
+
+def test_mad_scores_all_identical_amounts_score_zero():
+    import pandas as pd
+    from src.anomaly_detector import _mad_scores
+
+    scores, _, _ = _mad_scores(pd.Series([100.0] * 5))
+    assert (scores == 0).all()

@@ -21,6 +21,10 @@ if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
     process.exit(1);
 }
 
+function toWhatsAppFormat(text) {
+    return (text || '').replace(/\*\*(.+?)\*\*/g, '*$1*');
+}
+
 console.log('\n═══════════════════════════════════════════════════════');
 console.log('🤖 PesaPilot WhatsApp Bot v1.2');
 console.log('═══════════════════════════════════════════════════════');
@@ -140,9 +144,10 @@ client.on('qr', (qr) => {
         console.warn(`⚠️  QR rendering error: ${e.message}`);
     }
 
-    const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
-    console.log('\n📱 Or open this link on your phone if QR code above is unclear:');
-    console.log(`🔗 ${qrServerUrl}\n`);
+    if ((process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true') {
+        const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
+        console.log(`\n🔗 QR image link (third-party service, opt-in): ${qrServerUrl}\n`);
+    }
 
     console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
 });
@@ -181,7 +186,7 @@ client.on('message', async (message) => {
         const userMessage = message.body.trim();
         const senderNumeric = senderNumber.replace(/@.*$/, '');
         const mainNumeric = MAIN_NUMBER.replace(/@.*$/, '');
-        const lidNumeric = WHATSAPP_LID.replace(/@.*$/, '');
+        const lidNumeric = (WHATSAPP_LID || '').replace(/@.*$/, '');
 
         let isAuthorized = false;
         if (mainNumeric && senderNumeric === mainNumeric) isAuthorized = true;
@@ -217,10 +222,10 @@ client.on('message', async (message) => {
             try {
                 const response = await axios.post(`${API_URL}/parse-sms`, { sms_content: smsContent }, { timeout: 20000 });
                 if (response.data.success) {
-                    await message.reply(response.data.summary);
+                    await message.reply(toWhatsAppFormat(response.data.summary));
                     try { await message.react('✅'); } catch (e) {}
                 } else {
-                    await message.reply(`❌ ${response.data.error}`);
+                    await message.reply(response.data.summary || (response.data.error ? `❌ ${response.data.error}` : '❌ Could not parse SMS'));
                     try { await message.react('❌'); } catch (e) {}
                 }
             } catch (error) {
@@ -236,16 +241,24 @@ client.on('message', async (message) => {
             if (response.data.chart) {
                 try {
                     const media = new MessageMedia('image/png', response.data.chart, 'chart.png');
-                    await client.sendMessage(message.from, media, { caption: response.data.analysis || '📊 Chart' });
+                    const analysisText = toWhatsAppFormat(response.data.analysis || '');
+                    const captionFits = analysisText.length <= 1000;
+                    await client.sendMessage(message.from, media, { caption: captionFits ? (analysisText || '📊 Chart') : '📊 Chart' });
+                    if (!captionFits) {
+                        for (const chunk of splitMessage(analysisText.substring(0, 4000), 3000)) {
+                            await message.reply(chunk);
+                            await new Promise(r => setTimeout(r, 500));
+                        }
+                    }
                     try { await message.react('📊'); } catch (e) {}
                 } catch (chartError) {
-                    await message.reply(`${response.data.analysis}\n\n(Chart unavailable)`);
+                    await message.reply(`${toWhatsAppFormat(response.data.analysis)}\n\n(Chart unavailable)`);
                     try { await message.react('✅'); } catch (e) {}
                 }
                 return;
             }
 
-            let analysis = response.data.analysis || 'No response';
+            let analysis = toWhatsAppFormat(response.data.analysis || 'No response');
             if (analysis.length > 4000) {
                 analysis = analysis.substring(0, 4000) + '\n\n...(truncated)';
             }
@@ -271,7 +284,9 @@ client.on('message', async (message) => {
 client.on('disconnected', (reason) => {
     isReady = false;
     console.log(`\n⚠️ Disconnected: ${reason}`);
-    console.log('🔄 Attempting to reconnect...\n');
+    if (shuttingDown) return;
+    console.error('   Exiting so the process restarts and re-initialises the client.\n');
+    process.exit(1);
 });
 
 const mainNumeric = MAIN_NUMBER.replace(/@.*$/, '');
@@ -286,7 +301,7 @@ cron.schedule('0 21 * * *', async () => {
     try {
         const response = await axios.get(`${API_URL}/daily-summary`, { timeout: 20000 });
         const summaryText = response?.data?.summary || '⚠️ Could not generate summary.';
-        await client.sendMessage(DAILY_SUMMARY_CHAT_ID, summaryText);
+        await client.sendMessage(DAILY_SUMMARY_CHAT_ID, toWhatsAppFormat(summaryText));
         console.log('✅ Daily summary sent successfully\n');
     } catch (error) {
         console.error(`❌ Daily summary cron error: ${error.message}\n`);
@@ -312,7 +327,7 @@ cron.schedule('0 */2 * * *', async () => {
 
         for (const alert of alerts) {
             const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
-            await client.sendMessage(DAILY_SUMMARY_CHAT_ID, `${icon} ${alert.message}`);
+            await client.sendMessage(DAILY_SUMMARY_CHAT_ID, `${icon} ${toWhatsAppFormat(alert.message)}`);
             await new Promise(resolve => setTimeout(resolve, 500));
         }
         console.log(`✅ Sent ${alerts.length} budget alert(s)\n`);
@@ -341,14 +356,14 @@ function splitMessage(text, maxLength) {
 }
 
 let shuttingDown = false;
-async function shutdown(signal) {
+async function shutdown(signal, exitCode = 0) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n👋 Received ${signal}, shutting down...`);
 
     const forceExit = setTimeout(() => {
         console.warn('⚠️  client.destroy() did not finish in time — forcing exit.');
-        process.exit(0);
+        process.exit(exitCode);
     }, 10000);
     forceExit.unref();
 
@@ -358,7 +373,7 @@ async function shutdown(signal) {
         console.warn(`⚠️  Error during client.destroy(): ${e.message}`);
     }
     clearTimeout(forceExit);
-    process.exit(0);
+    process.exit(exitCode);
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -370,7 +385,7 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught exception:', err);
-    shutdown('uncaughtException');
+    shutdown('uncaughtException', 1);
 });
 
 console.log('Initializing WhatsApp client...\n');

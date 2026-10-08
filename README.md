@@ -362,21 +362,21 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Everything runs offline except the optional real-data checks, which skip themselves when their inputs are missing:
+Only the two layers that talk to the outside world are tested:
 
-| Input | Enables |
-|---|---|
-| An SMS Backup & Restore XML in `data/raw/` (or `PESAPILOT_SMS_XML=/path/to/export.xml`) | Parser invariants on your real export: unique IDs, positive amounts, no unknown recipients, no Fuliza/balance-enquiry rows, and a balance-continuity check (previous balance ± amount ± fee must equal the next balance for ≥ 97 % of consecutive messages) |
-| A disposable PostgreSQL database whose name contains `test` (`POSTGRES_DB=pesapilot_test`, schema applied) | `tests/test_real_data_db.py`: loads your export and checks summaries, category totals, the read-only query guard, every SQL analytics function, Nairobi timestamps and the anomaly join |
+| File | Covers | Needs |
+|---|---|---|
+| `tests/test_api.py` | Every FastAPI route: question routing, budget commands, summaries, SMS parsing endpoint, CORS, validation | Nothing (uses a fake analyzer, no database or Groq key) |
+| `tests/test_real_data_db.py` | Your real SMS export parsed and loaded into PostgreSQL: row counts, summaries, category totals, the read-only query guard, every SQL analytics function, Nairobi timestamps, the anomaly join | An SMS XML in `data/raw/` (or `PESAPILOT_SMS_XML=/path/to/export.xml`) and a disposable database whose name contains `test` (`POSTGRES_DB=pesapilot_test`, schema applied) |
 
 ```bash
 POSTGRES_USER=pesapilot POSTGRES_PASSWORD=... POSTGRES_DB=pesapilot_test POSTGRES_HOST=127.0.0.1 \
 PESAPILOT_SMS_XML=data/raw/your-sms-backup.xml pytest
 ```
 
-Test files: `test_parser`, `test_chat_common` (question routing helpers), `test_api` (FastAPI routes against a fake analyzer — no DB or Groq key needed), `test_analyzer_logic`, `test_sql_guard`, `test_groq_client` (API-key check, response cache, empty reply on API error), `test_anomaly_detector`, `test_budget_monitor`, `test_chart_generator`, `test_forecasting` (the Prophet case skips if `prophet` isn't installed). Your raw SMS export is never committed — `data/raw/*` is git-ignored.
+`test_real_data_db.py` skips itself when either input is missing. Your raw SMS export is never committed — `data/raw/*` is git-ignored.
 
-**Removed tests:** `tests/test_analyzer.py` and `tests/test_database.py` were dropped. They only ran against a live Groq account and a live database (skipped everywhere else), mostly asserted `isinstance(..., list)`, and one of them was testing Groq's own SDK. The old `test_groq_client.py` was also trimmed from 21 tests to 3: seven duplicated the SQL-guard tests and nine only checked that a mocked Groq SDK received the arguments we passed. Their useful parts live on in `test_analyzer_logic.py` (mocked) and `test_real_data_db.py` (real data, real Postgres).
+**Removed tests:** all unit tests for internal modules were dropped (parser, question helpers, SQL guard, Groq client, anomaly detector, budget monitor, chart generator, forecasting, analyzer logic, plus the old `test_analyzer.py` and `test_database.py`). Parser and database behaviour is exercised end to end by the real-data database test instead.
 
 ---
 

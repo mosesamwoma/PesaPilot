@@ -374,9 +374,9 @@ POSTGRES_USER=pesapilot POSTGRES_PASSWORD=... POSTGRES_DB=pesapilot_test POSTGRE
 PESAPILOT_SMS_XML=data/raw/your-sms-backup.xml pytest
 ```
 
-Test files: `test_parser`, `test_chat_common` (question routing helpers), `test_api` (FastAPI routes against a fake analyzer — no DB or Groq key needed), `test_analyzer_logic`, `test_sql_guard`, `test_groq_client`, `test_anomaly_detector`, `test_budget_monitor`, `test_chart_generator`, `test_forecasting` (the Prophet case skips if `prophet` isn't installed). Your raw SMS export is never committed — `data/raw/*` is git-ignored.
+Test files: `test_parser`, `test_chat_common` (question routing helpers), `test_api` (FastAPI routes against a fake analyzer — no DB or Groq key needed), `test_analyzer_logic`, `test_sql_guard`, `test_groq_client` (API-key check, response cache, empty reply on API error), `test_anomaly_detector`, `test_budget_monitor`, `test_chart_generator`, `test_forecasting` (the Prophet case skips if `prophet` isn't installed). Your raw SMS export is never committed — `data/raw/*` is git-ignored.
 
-**Removed tests:** `tests/test_analyzer.py` and `tests/test_database.py` were dropped. They only ran against a live Groq account and a live database (skipped everywhere else), mostly asserted `isinstance(..., list)`, and one of them was testing Groq's own SDK. Their useful parts live on in `test_analyzer_logic.py` (mocked) and `test_real_data_db.py` (real data, real Postgres).
+**Removed tests:** `tests/test_analyzer.py` and `tests/test_database.py` were dropped. They only ran against a live Groq account and a live database (skipped everywhere else), mostly asserted `isinstance(..., list)`, and one of them was testing Groq's own SDK. The old `test_groq_client.py` was also trimmed from 21 tests to 3: seven duplicated the SQL-guard tests and nine only checked that a mocked Groq SDK received the arguments we passed. Their useful parts live on in `test_analyzer_logic.py` (mocked) and `test_real_data_db.py` (real data, real Postgres).
 
 ---
 

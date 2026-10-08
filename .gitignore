@@ -21,3 +21,6 @@ assets/whatsapp.mp4
 sessions/*
 !sessions/.gitkeep
 *.sqlite3
+sessions-local/
+.env.*
+!.env.example

@@ -189,13 +189,7 @@ WHERE body ILIKE '%Fuliza M-PESA amount is%'
 
 ## 6. Run locally
 
-**Both services:**
-```bash
-python run.py
-```
-Runs FastAPI (8000) + Streamlit (8501) together, stops both on Ctrl+C. Does not start the WhatsApp bot.
-
-**Dashboard only:**
+**Dashboard:**
 ```bash
 streamlit run dashboard/app.py
 ```
@@ -235,7 +229,7 @@ npm run clean         # Remove dist/ and auth folders
 
 ## CLI reference
 
-`run.py` takes no subcommands — it starts the FastAPI backend and Streamlit dashboard and blocks until Ctrl+C. There's no `setup`/`load`/`ask` subcommand; for a connection check: `python -c "from src.database import PostgresDB; PostgresDB()"`.
+There is no CLI wrapper. Start the API with `npm run api` and the dashboard with `streamlit run dashboard/app.py`. For a database connection check: `python -c "from src.database import PostgresDB; PostgresDB()"`.
 
 ---
 

@@ -74,7 +74,6 @@ RUN npm ci \
 # ----------------------------------------------------------------
 COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
-COPY run.py .
 
 # Compile whatsapp_bot.ts -> dist/whatsapp_bot.js (Baileys)
 RUN npm run build

@@ -114,7 +114,7 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 | `API_TIMEOUT` | `20` | Seconds before a Groq call is aborted |
 | `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. The API has no authentication — only use `0.0.0.0` behind a firewall/reverse proxy |
 | `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` inside the container) |
-| `CORS_ORIGINS` | localhost origins | Comma-separated browser origins allowed to call the API |
+| `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com,http://[2001:db8::1]:8501`. The bot and dashboard do not need it |
 | `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log level |
 | `WHATSAPP_QR_LINK` | `false` | Also print a third-party (api.qrserver.com) image link for the login QR. Off by default because the QR is a device-linking secret |
 

@@ -205,19 +205,15 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="PesaPilot API", version="1.2", lifespan=lifespan)
 
-_cors_origins = [
-    o.strip() for o in os.getenv(
-        'CORS_ORIGINS',
-        'http://localhost:8501,http://127.0.0.1:8501,http://localhost:8000,http://127.0.0.1:8000',
-    ).split(',') if o.strip()
-]
+_cors_origins = [o.strip() for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
 
 
 @app.get("/daily-summary")

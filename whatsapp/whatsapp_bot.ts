@@ -79,8 +79,8 @@ function validateConfig(config: Config): void {
     }
 
     if (!config.whatsappLid) {
-        console.error('\n❌ ERROR: WHATSAPP_LID is required in .env');
-        process.exit(1);
+        console.warn('\n⚠️  WHATSAPP_LID is not set. Messages from linked-device IDs will be ignored until you add it.');
+        console.warn('   Send the bot a message, then copy the "From:" number from the log into WHATSAPP_LID.\n');
     }
 
     if (!config.whatsappPin) {
@@ -97,7 +97,7 @@ function printBanner(config: Config): void {
     console.log('🤖 PesaPilot WhatsApp Bot v1.2 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`✅ Phone Number : configured`);
-    console.log(`✅ LID          : configured`);
+    console.log(`${config.whatsappLid ? '✅' : '⚠️ '} LID          : ${config.whatsappLid ? 'configured' : 'not set'}`);
     console.log(`✅ PIN          : configured`);
     console.log(`🔗 API URL      : ${config.apiUrl}`);
     console.log(`📂 Auth path    : ${config.authPath}`);

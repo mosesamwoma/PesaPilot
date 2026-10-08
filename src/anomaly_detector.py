@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
+from src.constants import SPENDING_TYPES
+
 logger = logging.getLogger(__name__)
 
 MIN_SAMPLES_FOR_ML = 8
@@ -16,7 +18,7 @@ MAD_FLAG_THRESHOLD = 3.5
 MODEL_NAME = "isolation_forest_v1"
 FALLBACK_MODEL_NAME = "mad_fallback_v1"
 
-DEBIT_TYPES = {"debit", "payment", "withdrawal", "transfer", "airtime"}
+DEBIT_TYPES = set(SPENDING_TYPES)
 
 
 def _feature_matrix(df: pd.DataFrame) -> np.ndarray:
@@ -119,10 +121,13 @@ def detect_anomalies(transactions: List[Dict]) -> List[Dict]:
                 predictions = model.predict(X)
                 raw_scores = model.decision_function(X)
 
+                group_median = float(group["amount"].median())
                 for i, is_outlier in enumerate(predictions):
                     if is_outlier != -1:
                         continue
                     row = group.iloc[i]
+                    if float(row["amount"]) < group_median:
+                        continue
                     anomaly_score = round(float(-raw_scores[i] * 10), 3)
                     flagged.append({
                         "transaction_id": row["id"],
@@ -136,11 +141,13 @@ def detect_anomalies(transactions: List[Dict]) -> List[Dict]:
             except Exception as e:
                 logger.error(f"IsolationForest failed for category={category}: {e}")
         else:
-            modified_z, _, _ = _mad_scores(group["amount"])
+            modified_z, group_median, _ = _mad_scores(group["amount"])
             for i, z in modified_z.items():
                 if z <= MAD_FLAG_THRESHOLD:
                     continue
                 row = group.iloc[i]
+                if float(row["amount"]) < float(group_median):
+                    continue
                 flagged.append({
                     "transaction_id": row["id"],
                     "amount": float(row["amount"]),

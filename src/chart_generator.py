@@ -16,6 +16,10 @@ import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
 import seaborn as sns
 
+from src.constants import SPENDING_TYPES
+from src.parse_sms import MpesaParser
+from src.timeutil import now_nairobi
+
 logger = logging.getLogger(__name__)
 
 CHART_TYPES = (
@@ -38,12 +42,12 @@ DEFAULT_SPEC: Dict[str, Any] = {
     "title": None,
 }
 
-_SPENDING_TYPES = ('debit', 'payment', 'withdrawal', 'transfer', 'airtime')
+_SPENDING_TYPES = SPENDING_TYPES
 _NO_DISTRIBUTION_METRIC = ('histogram', 'box', 'violin')
 
 
 def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return now_nairobi().strftime("%Y-%m-%d")
 
 
 def _spec_system_prompt() -> str:
@@ -57,7 +61,7 @@ Return ONLY one JSON object — no markdown fences, no commentary, no explanatio
   "group_by": one of {list(GROUP_BY_COLUMNS)} or null,
   "date_from": "YYYY-MM-DD" or null,
   "date_to": "YYYY-MM-DD" or null,
-  "category_filter": a merchant category (e.g. "food", "transport") or null,
+  "category_filter": one of {list(MpesaParser.CATEGORIES)} or null,
   "transaction_type": one of {list(TRANSACTION_TYPES)},
   "top_n": integer 3-30,
   "title": short human-readable chart title
@@ -187,8 +191,8 @@ def _heuristic_spec(description: str) -> Dict[str, Any]:
     elif 'this year' in text or 'last year' in text:
         days = 365
     if days:
-        spec['date_from'] = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-        spec['date_to'] = datetime.now().strftime('%Y-%m-%d')
+        spec['date_from'] = (now_nairobi() - timedelta(days=days)).strftime('%Y-%m-%d')
+        spec['date_to'] = now_nairobi().strftime('%Y-%m-%d')
 
     m = re.search(r'top\s+(\d{1,2})', text)
     if m:

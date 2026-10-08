@@ -14,8 +14,8 @@
     "build": "tsc",
     "postbuild": "echo '{\"type\":\"module\"}' > dist/package.json",
     "build:watch": "tsc --watch",
-    "api": "python -m uvicorn whatsapp.whatsapp_api:app --host 0.0.0.0 --port 8000 --reload",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "api": "python -m uvicorn whatsapp.whatsapp_api:app --host 127.0.0.1 --port 8000",
+    "test": "tsc --noEmit",
     "clean": "rm -rf dist",
     "clean:all": "rm -rf dist ./.baileys_auth ./.wwebjs_auth",
     "prebuild": "npm run clean"

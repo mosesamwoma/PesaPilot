@@ -1,26 +1,26 @@
+import glob
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 import pytest
 
-
-def _looks_like_test_database(name: str) -> bool:
-    return bool(name) and 'test' in name.lower()
+os.environ.setdefault('GROQ_API_KEY', 'test-key')
 
 
-def require_test_database() -> None:
-    db_name = os.getenv('POSTGRES_DB', '')
-    if not _looks_like_test_database(db_name):
-        pytest.skip(
-            f"POSTGRES_DB={db_name!r} does not look like a dedicated test database "
-            "(its name must contain 'test'). Point POSTGRES_DB at a disposable test "
-            "database before running integration tests, so tests never write "
-            "into production data. Example: POSTGRES_DB=pesapilot_test"
-        )
+@pytest.fixture(scope='session')
+def real_sms_xml():
+    explicit = os.getenv('PESAPILOT_SMS_XML')
+    candidates = [explicit] if explicit else sorted(glob.glob(os.path.join(ROOT, 'data', 'raw', '*.xml')))
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    pytest.skip("No SMS backup XML found. Put one in data/raw/ or set PESAPILOT_SMS_XML.")
 
 
-def require_groq_key() -> None:
-    if not os.getenv('GROQ_API_KEY'):
-        pytest.skip("GROQ_API_KEY is not set; skipping tests that call the live Groq API")
+@pytest.fixture(scope='session')
+def real_transactions(real_sms_xml):
+    from src.parse_sms import MpesaParser
+    return MpesaParser().parse_xml_to_csv(real_sms_xml)

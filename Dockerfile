@@ -66,7 +66,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 COPY package*.json tsconfig.json ./
-RUN npm install \
+RUN npm ci \
     && npm cache clean --force
 
 # ----------------------------------------------------------------

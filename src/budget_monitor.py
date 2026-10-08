@@ -2,6 +2,8 @@ import logging
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
+from src.timeutil import today_nairobi
+
 logger = logging.getLogger(__name__)
 
 ALERT_WARNING = "warning"
@@ -9,7 +11,7 @@ ALERT_OVER = "over"
 
 
 def period_start_for(period: str, today: Optional[date] = None) -> date:
-    today = today or date.today()
+    today = today or today_nairobi()
     period = (period or "monthly").lower()
     if period == "weekly":
         return today - timedelta(days=today.weekday())

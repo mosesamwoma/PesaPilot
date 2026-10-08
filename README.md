@@ -25,7 +25,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **WhatsApp Bot** — same questions, charts, advice, and manual SMS logging, from WhatsApp
 - **Daily summary** — 9 PM (Africa/Nairobi) end-of-day digest
 - **Two-tier AI** — fast model for chat/insights, smarter model for SQL/analysis/advice
-- **SQL safety guard** — every LLM-generated query is validated `SELECT`-only before running
+- **SQL safety guard** — every LLM-generated query is validated `SELECT`/`WITH`-only and runs in a read-only transaction with a 10 s timeout
 - **Response caching** — in-memory TTL cache on all Groq calls, cleared on new transactions
 
 > Loading SMS data has no CLI/dashboard button — see [Parse and load your data](#5-parse-and-load-your-data).
@@ -99,7 +99,7 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WHATSAPP_LID` | — | WhatsApp's internal ID for your number, if routed through one |
+| `WHATSAPP_LID` | — | WhatsApp's internal ID for your number. Not needed to start the bot: send it a message, copy the `From:` number from the log into this variable, restart |
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot finds the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | FastAPI port |
 | `LLM_MODEL_FAST` | `openai/gpt-oss-20b` | Chat / dashboard insights |
@@ -113,11 +113,10 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 | `LLM_REASONING_EFFORT` | `low` | `low` / `medium` / `high` |
 | `API_TIMEOUT` | `20` | Seconds before a Groq call is aborted |
 | `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. The API has no authentication — only use `0.0.0.0` behind a firewall/reverse proxy |
+| `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` inside the container) |
 | `CORS_ORIGINS` | localhost origins | Comma-separated browser origins allowed to call the API |
 | `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log level |
 | `WHATSAPP_QR_LINK` | `false` | Also print a third-party (api.qrserver.com) image link for the login QR. Off by default because the QR is a device-linking secret |
-
-> `.env.example` also lists a few unused placeholders (`APP_ENV`, `DEBUG`, `SECRET_KEY`, etc.) — safe to ignore.
 
 ---
 
@@ -135,6 +134,8 @@ PGPASSWORD="StrongPassword123!" psql -h 127.0.0.1 -p 5432 -U pesapilot_user -d p
 ```
 
 > Postgres never runs inside Docker here — `docker-compose.yml` only runs the app. Always run `psql` from a machine with network access to your Postgres server.
+
+`schema/init_db.sql` is idempotent — re-running it on an existing database is safe and picks up schema fixes. All SQL functions and views compute dates in `Africa/Nairobi` time regardless of the database server's timezone. The old `run_query` function and the unused `daily_summary` / `category_summary` views were removed; drop them from an existing database with `DROP FUNCTION IF EXISTS run_query(TEXT); DROP VIEW IF EXISTS daily_summary, category_summary;`.
 
 Already have a `transactions` table without `transaction_cost`? Run this additive migration instead:
 
@@ -161,6 +162,28 @@ python -c "from src.analyzer import MpesaAnalyzer; count = MpesaAnalyzer().load_
 ```
 
 Saves a cleaned CSV to `data/processed/` and upserts into Postgres — safe to re-run (upserted by `transaction_id`).
+
+**What gets imported (and what doesn't):**
+
+| Message | Result |
+|---|---|
+| Inbox SMS from sender `MPESA` with a transaction code | Imported. Messages you sent, and messages from banks, Safaricom promos or other senders, are ignored |
+| `Give KshX cash to <agent>` | Cash **deposit** → `credit` / `banking` |
+| `Withdraw KshX from <agent>` | `withdrawal` / `banking` |
+| `You bought KshX of airtime` | `airtime` / `utilities`, recipient `Airtime` |
+| Reversals | `credited to your M-PESA` → `credit`; `debited from` → `debit`; recipient `M-Pesa Reversal` |
+| Balance enquiries, cancelled/failed/invalid-PIN/insufficient-funds notices, declined reversals | Skipped — not money movement |
+| Fuliza drawdown notices and Fuliza repayments | Skipped — the purchase itself is already recorded, so counting the loan or its repayment would double-count spending |
+
+Timestamps are stored in Nairobi local time (the SMS receipt time, or the time printed in the message when delivery was delayed by more than 10 minutes). `merchant_category` is decided from the recipient/account name only — never from the promotional footer of the SMS — and money sent to or received from a phone number is categorised `personal`.
+
+**Upgrading an existing database:** re-run the import above so previously stored rows are corrected (timestamps, deposits, categories, recipients), then remove rows from messages that are no longer imported:
+
+```sql
+DELETE FROM transactions
+WHERE body ILIKE '%Fuliza M-PESA amount is%'
+   OR body ILIKE '%used to % pay your outstanding Fuliza%';
+```
 
 ---
 
@@ -199,7 +222,7 @@ Session persists in `.baileys_auth/`.
 ## npm scripts
 
 ```bash
-npm run api          # FastAPI with auto-reload
+npm run api          # FastAPI on 127.0.0.1:8000
 npm run dev           # Baileys bot via ts-node, auto-restart
 npm run dev:wwebjs    # whatsapp-web.js bot via nodemon
 npm run build         # Compile whatsapp_bot.ts -> dist/
@@ -326,7 +349,7 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | `LLM_MODEL_FAST` | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
 | `LLM_MODEL_SMART` | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
 
-**SQL safety guard:** every LLM query passes `is_safe_select_sql()` — must start with `SELECT`, no `;`, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/REPLACE/MERGE/CALL`.
+**SQL safety guard** (`src/sql_guard.py`): every LLM query passes `is_safe_select_sql()` — must start with `SELECT` or `WITH`, no `;`, no comments, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/MERGE/CALL/COPY`, no `pg_*`/`lo_*`/`dblink`/`set_config` functions. It then runs in a read-only transaction with a 10 s statement timeout, capped at 500 rows. User *questions* are only rejected when they contain actual destructive statements (e.g. `drop table …`), so ordinary questions like "how much did I spend on call credit?" work.
 
 **Caching:** every Groq call is cached in-memory by a hash of (system, user) prompt, TTL from 5 min (chat) to 1 hour (SQL), cleared on new transactions.
 
@@ -335,12 +358,25 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 ## Testing
 
 ```bash
-pytest -m "not integration"                                       # offline, no DB/key needed
-POSTGRES_DB=pesapilot_test GROQ_API_KEY=your_key pytest -m integration   # live DB + Groq, test DB only
-pytest                                                             # everything; integration tests self-skip if DB isn't a test DB
+pip install -r requirements-dev.txt
+pytest
 ```
 
-99+ tests: most files are fully self-contained (mocks, synthetic data); `test_database.py` and `test_analyzer.py` are `integration`-marked and refuse to run unless `POSTGRES_DB` contains `"test"`.
+Everything runs offline except the optional real-data checks, which skip themselves when their inputs are missing:
+
+| Input | Enables |
+|---|---|
+| An SMS Backup & Restore XML in `data/raw/` (or `PESAPILOT_SMS_XML=/path/to/export.xml`) | Parser invariants on your real export: unique IDs, positive amounts, no unknown recipients, no Fuliza/balance-enquiry rows, and a balance-continuity check (previous balance ± amount ± fee must equal the next balance for ≥ 97 % of consecutive messages) |
+| A disposable PostgreSQL database whose name contains `test` (`POSTGRES_DB=pesapilot_test`, schema applied) | `tests/test_real_data_db.py`: loads your export and checks summaries, category totals, the read-only query guard, every SQL analytics function, Nairobi timestamps and the anomaly join |
+
+```bash
+POSTGRES_USER=pesapilot POSTGRES_PASSWORD=... POSTGRES_DB=pesapilot_test POSTGRES_HOST=127.0.0.1 \
+PESAPILOT_SMS_XML=data/raw/your-sms-backup.xml pytest
+```
+
+Test files: `test_parser`, `test_chat_common` (question routing helpers), `test_api` (FastAPI routes against a fake analyzer — no DB or Groq key needed), `test_analyzer_logic`, `test_sql_guard`, `test_groq_client`, `test_anomaly_detector`, `test_budget_monitor`, `test_chart_generator`, `test_forecasting` (the Prophet case skips if `prophet` isn't installed). Your raw SMS export is never committed — `data/raw/*` is git-ignored.
+
+**Removed tests:** `tests/test_analyzer.py` and `tests/test_database.py` were dropped. They only ran against a live Groq account and a live database (skipped everywhere else), mostly asserted `isinstance(..., list)`, and one of them was testing Groq's own SDK. Their useful parts live on in `test_analyzer_logic.py` (mocked) and `test_real_data_db.py` (real data, real Postgres).
 
 ---
 
@@ -349,7 +385,7 @@ pytest                                                             # everything;
 | Issue | Fix |
 |---|---|
 | `.env file not found!` | Copy `.env.example` to `.env` first |
-| `run_query not found` / RPC errors | Apply `schema/init_db.sql` |
+| `relation ... does not exist` / missing function errors | Apply `schema/init_db.sql` |
 | `ModuleNotFoundError: No module named 'src'` | Run from the project root |
 | No transactions after loading XML | Confirm it's an SMS Backup & Restore export with M-Pesa messages |
 | Port 8000 in use | Change `WHATSAPP_API_PORT`, update `API_URL` and `docker-compose.yml` |
@@ -364,8 +400,9 @@ pytest                                                             # everything;
 | Forecast "engine unavailable" | `pip install prophet cmdstanpy` |
 | Groq rate limit / empty responses | Wait ~60s; lower `LLM_MAX_TOKENS` |
 | `streamlit: command not found` | `source venv/bin/activate` |
-| `balance` empty for some rows | Expected — not every SMS includes it |
-| `pytest` fails on DB/Groq tests | Needs real credentials + schema applied |
+| Dates look 3 hours off after upgrading | Re-run the import (step 5) — old rows were stored in UTC |
+| `balance` empty for some rows | Not every SMS includes it; the parser now imports only M-Pesa transaction messages, which all do |
+| Bot ignores your messages | Set `WHATSAPP_LID` (see the Optional table) — the `From:` line in the bot log shows the ID WhatsApp is using |
 | Can't connect to Postgres | Check detected host in startup logs; avoid `localhost` (use `127.0.0.1` or real IP) |
 | `time data ... doesn't match format` | Ensure timestamp parsing uses `format='ISO8601'` everywhere |
 

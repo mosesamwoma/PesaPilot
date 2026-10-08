@@ -1,6 +1,4 @@
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -16,7 +14,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     timestamp TIMESTAMP,
     readable_date TEXT,
     raw_date TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Africa/Nairobi')
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp);
@@ -32,8 +30,8 @@ CREATE TABLE IF NOT EXISTS budgets (
     limit_amount DECIMAL(12,2) NOT NULL CHECK (limit_amount > 0),
     alert_threshold_pct INT NOT NULL DEFAULT 80 CHECK (alert_threshold_pct BETWEEN 1 AND 100),
     active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Africa/Nairobi'),
+    updated_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Africa/Nairobi'),
     UNIQUE(category, period)
 );
 
@@ -45,7 +43,7 @@ CREATE TABLE IF NOT EXISTS budget_alerts (
     period_start DATE NOT NULL,
     alert_level TEXT NOT NULL,
     amount_spent DECIMAL(12,2) NOT NULL,
-    sent_at TIMESTAMP DEFAULT NOW(),
+    sent_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Africa/Nairobi'),
     UNIQUE(budget_id, period_start, alert_level)
 );
 
@@ -59,7 +57,7 @@ CREATE TABLE IF NOT EXISTS spending_baselines (
     median_amount DECIMAL(12,2),
     mad_amount DECIMAL(12,2),
     sample_size INT,
-    computed_at TIMESTAMP DEFAULT NOW()
+    computed_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Africa/Nairobi')
 );
 
 CREATE TABLE IF NOT EXISTS anomalies (
@@ -68,55 +66,12 @@ CREATE TABLE IF NOT EXISTS anomalies (
     model TEXT NOT NULL DEFAULT 'category_mad',
     score DECIMAL(10,3),
     reviewed BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'Africa/Nairobi'),
     UNIQUE(transaction_id, model)
 );
 
-ALTER TABLE anomalies ALTER COLUMN score TYPE DECIMAL(10,3);
-
 CREATE INDEX IF NOT EXISTS idx_anomalies_tx ON anomalies(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_anomalies_model ON anomalies(model);
-
-CREATE OR REPLACE FUNCTION run_query(query TEXT)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-    result JSONB;
-BEGIN
-    IF UPPER(TRIM(query)) NOT LIKE 'SELECT%' THEN
-        RAISE EXCEPTION 'Only SELECT queries are allowed';
-    END IF;
-    EXECUTE 'SELECT jsonb_agg(row_to_json(t)) FROM (' || query || ') t' INTO result;
-    RETURN COALESCE(result, '[]'::JSONB);
-END;
-$$;
-
-CREATE OR REPLACE VIEW daily_summary AS
-SELECT
-    DATE(timestamp) as date,
-    COUNT(*) as total_transactions,
-    SUM(CASE WHEN type != 'credit' THEN amount ELSE 0 END) as total_spent,
-    SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) as total_received,
-    AVG(CASE WHEN type != 'credit' THEN amount ELSE NULL END) as avg_spend,
-    COUNT(CASE WHEN type != 'credit' THEN 1 END) as debit_count,
-    COUNT(CASE WHEN type = 'credit' THEN 1 END) as credit_count
-FROM transactions
-GROUP BY DATE(timestamp)
-ORDER BY date DESC;
-
-CREATE OR REPLACE VIEW category_summary AS
-SELECT
-    merchant_category,
-    COUNT(*) as transaction_count,
-    SUM(amount) as total_amount,
-    AVG(amount) as avg_amount,
-    SUM(CASE WHEN type != 'credit' THEN amount ELSE 0 END) as total_spent,
-    SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) as total_received
-FROM transactions
-GROUP BY merchant_category
-ORDER BY total_amount DESC;
 
 CREATE OR REPLACE VIEW budget_status AS
 SELECT
@@ -128,14 +83,13 @@ SELECT
     COALESCE(SUM(t.amount) FILTER (
         WHERE t.type != 'credit'
         AND t.timestamp >= date_trunc(
-            CASE WHEN b.period = 'weekly' THEN 'week' ELSE 'month' END, NOW()
+            CASE WHEN b.period = 'weekly' THEN 'week' ELSE 'month' END, (NOW() AT TIME ZONE 'Africa/Nairobi')
         )
     ), 0) as spent_this_period
 FROM budgets b
 LEFT JOIN transactions t ON t.merchant_category = b.category
 WHERE b.active = TRUE
 GROUP BY b.id, b.category, b.period, b.limit_amount, b.alert_threshold_pct;
-
 
 CREATE OR REPLACE FUNCTION daily_trend_running(days INT DEFAULT NULL)
 RETURNS TABLE (
@@ -155,7 +109,7 @@ AS $$
             SUM(CASE WHEN type != 'credit' THEN amount ELSE 0 END) AS total_spent,
             SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END) AS total_received
         FROM transactions
-        WHERE days IS NULL OR timestamp >= NOW() - (days || ' days')::interval
+        WHERE days IS NULL OR timestamp >= (NOW() AT TIME ZONE 'Africa/Nairobi') - (days || ' days')::interval
         GROUP BY DATE(timestamp)
     )
     SELECT
@@ -193,7 +147,7 @@ AS $$
         WHERE type != 'credit'
           AND (
               months_back IS NULL
-              OR timestamp >= date_trunc('month', NOW()) - (months_back || ' months')::interval
+              OR timestamp >= date_trunc('month', (NOW() AT TIME ZONE 'Africa/Nairobi')) - (months_back || ' months')::interval
           )
         GROUP BY date_trunc('month', timestamp), merchant_category
     )
@@ -232,7 +186,7 @@ AS $$
         FROM transactions t
         WHERE t.type != 'credit'
           AND t.recipient IS NOT NULL
-          AND (days IS NULL OR t.timestamp >= NOW() - (days || ' days')::interval)
+          AND (days IS NULL OR t.timestamp >= (NOW() AT TIME ZONE 'Africa/Nairobi') - (days || ' days')::interval)
         GROUP BY t.recipient
     ),
     grand_total AS (
@@ -278,7 +232,7 @@ AS $$
             t.id, t.transaction_id, t.amount, t.recipient, t.merchant_category, t.timestamp
         FROM transactions t
         WHERE t.type != 'credit'
-          AND (lookback_days IS NULL OR t.timestamp >= NOW() - (lookback_days || ' days')::interval)
+          AND (lookback_days IS NULL OR t.timestamp >= (NOW() AT TIME ZONE 'Africa/Nairobi') - (lookback_days || ' days')::interval)
     ),
     scored AS (
         SELECT
@@ -327,10 +281,10 @@ AS $$
             b.category,
             b.period,
             b.limit_amount,
-            date_trunc(CASE WHEN b.period = 'weekly' THEN 'week' ELSE 'month' END, NOW()) AS period_start,
+            date_trunc(CASE WHEN b.period = 'weekly' THEN 'week' ELSE 'month' END, (NOW() AT TIME ZONE 'Africa/Nairobi')) AS period_start,
             CASE
-                WHEN b.period = 'weekly' THEN date_trunc('week', NOW()) + INTERVAL '7 days'
-                ELSE date_trunc('month', NOW()) + INTERVAL '1 month'
+                WHEN b.period = 'weekly' THEN date_trunc('week', (NOW() AT TIME ZONE 'Africa/Nairobi')) + INTERVAL '7 days'
+                ELSE date_trunc('month', (NOW() AT TIME ZONE 'Africa/Nairobi')) + INTERVAL '1 month'
             END AS period_end
         FROM budgets b
         WHERE b.active = TRUE
@@ -361,7 +315,7 @@ AS $$
             st.period_start,
             st.period_end,
             st.spent_so_far,
-            GREATEST(EXTRACT(EPOCH FROM (LEAST(NOW(), st.period_end) - st.period_start))::numeric / 86400.0, 1) AS days_elapsed,
+            GREATEST(EXTRACT(EPOCH FROM (LEAST((NOW() AT TIME ZONE 'Africa/Nairobi'), st.period_end) - st.period_start))::numeric / 86400.0, 1) AS days_elapsed,
             EXTRACT(EPOCH FROM (st.period_end - st.period_start))::numeric / 86400.0 AS period_total_days
         FROM spend_totals st
     )
@@ -402,7 +356,7 @@ AS $$
         FROM transactions t
         WHERE t.type != 'credit'
           AND t.recipient IS NOT NULL
-          AND (days IS NULL OR t.timestamp >= NOW() - (days || ' days')::interval)
+          AND (days IS NULL OR t.timestamp >= (NOW() AT TIME ZONE 'Africa/Nairobi') - (days || ' days')::interval)
     )
     SELECT
         tx.recipient,

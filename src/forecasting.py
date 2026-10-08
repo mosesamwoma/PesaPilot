@@ -1,10 +1,13 @@
 import hashlib
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
+
+from src.constants import SPENDING_TYPES
+from src.timeutil import today_nairobi
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +82,7 @@ def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "amount"])
 
     if "type" in df.columns:
-        df = df[df["type"] != "credit"].copy()
+        df = df[df["type"].isin(SPENDING_TYPES)].copy()
     if df.empty:
         return pd.DataFrame(columns=["date", "amount"])
 
@@ -98,7 +101,8 @@ def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
     if daily.empty:
         return daily
 
-    full_range = pd.date_range(daily["date"].min(), daily["date"].max(), freq="D")
+    last_day = max(daily["date"].max(), today_nairobi() - timedelta(days=1))
+    full_range = pd.date_range(daily["date"].min(), last_day, freq="D")
     daily = daily.set_index(pd.to_datetime(daily["date"]))["amount"]
     daily = daily.reindex(full_range, fill_value=0.0)
     daily = daily.rename_axis("date").reset_index()

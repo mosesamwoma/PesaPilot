@@ -81,8 +81,10 @@ END
 \$\$;
 SQL
 
-run_psql -tc "SELECT 1 FROM pg_database WHERE datname = '$PGSQL_DB'" | grep -q 1 \
-    || run_psql -c "CREATE DATABASE $PGSQL_DB OWNER $PGSQL_USER;"
+DB_EXISTS="$(run_psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$PGSQL_DB'")"
+if [ "$DB_EXISTS" != "1" ]; then
+    run_psql -c "CREATE DATABASE $PGSQL_DB OWNER $PGSQL_USER;"
+fi
 
 echo "✅ Role and database ready"
 echo
@@ -90,7 +92,7 @@ echo
 echo "==> Applying schema/init_db.sql..."
 
 if command -v psql >/dev/null 2>&1; then
-    PGPASSWORD="$PGSQL_PASSWORD" psql \
+    PGPASSWORD="$PGSQL_PASSWORD" psql -v ON_ERROR_STOP=1 \
         -h 127.0.0.1 -p 5432 -U "$PGSQL_USER" -d "$PGSQL_DB" \
         -f "$SCHEMA_FILE"
 fi

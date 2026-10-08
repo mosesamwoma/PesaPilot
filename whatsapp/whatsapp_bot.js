@@ -13,12 +13,16 @@ const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
-if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
+if (!MAIN_NUMBER || !WHATSAPP_PIN) {
     console.error('\n❌ ERROR: Missing required .env variables:');
     if (!MAIN_NUMBER) console.error('  - WHATSAPP_MAIN_NUMBER');
-    if (!WHATSAPP_LID) console.error('  - WHATSAPP_LID');
     if (!WHATSAPP_PIN) console.error('  - WHATSAPP_PIN');
     process.exit(1);
+}
+
+if (!WHATSAPP_LID) {
+    console.warn('\n⚠️  WHATSAPP_LID is not set. Messages from linked-device IDs will be ignored until you add it.');
+    console.warn('   Send the bot a message, then copy the "From:" number from the log into WHATSAPP_LID.\n');
 }
 
 function toWhatsAppFormat(text) {
@@ -29,7 +33,7 @@ console.log('\n═════════════════════�
 console.log('🤖 PesaPilot WhatsApp Bot v1.2');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`✅ Phone Number : configured`);
-console.log(`✅ LID          : configured`);
+console.log(`${WHATSAPP_LID ? '✅' : '⚠️ '} LID          : ${WHATSAPP_LID ? 'configured' : 'not set'}`);
 console.log(`✅ PIN          : configured`);
 console.log(`🔗 API URL      : ${API_URL}`);
 console.log(`🌐 Chrome       : ${CHROME_PATH}`);
@@ -102,12 +106,9 @@ const client = new Client({
             '--disable-software-rasterizer',
             '--disable-sync',
             '--disable-translate',
-            '--disable-web-security',
             '--disk-cache-size=0',
             '--enable-features=NetworkService,NetworkServiceInProcess',
             '--hide-scrollbars',
-            '--ignore-certificate-errors',
-            '--ignore-ssl-errors',
             '--mute-audio',
             '--no-cache',
             '--no-default-browser-check',

@@ -29,7 +29,6 @@ REQUIRED_VARS=(
     "POSTGRES_DB"
     "GROQ_API_KEY"
     "WHATSAPP_MAIN_NUMBER"
-    "WHATSAPP_LID"
     "WHATSAPP_PIN"
 )
 
@@ -156,7 +155,6 @@ if [ -d "$AUTH_PATH/Default" ]; then
 fi
 
 find "$AUTH_PATH" -name "*.lock" -delete 2>/dev/null || true
-find "$AUTH_PATH" -name "*.ldb" -delete 2>/dev/null || true
 
 if [ $CLEANED_COUNT -gt 0 ]; then
     echo -e "${GREEN}✅ Removed $CLEANED_COUNT lock file(s)${NC}\n"

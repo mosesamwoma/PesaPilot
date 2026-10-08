@@ -1,12 +1,13 @@
 import os
-import re
 import hashlib
 import logging
 import time
-from datetime import datetime
 from typing import Optional
 from groq import Groq
 from dotenv import load_dotenv
+
+from src.sql_guard import is_safe_select_sql
+from src.timeutil import now_nairobi
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -92,27 +93,6 @@ TTL_ADVICE     =  900
 TTL_CHAT       =  300
 
 
-_FORBIDDEN_SQL_KEYWORDS = re.compile(
-    r'\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|GRANT|REVOKE|'
-    r'EXEC|EXECUTE|CREATE|ATTACH|REPLACE|MERGE|CALL)\b',
-    re.IGNORECASE
-)
-
-
-def is_safe_select_sql(sql: str) -> bool:
-    if not sql:
-        return False
-    cleaned = sql.strip()
-    if not cleaned.upper().startswith('SELECT'):
-        return False
-    body = cleaned.rstrip(';').strip()
-    if ';' in body:
-        return False
-    if _FORBIDDEN_SQL_KEYWORDS.search(body):
-        return False
-    return True
-
-
 class GroqClient:
     def __init__(self):
         api_key = os.getenv('GROQ_API_KEY')
@@ -187,7 +167,7 @@ class GroqClient:
 
     def generate_sql(self, question: str, schema: str, days: Optional[int] = None,
                       row_limit: Optional[int] = None) -> str:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = now_nairobi().strftime("%Y-%m-%d")
         if days is not None:
             date_rule = f"- Filter to the last {days} days from today ({today})"
         else:
@@ -211,9 +191,10 @@ Schema:
 {schema}
 
 Rules:
-- Return ONLY SQL, no markdown
+- Return ONLY SQL, no markdown, no comments, a single statement
 {date_rule}
 - Exclude type='credit' for spending
+- Use only the tables, views and functions listed in the schema
 {limit_rule}"""
         sql = self._cached_chat(system, question, ttl=TTL_SQL, model=self.model_smart)
         sql = sql.replace('```sql', '').replace('```', '').strip()

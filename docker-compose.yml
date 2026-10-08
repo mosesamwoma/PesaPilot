@@ -22,6 +22,8 @@ services:
       # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
+      - API_BIND_HOST=0.0.0.0
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
 
       # PostgreSQL runs separately on the host or another server —
       # this container never starts or manages a database itself.

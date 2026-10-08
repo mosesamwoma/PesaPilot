@@ -1,12 +1,22 @@
 import logging
+import time
 from typing import Dict, List, Optional, Union, cast
+
+import pandas as pd
+
+from src.chat_common import normalize_category
 from src.database import PostgresDB
 from src.groq_client import GroqClient
+from src.parse_sms import MpesaParser
+from src.sql_guard import is_safe_select_sql
 from src import forecasting
 from src import anomaly_detector
 from src import budget_monitor
 
 logger = logging.getLogger(__name__)
+
+CACHE_TTL_SECONDS = 300
+VALID_PERIODS = ('weekly', 'monthly')
 
 
 def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> Dict:
@@ -55,18 +65,43 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
     return agg
 
 
+LLM_UNAVAILABLE_MESSAGE = "⚠️ I couldn't reach the AI service just now. Please try again in a moment."
+
+
+def _anomaly_fallback_text(anomalies: List[Dict], limit: int = 5) -> str:
+    top = sorted(anomalies, key=lambda a: float(a.get('amount') or 0), reverse=True)[:limit]
+    lines = [
+        f"- KES {float(a.get('amount') or 0):,.0f} to {a.get('recipient', 'Unknown')} on {str(a.get('timestamp', ''))[:10]}"
+        for a in top
+    ]
+    return f"{len(anomalies)} transaction(s) look unusual for their category. Largest:\n" + "\n".join(lines)
+
+
 class MpesaAnalyzer:
     def __init__(self):
         self.db = PostgresDB()
         self.groq = GroqClient()
         self._cache: Dict = {}
 
+    def _cache_get(self, key: str):
+        entry = self._cache.get(key)
+        if entry and time.time() - entry[0] < CACHE_TTL_SECONDS:
+            return entry[1]
+        self._cache.pop(key, None)
+        return None
+
+    def _cache_set(self, key: str, value) -> None:
+        self._cache[key] = (time.time(), value)
+
+    def clear_cache(self) -> None:
+        self._cache.clear()
+
     def build_context_string(self, days: Optional[int] = None) -> str:
         try:
             summary = self.db.get_range_summary(days=days) or {}
             category_data = self.db.get_spending_by_category(days=days) or []
             daily_trend = self.db.get_daily_trend(days=days) or []
-            top_merchants = self.db.get_top_merchants(days=days, limit=None) or []
+            top_merchants = self.db.get_top_merchants(days=days, limit=5) or []
             anomalies = self.db.get_anomalies(days=days) or []
 
             total_spent = summary.get('total_spent', 0) or 0
@@ -127,18 +162,18 @@ class MpesaAnalyzer:
             sql = self.groq.generate_sql(question, schema, days=days, row_limit=row_limit)
             logger.info(f"Generated SQL: {sql}")
 
-            if not sql or not sql.upper().startswith('SELECT'):
+            if not is_safe_select_sql(sql):
                 return {
                     'question': question,
                     'sql': sql,
                     'results': [],
-                    'analysis': self.groq.chat(question, context=context),
+                    'analysis': self.groq.chat(question, context=context) or LLM_UNAVAILABLE_MESSAGE,
                     'error': None,
                 }
 
             results = self.db.execute_query(sql)
             aggregates = _aggregate_query_results(results)
-            analysis = self.groq.analyze_results(question, sql, aggregates, context=context)
+            analysis = self.groq.analyze_results(question, sql, aggregates, context=context) or LLM_UNAVAILABLE_MESSAGE
 
             return {
                 'question': question,
@@ -159,15 +194,17 @@ class MpesaAnalyzer:
 
     def get_dashboard_data(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
         cache_key = f'dashboard_{days}'
-        if not force_refresh and cache_key in self._cache:
-            return self._cache[cache_key]
+        if not force_refresh:
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
 
         try:
             summary = self.db.get_range_summary(days=days)
             category_spend = self.db.get_spending_by_category(days=days)
             daily_trend = self.db.get_daily_trend(days=days)
             anomalies = self.db.get_anomalies(days=days)
-            top_merchants = self.db.get_top_merchants(days=days, limit=None)
+            top_merchants = self.db.get_top_merchants(days=days, limit=10)
             recent_txs = self.db.get_transactions(days=days, limit=None)
             context = self.build_context_string(days=days)
             insights = self.groq.generate_insights(summary, extra_context=context) if summary else ""
@@ -181,7 +218,7 @@ class MpesaAnalyzer:
                 'recent_transactions': recent_txs,
                 'insights': insights,
             }
-            self._cache[cache_key] = data
+            self._cache_set(cache_key, data)
             return data
         except Exception as e:
             logger.error(f"get_dashboard_data failed: {e}")
@@ -220,8 +257,10 @@ class MpesaAnalyzer:
 
     def get_smart_anomalies(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
         cache_key = f'smart_anomalies_{days}'
-        if not force_refresh and cache_key in self._cache:
-            return self._cache[cache_key]
+        if not force_refresh:
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
 
         try:
             transactions = self.db.get_transactions(days=days, limit=None)
@@ -234,8 +273,14 @@ class MpesaAnalyzer:
             if flagged:
                 self.db.save_anomalies(flagged)
 
-            saved = self.db.get_saved_anomalies(days=days, limit=None)
+            flagged_ids = {str(a['transaction_id']) for a in flagged}
+            saved = [
+                a for a in self.db.get_saved_anomalies(days=days, limit=None)
+                if str(a.get('tx_uuid')) in flagged_ids
+            ]
             insight = self.groq.generate_anomaly_insights(saved) if saved else ""
+            if saved and not insight:
+                insight = _anomaly_fallback_text(saved)
 
             result = {
                 'anomalies': saved,
@@ -243,7 +288,7 @@ class MpesaAnalyzer:
                 'count': len(saved),
                 'insight': insight or "No unusual transactions detected in your recent spending — everything looks consistent with your normal pattern. ✅",
             }
-            self._cache[cache_key] = result
+            self._cache_set(cache_key, result)
             return result
         except Exception as e:
             logger.error(f"get_smart_anomalies failed: {e}")
@@ -256,7 +301,17 @@ class MpesaAnalyzer:
 
     def set_budget(self, category: str, limit_amount: float, period: str = 'monthly',
                     alert_threshold_pct: int = 80) -> Dict:
-        budget = self.db.upsert_budget(category, limit_amount, period, alert_threshold_pct)
+        normalized = normalize_category(category)
+        if normalized is None:
+            return {'success': False, 'error': f"Unknown category '{category}'"}
+        period = (period or 'monthly').strip().lower()
+        if period not in VALID_PERIODS:
+            return {'success': False, 'error': "Period must be 'weekly' or 'monthly'"}
+        if not limit_amount or limit_amount <= 0:
+            return {'success': False, 'error': 'Budget limit must be greater than 0'}
+        if not 1 <= alert_threshold_pct <= 100:
+            return {'success': False, 'error': 'Alert threshold must be between 1 and 100'}
+        budget = self.db.upsert_budget(normalized, limit_amount, period, alert_threshold_pct)
         self._cache.clear()
         if not budget:
             return {'success': False, 'error': f"Could not save budget for {category}"}
@@ -305,7 +360,6 @@ class MpesaAnalyzer:
         return chart_generator.generate_dynamic_chart(self, description, dark=dark)
 
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
-        from src.parse_sms import MpesaParser
         parser = MpesaParser()
         tx = parser._parse_sms_text(sms_content)
 
@@ -316,9 +370,15 @@ class MpesaAnalyzer:
         if not tx_id:
             return {'success': False, 'error': 'No transaction ID found in SMS'}
 
-        import pandas as pd
+        if self.db.transaction_exists(tx_id):
+            return {
+                'success': False,
+                'error': 'duplicate',
+                'summary': f"ℹ️ Transaction {tx_id} is already recorded.",
+            }
+
         df = pd.DataFrame([tx])
-        inserted = self.db.insert_transactions(df)
+        inserted = self.db.insert_transactions(df, overwrite=False)
         self._cache.clear()
         self.groq.invalidate_cache()
         forecasting.invalidate_cache()
@@ -335,14 +395,15 @@ class MpesaAnalyzer:
 
         if tx_type == 'credit':
             summary = (
-                f"✅ Received KES {amount:,.2f}\n"
+                f"✅ Money in KES {amount:,.2f}\n"
                 f"From: {recipient}\n"
                 f"Balance: KES {balance:,.2f}\n"
                 f"Transaction ID: {tx_id}"
             )
         else:
+            verb = {'withdrawal': 'Withdrew', 'airtime': 'Bought airtime for'}.get(tx_type, 'Paid')
             summary = (
-                f"✅ Paid KES {amount:,.2f}\n"
+                f"✅ {verb} KES {amount:,.2f}\n"
                 f"To: {recipient}\n"
                 f"Category: {category.title()}\n"
                 f"Fee: KES {cost:,.2f}\n"
@@ -353,7 +414,6 @@ class MpesaAnalyzer:
         return {'success': True, 'summary': summary, 'transaction': tx}
 
     def load_transactions(self, xml_path: str, csv_output: Optional[str] = None) -> int:
-        from src.parse_sms import MpesaParser
         parser = MpesaParser()
         df = parser.parse_xml_to_csv(xml_path, output_path=csv_output)
         if df.empty:

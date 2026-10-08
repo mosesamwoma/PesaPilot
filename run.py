@@ -33,9 +33,8 @@ def start_services():
     api_cmd = [
         sys.executable, "-m", "uvicorn",
         "whatsapp.whatsapp_api:app",
-        "--host", "0.0.0.0",
-        "--port", "8000",
-        "--reload"
+        "--host", "127.0.0.1",
+        "--port", "8000"
     ]
     try:
         api_proc = subprocess.Popen(api_cmd)

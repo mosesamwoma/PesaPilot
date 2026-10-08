@@ -5,9 +5,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import datetime
 import pytest
 from src import forecasting
+from src.timeutil import today_nairobi
 
 
-def _make_transactions(num_days: int, start: datetime.date = datetime.date(2026, 1, 1)):
+def _make_transactions(num_days: int, start: datetime.date = None):
+    start = start or (today_nairobi() - datetime.timedelta(days=num_days))
     txs = []
     for i in range(num_days):
         d = start + datetime.timedelta(days=i)
@@ -25,9 +27,10 @@ def test_build_daily_series_empty():
 
 
 def test_build_daily_series_excludes_credits():
+    day = today_nairobi() - datetime.timedelta(days=1)
     txs = [
-        {'timestamp': '2026-01-01T10:00:00', 'amount': 500, 'type': 'credit'},
-        {'timestamp': '2026-01-01T11:00:00', 'amount': 200, 'type': 'debit'},
+        {'timestamp': f'{day}T10:00:00', 'amount': 500, 'type': 'credit'},
+        {'timestamp': f'{day}T11:00:00', 'amount': 200, 'type': 'debit'},
     ]
     df = forecasting.build_daily_series(txs)
     assert len(df) == 1
@@ -35,13 +38,22 @@ def test_build_daily_series_excludes_credits():
 
 
 def test_build_daily_series_zero_fills_gaps():
+    today = today_nairobi()
     txs = [
-        {'timestamp': '2026-01-01T10:00:00', 'amount': 100, 'type': 'debit'},
-        {'timestamp': '2026-01-03T10:00:00', 'amount': 200, 'type': 'debit'},
+        {'timestamp': f'{today - datetime.timedelta(days=3)}T10:00:00', 'amount': 100, 'type': 'payment'},
+        {'timestamp': f'{today - datetime.timedelta(days=1)}T10:00:00', 'amount': 200, 'type': 'payment'},
     ]
     df = forecasting.build_daily_series(txs)
     assert len(df) == 3
     assert float(df.iloc[1]['amount']) == 0.0
+
+
+def test_build_daily_series_counts_trailing_days_without_spending():
+    today = today_nairobi()
+    txs = [{'timestamp': f'{today - datetime.timedelta(days=5)}T10:00:00', 'amount': 100, 'type': 'payment'}]
+    df = forecasting.build_daily_series(txs)
+    assert df.iloc[-1]['date'] == today - datetime.timedelta(days=1)
+    assert float(df.iloc[-1]['amount']) == 0.0
 
 
 def test_generate_forecast_insufficient_data():

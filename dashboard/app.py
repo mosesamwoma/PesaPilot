@@ -3,6 +3,7 @@ import os
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+import html
 import re
 import streamlit as st
 import plotly.express as px
@@ -11,6 +12,13 @@ import pandas as pd
 import logging
 from typing import Optional, Any
 from src.analyzer import MpesaAnalyzer
+from src.chat_common import (
+    ANOMALY_KEYWORDS, BUDGET_KEYWORDS, BUDGET_STATUS_KEYWORDS, CHART_TRIGGER_WORDS, FORECAST_KEYWORDS,
+    INVEST_KEYWORDS, budget_status_text, clean_response, daily_summary_text, forecast_header, help_text,
+    is_safe_question, is_set_budget_command, is_valid_question_length, matches_any_keyword,
+    parse_days_from_question, parse_forecast_horizon, parse_set_budget, range_summary_text,
+)
+from src.parse_sms import MpesaParser
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -81,224 +89,37 @@ PLOTLY_DARK: dict[str, Any] = dict(
 )
 
 
-DANGEROUS_KEYWORDS = ['DELETE', 'DROP', 'TRUNCATE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'ATTACH', 'REPLACE', 'MERGE', 'CALL']
-_DANGEROUS_KEYWORDS_RE = re.compile(r'\b(?:' + '|'.join(DANGEROUS_KEYWORDS) + r')\b', re.IGNORECASE)
-
-FORECAST_KEYWORDS = [
-    'forecast', 'spending prediction', 'predict my spending', 'spending forecast',
-    'projected spending', 'predict spending', 'future spending',
-]
-
-BUDGET_KEYWORDS = ['budget plan', 'budget', 'how should i budget', 'monthly plan', 'allocate my money', 'allocate income']
-INVEST_KEYWORDS = ['invest', 'investment', 'where to invest', 'grow my money', 'grow savings', 'mmf', 'money market fund',
-                    'treasury bill', 't-bill', 'sacco', 'put my money']
-
-ANOMALY_KEYWORDS = [
-    'anomaly', 'anomalies', 'unusual spending', 'unusual transaction', 'weird transaction',
-    'strange transaction', 'suspicious transaction', 'flagged transaction', 'odd spending',
-    'out of pattern', 'is anything unusual',
-]
-
-BUDGET_STATUS_KEYWORDS = [
-    'my budgets', 'budget status', 'how are my budgets', 'budget check',
-    'check my budget', 'am i over budget', 'am i within budget', 'budget progress',
-]
-SET_BUDGET_PATTERN = re.compile(
-    r'(?:'
-        r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
-        r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>[\d,]+(?:\.\d+)?)'
-        r'|'
-        r'set\s+(?P<category2>[a-zA-Z ]+?)\s+budget\s*'
-        r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount2>[\d,]+(?:\.\d+)?)'
-    r')\s*(?P<period>weekly|monthly)?',
-    re.IGNORECASE,
-)
-_HAS_DIGIT = re.compile(r'\d')
-
-
-def _keyword_pattern(word: str) -> re.Pattern:
-    if ' ' in word:
-        return re.compile(re.escape(word), re.IGNORECASE)
-    return re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
-
-
-def _matches_any_keyword(text: str, keywords) -> bool:
-    return any(_keyword_pattern(k).search(text) for k in keywords)
-
-CATEGORY_SYNONYMS = {
-    'food': ['food', 'groceries', 'grocery', 'eating', 'restaurant', 'eats', 'lunch', 'dinner', 'kibanda', 'mama mboga'],
-    'transport': ['transport', 'fare', 'matatu', 'uber', 'bolt', 'taxi', 'fuel', 'petrol', 'boda'],
-    'utilities': ['utilities', 'utility', 'kplc', 'electricity', 'power', 'water bill', 'wifi', 'internet'],
-    'banking': ['banking', 'bank charges', 'bank charge', 'withdrawal', 'withdraw', 'deposit', 'transaction charges'],
-    'shopping': ['shopping', 'shop', 'clothes', 'clothing', 'retail'],
-    'health': ['health', 'medical', 'hospital', 'clinic', 'pharmacy', 'medicine', 'nhif', 'sha'],
-    'education': ['education', 'school fees', 'fees', 'tuition', 'school'],
-    'entertainment': ['entertainment', 'movies', 'netflix', 'showmax', 'fun', 'leisure'],
-    'savings': ['savings', 'saving', 'sacco', 'mmf', 'chama'],
-    'business': ['business', 'stock', 'supplies', 'wholesale'],
-    'other': ['other', 'miscellaneous', 'misc'],
+PERIOD_OPTIONS: dict[str, Optional[int]] = {
+    "Last 7 days": 7,
+    "Last 30 days": 30,
+    "Last 90 days": 90,
+    "Last 180 days": 180,
+    "Last 365 days": 365,
+    "All time": None,
 }
-
-CHART_TRIGGER_WORDS = [
-    'bar chart', 'pie chart', 'donut chart', 'doughnut chart', 'line chart', 'area chart',
-    'scatter chart', 'scatter plot', 'box plot', 'boxplot', 'boxen plot', 'violin plot',
-    'stacked bar', 'stacked chart',
-    'bar', 'pie', 'donut', 'doughnut', 'trend', 'line', 'area', 'heatmap', 'heat map',
-    'histogram', 'distribution', 'spread', 'variability', 'consistency', 'outlier', 'outliers',
-    'violin', 'stacked', 'chart', 'graph', 'plot', 'draw', 'diagram', 'visualize', 'visualise',
-    'over days', 'over time', 'spending over', 'daily trend', 'weekly',
-    'merchants', 'top merchants', 'top recipients', 'recipients', 'top spending',
-    'breakdown of', 'spending by', 'spending per', 'where did i spend', 'where did my money go',
-    'how did i spend', 'proportion', 'percentage of my spending', 'compare my spending',
-    'show me my spending', 'show my spending', 'transaction costs', 'transaction fees',
-]
-
-HELP_TEXT = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
-
-📊 **CHARTS** (Describe what you want, in your own words):
-  • "Pie chart of my spending by category last month"
-  • "Donut chart of my spending by category"
-  • "Bar chart of my top 5 recipients in August"
-  • "Show my transport spending as a line chart this year"
-  • "How much has M-Pesa charged me in fees this month?"
-  • "Heatmap of my spending by day of the week"
-  • "Stacked bar of my spending by category and day"
-  • "Distribution of my transaction amounts last 90 days"
-  • "Spread of my food spending" or "Violin plot of my spending by category"
-  • Any chart type (bar/pie/donut/line/area/scatter/histogram/heatmap/
-    box/violin/stacked bar) + any date range (a specific month, "last
-    week", "Q1", exact dates, "all time")
-
-💬 **QUESTIONS** (Ask naturally):
-  • "What did I spend on food?"
-  • "Top 5 expenses?"
-  • "How much to Safaricom?"
-
-💡 **ADVICE**:
-  • "Give me a budget plan" → Personalized KES budget split
-  • "What should I invest in?" → Sacco / MMF / T-Bill guidance
-
-📋 **REPORTS**:
-  • "Summary" → Last 30 days
-  • "Daily summary" / "Today" → Today's overview
-  • "90 days" / "All time" → Extended periods
-
-🔮 **FORECASTING**:
-  • "Forecast" / "Forecast 7 days" → Next 7-day spending prediction
-  • "Forecast 30 days" → Next 30-day spending prediction
-  • "Spending prediction" → Same as "forecast"
-  • Returns predicted amount, trend, risk level + AI summary
-
-🕵️ **ANOMALY DETECTION**:
-  • "Anomalies" / "Unusual spending" → ML-flagged unusual transactions
-  • Learns YOUR normal pattern per category, not a generic threshold
-  • Also browsable on the 🕵️ Anomalies page in the sidebar
-
-🎯 **BUDGET GOALS**:
-  • "Set budget food 5000" → Monthly food budget of KES 5,000
-  • "Set budget transport 3000 weekly" → Weekly transport budget
-  • "My budgets" / "Budget status" → Current spend vs each limit
-  • Manage budgets anytime on the 🎯 Budgets page in the sidebar
-
-✨ Just ask naturally! Charts & analysis are smart."""
+PERIOD_LABEL_BY_DAYS = {v: k for k, v in PERIOD_OPTIONS.items()}
 
 
-def is_safe_question(question: str) -> bool:
-    if _DANGEROUS_KEYWORDS_RE.search(question):
-        return False
-    if '--' in question or '/*' in question:
-        return False
-    return True
-
-
-def clean_response(text: str) -> str:
-    jargon = ['postgresql', 'postgres', 'schema', 'database', 'query', 'sql', 'rpc']
-    for word in jargon:
-        text = re.sub(rf'\b{re.escape(word)}\b', '', text, flags=re.IGNORECASE)
-    return re.sub(r' +', ' ', text).strip()
-
-
-def parse_days_from_question(question_lower: str, default: int = 30) -> int:
-    if 'all time' in question_lower or 'year' in question_lower or re.search(r'\b365\b', question_lower):
-        return 365
-    if re.search(r'\b180\b', question_lower) or '6 months' in question_lower:
-        return 180
-    if re.search(r'\b90\b', question_lower) or '3 months' in question_lower:
-        return 90
-    if re.search(r'\b60\b', question_lower):
-        return 60
-    if re.search(r'\bweek\b', question_lower) or '7 days' in question_lower:
-        return 7
-    if '14 days' in question_lower or 'two weeks' in question_lower:
-        return 14
-    match = re.search(r'(\d{1,3})\s*day', question_lower)
-    if match:
-        days = int(match.group(1))
-        if 1 <= days <= 365:
-            return days
-    return default
-
-
-def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
-    if 'month' in question_lower or re.search(r'\b30\b', question_lower):
-        return 30
-    if 'week' in question_lower or re.search(r'\b7\b', question_lower):
-        return 7
-    return default
+_SUMMARY_COMMAND_RE = re.compile(r'\bsummary\b')
+_DAILY_COMMAND_RE = re.compile(
+    r"^\s*(?:(?:my|the|give me|show me)\s+)*(?:daily|today(?:'s)?)(?:\s+(?:summary|overview|report|spending))?\s*\??\s*$"
+)
 
 
 def generate_daily_summary_text(analyzer: "MpesaAnalyzer") -> str:
     try:
-        summary = analyzer.db.get_today_summary()
-
-        if not summary or summary.get('total_transactions', 0) == 0:
-            return "📭 No transactions recorded today.\n\nStart tracking by adding M-Pesa transactions."
-
-        spent = summary.get('total_spent', 0)
-        received = summary.get('total_received', 0)
-        balance = summary.get('balance', 0)
-        transactions = summary.get('total_transactions', 0)
-
-        return f"""📊 **Today's Financial Summary**
-
-💰 Total Transactions: {transactions}
-💸 Total Spent: KES {spent:,.0f}
-💵 Total Received: KES {received:,.0f}
-📈 Net Flow: KES {received - spent:,.0f}
-⚖️ Current Balance: KES {balance:,.0f}
-
-**Insights:**
-- Average per transaction: KES {spent/max(transactions, 1):,.0f}
-- Spending velocity: {'High' if spent > 5000 else 'Moderate' if spent > 1000 else 'Low'}
-"""
+        return daily_summary_text(analyzer.db.get_today_summary(), manual_sms_hint=False)
     except Exception as e:
         logger.error(f"Daily summary error: {e}")
         return "⚠️ Could not generate summary. Please try again."
 
 
-def generate_summary_text(analyzer: "MpesaAnalyzer", days: int) -> str:
-    summary = analyzer.db.get_range_summary(days=days)
-
-    if summary and summary.get('total_transactions', 0) > 0:
-        spent = summary.get('total_spent', 0)
-        received = summary.get('total_received', 0)
-        balance = summary.get('balance', 0)
-        transactions = summary.get('total_transactions', 0)
-
-        return f"""📊 **{days}-Day Financial Summary**
-
-💰 Transactions: {transactions}
-💸 Total Spent: KES {spent:,.0f}
-💵 Total Received: KES {received:,.0f}
-📈 Net: KES {received - spent:,.0f}
-⚖️ Balance: KES {balance:,.0f}
-
-**Analytics:**
-- Daily Average: KES {spent / max(days, 1):,.0f}
-- Per Transaction: KES {spent / max(transactions, 1):,.0f}
-- Net Position: {'⚠️ Deficit (spent more than received)' if spent > received else '✅ Surplus (received more than spent)'}"""
-
-    return "📭 No transactions in this period. Start tracking now!"
+def generate_summary_text(analyzer: "MpesaAnalyzer", days: Optional[int]) -> str:
+    try:
+        return range_summary_text(analyzer.db.get_range_summary(days=days), days)
+    except Exception as e:
+        logger.error(f"Summary error: {e}")
+        return "⚠️ Could not generate summary. Please try again."
 
 
 def chat_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str) -> Optional[go.Figure]:
@@ -372,133 +193,93 @@ def fmt_ksh(amount: Optional[float]) -> str:
 
 def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
-    if not question or len(question) < 2 or len(question) > 500:
-        return {'content': "⚠️ Question too short or too long (2-500 chars).", 'sql': None, 'results': None, 'fig': None}
+    def reply(content: str, fig=None, sql=None, results=None) -> dict:
+        return {'content': content, 'sql': sql, 'results': results, 'fig': fig}
+
+    if not is_valid_question_length(question):
+        return reply("⚠️ Question too short or too long (2-500 chars).")
 
     if not is_safe_question(question):
-        logger.warning("🚨 BLOCKED: Destructive operation")
-        return {'content': "⚠️ Invalid question.", 'sql': None, 'results': None, 'fig': None}
+        logger.warning("BLOCKED: destructive operation")
+        return reply("⚠️ Invalid question.")
 
     question_lower = question.lower().strip()
 
-
-    if (question_lower.startswith('set budget') or question_lower.startswith('budget limit')
-            or (question_lower.startswith('set ') and 'budget' in question_lower
-                and _HAS_DIGIT.search(question_lower))):
-        logger.info("🎯 SET BUDGET")
-        match = SET_BUDGET_PATTERN.search(question)
-        if match:
-            category = (match.group('category') or match.group('category2')).strip().lower()
-            amount = float((match.group('amount') or match.group('amount2')).replace(',', ''))
-            period = (match.group('period') or 'monthly').lower()
-            result = analyzer.set_budget(category, amount, period=period)
-            if result.get('success'):
-                content = (
-                    f"🎯 Budget set: {category.title()} — KES {amount:,.0f} per {period}.\n"
-                    f"Check the 🎯 Budgets page anytime to see progress."
-                )
-            else:
-                content = f"❌ Couldn't set that budget: {result.get('error', 'unknown error')}"
+    if is_set_budget_command(question_lower):
+        parsed, problem = parse_set_budget(question)
+        if parsed is None:
+            return reply(clean_response(f"❌ {problem}"))
+        result = analyzer.set_budget(parsed['category'], parsed['amount'], period=parsed['period'])
+        if result.get('success'):
+            content = (
+                f"🎯 Budget set: {parsed['category'].title()} — KES {parsed['amount']:,.0f} per {parsed['period'][:-2]}.\n"
+                f"Check the 🎯 Budgets page anytime to see progress."
+            )
         else:
-            content = "❌ Couldn't read that. Try: \"set budget food 5000\" or \"set budget transport 3000 weekly\""
-        return {'content': clean_response(content), 'sql': None, 'results': None, 'fig': None}
+            content = f"❌ Couldn't set that budget: {result.get('error', 'unknown error')}"
+        return reply(clean_response(content))
 
-    if any(k in question_lower for k in BUDGET_STATUS_KEYWORDS):
-        logger.info("🎯 BUDGET STATUS")
-        status_rows = analyzer.get_budgets_overview()
-        if not status_rows:
-            content = "📭 No budgets set yet. Try: \"set budget food 5000\" to create one, or use the 🎯 Budgets page."
-        else:
-            lines = ["🎯 **Your Budgets**\n"]
-            for row in status_rows:
-                limit = float(row.get('limit_amount') or 0)
-                spent = float(row.get('spent_this_period') or 0)
-                pct = (spent / limit * 100) if limit else 0
-                icon = "🔴" if pct >= 100 else "🟡" if pct >= float(row.get('alert_threshold_pct') or 80) else "🟢"
-                lines.append(
-                    f"{icon} {str(row.get('category', '')).title()} ({row.get('period', 'monthly')}): "
-                    f"KES {spent:,.0f} / {limit:,.0f} ({pct:.0f}%)"
-                )
-            content = "\n".join(lines)
-        return {'content': clean_response(content), 'sql': None, 'results': None, 'fig': None}
+    if matches_any_keyword(question_lower, BUDGET_STATUS_KEYWORDS):
+        return reply(clean_response(budget_status_text(analyzer.get_budgets_overview(), dashboard=True)))
 
-    if any(k in question_lower for k in BUDGET_KEYWORDS):
-        logger.info("📋 BUDGET PLAN")
+    if matches_any_keyword(question_lower, BUDGET_KEYWORDS):
         context = analyzer.build_context_string(days=30)
-        analysis = analyzer.groq.budget_plan(context=context)
-        return {'content': clean_response(analysis), 'sql': None, 'results': None, 'fig': None}
+        return reply(clean_response(analyzer.groq.budget_plan(context=context)))
 
-    if any(k in question_lower for k in INVEST_KEYWORDS):
-        logger.info("📈 INVESTMENT ADVICE")
+    if matches_any_keyword(question_lower, INVEST_KEYWORDS):
         context = analyzer.build_context_string(days=30)
-        analysis = analyzer.groq.investment_advice(context=context)
-        return {'content': clean_response(analysis), 'sql': None, 'results': None, 'fig': None}
+        return reply(clean_response(analyzer.groq.investment_advice(context=context)))
 
-    if any(k in question_lower for k in FORECAST_KEYWORDS):
-        logger.info("🔮 FORECAST")
+    if matches_any_keyword(question_lower, FORECAST_KEYWORDS):
         horizon = parse_forecast_horizon(question_lower, default=7)
         forecast_data = analyzer.get_forecast(horizon_days=horizon)
 
         if not forecast_data.get('sufficient_data'):
             msg = forecast_data.get('message', 'Not enough transaction history yet for a forecast.')
-            return {'content': f"📉 {clean_response(msg)}", 'sql': None, 'results': None, 'fig': None}
+            return reply(f"📉 {clean_response(msg)}")
 
         fig = chat_forecast_chart(forecast_data, title=f"🔮 {horizon}-Day Spending Forecast")
-
-        trend_icon = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(forecast_data.get('trend', 'Stable'), '➡️')
-        risk_icon = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(forecast_data.get('risk_level', 'Low'), '🟢')
-
-        header = (
-            f"🔮 **{horizon}-Day Spending Forecast**\n\n"
-            f"💰 Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
-            f"📅 Avg per Day: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
-            f"{trend_icon} Trend: {forecast_data.get('trend', 'Stable')}\n"
-            f"{risk_icon} Risk Level: {forecast_data.get('risk_level', 'Low')}\n"
-        )
         ai_summary = forecast_data.get('insight', '')
-        content = clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else ""))
-        return {'content': content, 'sql': None, 'results': None, 'fig': fig}
+        header = forecast_header(forecast_data, horizon)
+        return reply(clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else "")), fig=fig)
 
-    if any(k in question_lower for k in ANOMALY_KEYWORDS):
-        logger.info("🕵️ ML ANOMALY DETECTION")
+    if matches_any_keyword(question_lower, ANOMALY_KEYWORDS):
         anomaly_days = parse_days_from_question(question_lower, default=90)
         result = analyzer.get_smart_anomalies(days=anomaly_days, force_refresh=False)
         flagged = result.get('anomalies', [])
+        window = "all time" if anomaly_days is None else f"last {anomaly_days} days"
 
         fig = None
         if flagged:
             df = pd.DataFrame(flagged)
             fig = chat_bar_chart(
-                df, 'recipient', 'amount',
-                title=f"🕵️ Unusual Transactions (last {anomaly_days}d)"
+                df.head(15), 'recipient', 'amount',
+                title=f"🕵️ Unusual Transactions ({window})"
             )
-            header = f"🕵️ **{len(flagged)} Unusual Transaction(s) Found (last {anomaly_days} days)**\n\n"
+            header = f"🕵️ **{len(flagged)} Unusual Transaction(s) Found ({window})**\n\n"
         else:
-            header = f"✅ **No Unusual Transactions (last {anomaly_days} days)**\n\n"
+            header = f"✅ **No Unusual Transactions ({window})**\n\n"
 
-        content = clean_response(header + result.get('insight', ''))
-        return {'content': content, 'sql': None, 'results': None, 'fig': fig}
+        return reply(clean_response(header + result.get('insight', '')), fig=fig)
 
-    if _matches_any_keyword(question_lower, CHART_TRIGGER_WORDS):
-        logger.info("📊 DYNAMIC CHART")
+    if question_lower == 'help':
+        return reply(help_text(dashboard=True))
+
+    if _DAILY_COMMAND_RE.match(question_lower):
+        return reply(generate_daily_summary_text(analyzer))
+
+    if matches_any_keyword(question_lower, CHART_TRIGGER_WORDS):
         chart_result = analyzer.generate_dynamic_chart(question, dark=True)
         fig = chart_result['fig']
         if fig is None:
-            content = f"❌ {chart_result['error'] or 'No data available yet for that chart.'}"
-            return {'content': content, 'sql': None, 'results': None, 'fig': None}
+            return reply(f"❌ {chart_result['error'] or 'No data available yet for that chart.'}")
         spec = chart_result['spec']
         content = f"📊 **{spec.get('title')}**\n\n{chart_result['summary']}\n✅ Chart generated"
-        return {'content': content, 'sql': None, 'results': None, 'fig': fig}
+        return reply(content, fig=fig)
 
-    if question_lower == 'help':
-        return {'content': HELP_TEXT, 'sql': None, 'results': None, 'fig': None}
-
-    if 'daily' in question_lower or 'today' in question_lower:
-        return {'content': generate_daily_summary_text(analyzer), 'sql': None, 'results': None, 'fig': None}
-
-    if 'summary' in question_lower:
+    if _SUMMARY_COMMAND_RE.search(question_lower) and len(question_lower.split()) <= 6:
         days = parse_days_from_question(question_lower, default=30)
-        return {'content': generate_summary_text(analyzer, days), 'sql': None, 'results': None, 'fig': None}
+        return reply(generate_summary_text(analyzer, days))
 
     result = analyzer.ask_question(question)
     if result.get('error'):
@@ -506,12 +287,9 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
     else:
         content = clean_response(result.get('analysis', 'No response'))
 
-    return {
-        'content': content,
-        'sql': result.get('sql', ''),
-        'results': result.get('results', []),
-        'fig': None,
-    }
+    return reply(content, sql=result.get('sql', ''), results=result.get('results', []))
+
+
 def main() -> None:
     analyzer: MpesaAnalyzer = get_analyzer()
 
@@ -523,10 +301,11 @@ def main() -> None:
         page: str = st.radio("Navigate", ["📊 Dashboard", "🔮 Forecast", "🎯 Budgets", "💬 Ask AI", "📋 Transactions", "🕵️ Anomalies"])
         st.divider()
 
-        days: int = st.slider("Analysis period (days)", 7, 180, 30)
+        period_label_choice: str = st.selectbox("Analysis period", list(PERIOD_OPTIONS), index=1)
+        days: Optional[int] = PERIOD_OPTIONS[period_label_choice]
 
         if st.button("🔄 Refresh Data", use_container_width=True):
-            st.cache_data.clear()
+            analyzer.clear_cache()
             st.rerun()
 
     with st.spinner("Loading your financial data..."):
@@ -541,7 +320,7 @@ def main() -> None:
 
     if page == "📊 Dashboard":
         st.title("📊 Financial Dashboard")
-        st.caption(f"Last {days} days · M-Pesa transaction analysis")
+        st.caption(f"{PERIOD_LABEL_BY_DAYS.get(days, 'Selected period')} · M-Pesa transaction analysis")
 
         c1, c2, c3, c4 = st.columns(4)
         metrics: list[tuple[Any, str, Any]] = [
@@ -647,7 +426,7 @@ def main() -> None:
             if insights:
                 st.markdown(f"""
                 <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
-                {insights.replace(chr(10), '<br>')}
+                {html.escape(insights).replace(chr(10), '<br>')}
                 </div>
                 """, unsafe_allow_html=True)
             else:
@@ -658,8 +437,8 @@ def main() -> None:
 
         with col_h1:
             st.subheader("🔥 Spending Heatmap")
-            st.caption(f"KES per category per day of week (last {days} days)")
-            raw_for_heat: list[dict[str, Any]] = analyzer.db.get_transactions(days=days, limit=5000)
+            st.caption(f"KES per category per day of week ({PERIOD_LABEL_BY_DAYS.get(days, 'selected period').lower()})")
+            raw_for_heat: list[dict[str, Any]] = analyzer.db.get_transactions(days=days, limit=20000)
             if raw_for_heat:
                 df_heat: pd.DataFrame = pd.DataFrame(raw_for_heat)
                 df_heat = df_heat[df_heat['type'] != 'credit'].copy()
@@ -708,7 +487,7 @@ def main() -> None:
 
         with col_h2:
             st.subheader("📊 Amount Distribution")
-            st.caption(f"Frequency of transaction sizes (last {days} days)")
+            st.caption(f"Frequency of transaction sizes ({PERIOD_LABEL_BY_DAYS.get(days, 'selected period').lower()})")
             if recent_txs:
                 df_hist: pd.DataFrame = pd.DataFrame(recent_txs)
                 df_hist = df_hist[df_hist['type'] != 'credit'].copy()
@@ -830,7 +609,7 @@ def main() -> None:
             fc1, fc2, fc3 = st.columns(3)
             with fc1:
                 category_input: str = st.selectbox(
-                    "Category", list(CATEGORY_SYNONYMS.keys()),
+                    "Category", list(MpesaParser.CATEGORIES),
                     format_func=lambda c: c.title(),
                 )
             with fc2:
@@ -898,9 +677,9 @@ def main() -> None:
 
         for i, msg in enumerate(st.session_state.chat_history):
             if msg['role'] == 'user':
-                st.markdown(f'<div class="chat-msg-user">🧑 {msg["content"]}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chat-msg-user">🧑 {html.escape(msg["content"])}</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="chat-msg-bot">🤖 {msg["content"]}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chat-msg-bot">🤖 {html.escape(msg["content"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
                 if msg.get('fig') is not None:
                     fig_obj = msg['fig']
                     if hasattr(fig_obj, 'savefig'):
@@ -909,7 +688,7 @@ def main() -> None:
                         st.plotly_chart(fig_obj, use_container_width=True, key=f"chat_fig_{i}")
                 if msg.get('sql'):
                     with st.expander("View SQL", expanded=False):
-                        st.markdown(f'<div class="sql-box">{msg["sql"]}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="sql-box">{html.escape(msg["sql"])}</div>', unsafe_allow_html=True)
                 if msg.get('results'):
                     with st.expander(f"View results ({len(msg['results'])} rows)", expanded=False):
                         st.dataframe(pd.DataFrame(msg['results']).head(20), use_container_width=True)
@@ -969,7 +748,7 @@ def main() -> None:
             "legitimate one-offs (a big one-time purchase, a rare emergency)."
         )
 
-        anom_days: int = st.slider("Lookback period (days)", 14, 180, 90, key="anomaly_days_slider")
+        anom_days: int = st.slider("Lookback period (days)", 14, 730, 90, key="anomaly_days_slider")
         force_refresh: bool = st.button("🔄 Re-run detection now", use_container_width=False)
 
         with st.spinner("Scanning your spending pattern..."):
@@ -981,7 +760,7 @@ def main() -> None:
         if insight_text:
             st.markdown(f"""
             <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
-            💡 {insight_text.replace(chr(10), '<br>')}
+            💡 {html.escape(insight_text).replace(chr(10), '<br>')}
             </div>
             """, unsafe_allow_html=True)
             st.markdown("")
@@ -994,7 +773,7 @@ def main() -> None:
                 model_label = "learned pattern" if 'isolation' in model_used else "statistical check"
                 st.markdown(f"""
                 <div class="anomaly-badge">
-                    🕵️ <strong>{a.get('recipient', 'Unknown')}</strong> — KES {float(a.get('amount', 0)):,.2f}
+                    🕵️ <strong>{html.escape(str(a.get('recipient', 'Unknown')))}</strong> — KES {float(a.get('amount', 0)):,.2f}
                     &nbsp;·&nbsp; {str(a.get('merchant_category', 'other')).title()}
                     &nbsp;·&nbsp; {str(a.get('timestamp', ''))[:16]}
                     &nbsp;·&nbsp; unusualness score: {score:.1f} ({model_label})

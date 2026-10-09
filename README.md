@@ -195,19 +195,15 @@ streamlit run dashboard/app.py
 ```
 Open [http://localhost:8501](http://localhost:8501).
 
-**API + WhatsApp bot (whatsapp-web.js, local dev):**
+**API + WhatsApp bots (local dev):**
 ```bash
-npm run api          # Terminal 1
-npm run dev:wwebjs    # Terminal 2
+npm run api           # Terminal 1
+npm run dev           # Terminal 2 — start the Baileys bot first
+npm run dev:wwebjs    # Terminal 3 — then start the whatsapp-web.js bot
 ```
-Scan the QR: WhatsApp → Settings → Linked Devices. Session persists in `.wwebjs_auth/`.
-
-**API + WhatsApp bot (Baileys, also works locally):**
-```bash
-npm run api   # Terminal 1
-npm run dev   # Terminal 2
-```
-Session persists in `.baileys_auth/`.
+The Baileys session persists in `.baileys_auth/`. Scan the whatsapp-web.js QR
+with WhatsApp → Settings → Linked Devices; its session persists in
+`.wwebjs_auth/`.
 
 > The Streamlit dashboard is local-only and not included in the Docker image.
 

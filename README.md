@@ -91,7 +91,6 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Same names the official Postgres Docker image uses |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `WHATSAPP_MAIN_NUMBER` | e.g. `254712345678` — the number you text the bot **from** |
-| `WHATSAPP_LID` | WhatsApp's internal ID for your number. Both bots refuse to start without it. On the very first run put any placeholder (e.g. `0000000000`), start the bot, send it a message, copy the `From:` number from the log into this variable and restart. Messages from a linked-device ID are ignored until the real value is set |
 | `WHATSAPP_PIN` | Any 4-digit code, used for manual SMS entry |
 
 `POSTGRES_HOST=auto` (default) lets one `.env` work everywhere — bare metal (`127.0.0.1`), Docker (`host.docker.internal`, falling back to `172.17.0.1`), Podman (`host.containers.internal`). Set it explicitly to skip detection, e.g. for a remote Postgres server. Passwords with special characters are safe as-is — no URL-encoding needed.
@@ -102,6 +101,7 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 |---|---|---|
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot finds the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | FastAPI port |
+| `WHATSAPP_LID` | empty | WhatsApp's internal ID for your number. Both bots resolve it automatically, so leave it empty. Set it only if the bot ignores your messages: the log prints the sender next to `From:` — copy that number here and restart |
 | `LLM_MODEL_FAST` | `openai/gpt-oss-20b` | Chat / dashboard insights |
 | `LLM_MODEL_SMART` | `openai/gpt-oss-120b` | SQL generation, analysis, advice |
 | `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature |
@@ -394,7 +394,7 @@ PESAPILOT_SMS_XML=data/raw/your-sms-backup.xml pytest
 | `streamlit: command not found` | `source venv/bin/activate` |
 | Dates look 3 hours off after upgrading | Re-run the import (step 5) — old rows were stored in UTC |
 | `balance` empty for some rows | Not every SMS includes it; the parser now imports only M-Pesa transaction messages, which all do |
-| Bot exits at startup or ignores your messages | Set `WHATSAPP_LID` to the real value (see the Required table) — the `From:` line in the bot log shows the ID WhatsApp is using |
+| Bot ignores your messages | The `From:` line in the bot log shows the ID WhatsApp used. If it is not your phone number, copy it into `WHATSAPP_LID` and restart |
 | Can't connect to Postgres | Check detected host in startup logs; avoid `localhost` (use `127.0.0.1` or real IP) |
 | `time data ... doesn't match format` | Ensure timestamp parsing uses `format='ISO8601'` everywhere |
 

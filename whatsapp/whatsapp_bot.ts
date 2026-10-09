@@ -6,7 +6,7 @@ import {
     normalizeMessageContent,
     proto,
 } from '@whiskeysockets/baileys';
-import type { WASocket } from '@whiskeysockets/baileys';
+import type { WASocket, WAMessageKey } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -78,12 +78,6 @@ function validateConfig(config: Config): void {
         process.exit(1);
     }
 
-    if (!config.whatsappLid) {
-        console.error('\nERROR: WHATSAPP_LID is required in .env');
-        console.error(' Send the bot a message, then copy the "From:" number from the log into WHATSAPP_LID.\n');
-        process.exit(1);
-    }
-
     if (!config.whatsappPin) {
         console.error('\nERROR: WHATSAPP_PIN is required in .env');
         process.exit(1);
@@ -98,7 +92,7 @@ function printBanner(config: Config): void {
     console.log('PesaPilot WhatsApp Bot v1.2 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`Phone Number : configured`);
-    console.log('LID          : configured');
+    console.log(`LID          : ${config.whatsappLid ? 'configured' : 'not set (resolved automatically)'}`);
     console.log(`PIN          : configured`);
     console.log(`API URL      : ${config.apiUrl}`);
     console.log(`Auth path    : ${config.authPath}`);
@@ -184,17 +178,37 @@ function splitMessage(text: string, maxLength: number): string[] {
 }
 
 function isAuthorized(
-    senderNumeric: string,
+    senderIds: string[],
     mainNumber: string,
     lidNumber: string
 ): boolean {
     const mainNumeric = stripSuffix(mainNumber);
     const lidNumeric = stripSuffix(lidNumber);
 
-    if (mainNumeric && senderNumeric === mainNumeric) return true;
-    if (lidNumeric && senderNumeric === lidNumeric) return true;
+    return senderIds.some(
+        (id) => (mainNumeric !== '' && id === mainNumeric) || (lidNumeric !== '' && id === lidNumeric)
+    );
+}
 
-    return false;
+async function resolveSenderIds(sock: WASocket, key: WAMessageKey): Promise<string[]> {
+    const ids = new Set<string>();
+    const add = (jid?: string | null): void => {
+        const digits = stripSuffix(jid || '');
+        if (digits) ids.add(digits);
+    };
+
+    add(key.remoteJid);
+    add(key.remoteJidAlt);
+
+    if (key.remoteJid && key.remoteJid.endsWith('@lid') && !key.remoteJidAlt) {
+        try {
+            add(await sock.signalRepository.lidMapping.getPNForLID(key.remoteJid));
+        } catch (e) {
+            console.warn(`LID lookup failed: ${(e as Error).message}`);
+        }
+    }
+
+    return [...ids];
 }
 
 
@@ -340,14 +354,14 @@ async function handleMessage(
         const userMessage = extractText(msg).trim();
         if (!userMessage) return;
 
-        const senderNumeric = stripSuffix(jid);
+        const senderIds = await resolveSenderIds(sock, key as WAMessageKey);
         const authorized = isAuthorized(
-            senderNumeric,
+            senderIds,
             config.mainNumber,
             config.whatsappLid
         );
 
-        console.log(`\nFrom: ${senderNumeric}`);
+        console.log(`\nFrom: ${senderIds.join(' / ')}`);
         console.log(`Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
 
         if (!authorized) {

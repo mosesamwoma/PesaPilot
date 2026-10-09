@@ -21,7 +21,7 @@ import pandas as pd
 import seaborn as sns
 
 from src import chart_generator
-from src.analyzer import MpesaAnalyzer
+from src.analyzer import LLM_UNAVAILABLE_MESSAGE, MpesaAnalyzer
 from src.chat_common import (
     ANOMALY_KEYWORDS, BUDGET_KEYWORDS, BUDGET_STATUS_KEYWORDS, CHART_TRIGGER_WORDS, FORECAST_KEYWORDS,
     INVEST_KEYWORDS, budget_status_text, clean_response, daily_summary_text, forecast_header, help_text,
@@ -303,11 +303,11 @@ async def ask_question(request: QuestionRequest):
 
         if matches_any_keyword(question_lower, BUDGET_KEYWORDS):
             context = az.build_context_string(days=30)
-            return reply(clean_response(az.groq.budget_plan(context=context)))
+            return reply(clean_response(az.groq.budget_plan(context=context) or LLM_UNAVAILABLE_MESSAGE))
 
         if matches_any_keyword(question_lower, INVEST_KEYWORDS):
             context = az.build_context_string(days=30)
-            return reply(clean_response(az.groq.investment_advice(context=context)))
+            return reply(clean_response(az.groq.investment_advice(context=context) or LLM_UNAVAILABLE_MESSAGE))
 
         if matches_any_keyword(question_lower, FORECAST_KEYWORDS):
             horizon = parse_forecast_horizon(question_lower, default=7)

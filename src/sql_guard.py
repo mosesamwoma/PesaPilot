@@ -6,16 +6,21 @@ _FORBIDDEN_SQL = re.compile(
     re.IGNORECASE,
 )
 _ALLOWED_START = re.compile(r'^\s*(SELECT|WITH)\b', re.IGNORECASE)
+_STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
+_DOLLAR_QUOTE = re.compile(r'\$\w*\$')
 
 
 def is_safe_select_sql(sql) -> bool:
     if not sql or not isinstance(sql, str):
         return False
     cleaned = sql.strip().rstrip(';').strip()
-    if not cleaned or ';' in cleaned:
+    if not cleaned or _DOLLAR_QUOTE.search(cleaned):
         return False
-    if '--' in cleaned or '/*' in cleaned:
+    code = _STRING_LITERAL.sub("''", cleaned)
+    if "'" in code.replace("''", ''):
         return False
-    if not _ALLOWED_START.match(cleaned):
+    if ';' in code or '--' in code or '/*' in code:
         return False
-    return not _FORBIDDEN_SQL.search(cleaned)
+    if not _ALLOWED_START.match(code):
+        return False
+    return not _FORBIDDEN_SQL.search(code)

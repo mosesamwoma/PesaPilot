@@ -29,7 +29,6 @@ REQUIRED_VARS=(
     "POSTGRES_DB"
     "GROQ_API_KEY"
     "WHATSAPP_MAIN_NUMBER"
-    "WHATSAPP_LID"
     "WHATSAPP_PIN"
 )
 
@@ -45,7 +44,6 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     for var in "${MISSING_VARS[@]}"; do
         echo -e "${RED}   - $var${NC}"
     done
-    echo -e "${RED}WHATSAPP_LID: put any placeholder number first, send the bot a message, then copy the From: number from the log into .env.${NC}"
     echo -e "${RED}Set these in your .env file (or however you inject env vars) and try again.${NC}"
     echo -e "${RED}POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB must point at a PostgreSQL server you already set up${NC}"
     echo -e "${RED}(see scripts/setup_db.sh) — this container does not run its own database.${NC}"

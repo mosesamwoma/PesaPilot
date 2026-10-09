@@ -217,6 +217,8 @@ def _default_title(spec: Dict[str, Any]) -> str:
     elif spec.get('date_to'):
         period = f" (until {spec['date_to']})"
     cat = f" — {str(spec['category_filter']).title()}" if spec.get('category_filter') else ""
+    if spec.get('chart_type') in ('line', 'area'):
+        return f"{metric_label} over time{cat}{period}".strip()
     group_label = (spec.get('group_by') or 'day').replace('_', ' ')
     return f"{metric_label} by {group_label}{cat}{period}".strip()
 

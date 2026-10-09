@@ -46,6 +46,8 @@ def test_execute_query_is_read_only_and_guarded(db):
     assert db.execute_query("SELECT COUNT(*) AS n FROM transactions")[0]['n'] > 0
     assert db.execute_query("SELECT pg_sleep(1)") == []
     assert db.execute_query("DELETE FROM transactions") == []
+    assert db.execute_query("SELECT COUNT(*) AS n FROM transactions WHERE recipient ILIKE '%delete; --%'")[0]['n'] == 0
+    assert db.execute_query("SELECT 1 AS one; DROP TABLE transactions") == []
     assert db.execute_query("WITH x AS (SELECT amount FROM transactions) SELECT SUM(amount) AS s FROM x")[0]['s'] > 0
 
 

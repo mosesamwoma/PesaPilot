@@ -13,10 +13,9 @@ const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
-if (!MAIN_NUMBER || !WHATSAPP_LID || !WHATSAPP_PIN) {
+if (!MAIN_NUMBER || !WHATSAPP_PIN) {
     console.error('\nERROR: Missing required .env variables:');
     if (!MAIN_NUMBER) console.error('  - WHATSAPP_MAIN_NUMBER');
-    if (!WHATSAPP_LID) console.error('  - WHATSAPP_LID (send the bot a message, then copy the "From:" number from the log)');
     if (!WHATSAPP_PIN) console.error('  - WHATSAPP_PIN');
     process.exit(1);
 }
@@ -33,7 +32,7 @@ console.log('\n═════════════════════�
 console.log('PesaPilot WhatsApp Bot v1.2');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`Phone Number : configured`);
-console.log('LID          : configured');
+console.log(`LID          : ${WHATSAPP_LID ? 'configured' : 'not set (resolved automatically)'}`);
 console.log(`PIN          : configured`);
 console.log(`API URL      : ${API_URL}`);
 console.log(`Chrome       : ${CHROME_PATH}`);
@@ -181,28 +180,48 @@ client.on('change_state', (state) => {
     console.log(`Connection state: ${state}`);
 });
 
+async function resolveSenderIds(message) {
+    const ids = new Set();
+    const add = (value) => {
+        const digits = digitsOnly(value);
+        if (digits) ids.add(digits);
+    };
+
+    add(message.from);
+
+    if (message.from.endsWith('@lid')) {
+        try {
+            const resolved = await client.getContactLidAndPhone([message.from]);
+            for (const entry of resolved || []) {
+                add(entry.pn);
+                add(entry.lid);
+            }
+        } catch (e) {}
+    }
+
+    try {
+        const contact = await message.getContact();
+        add(contact.number);
+        add(contact.id && contact.id.user);
+    } catch (e) {}
+
+    return [...ids];
+}
+
 client.on('message', async (message) => {
     try {
-        const senderNumber = message.from;
+        if (!message.from || message.from.endsWith('@g.us') || message.from.endsWith('@broadcast')) return;
+
         const userMessage = message.body.trim();
-        const senderNumeric = digitsOnly(senderNumber);
         const mainNumeric = digitsOnly(MAIN_NUMBER);
         const lidNumeric = digitsOnly(WHATSAPP_LID);
 
-        let isAuthorized = false;
-        if (mainNumeric && senderNumeric === mainNumeric) isAuthorized = true;
-        else if (lidNumeric && senderNumeric === lidNumeric) isAuthorized = true;
-        else {
-            try {
-                const contact = await message.getContact();
-                const contactNum = digitsOnly(contact.number);
-                if ((mainNumeric && contactNum === mainNumeric) || (lidNumeric && contactNum === lidNumeric)) {
-                    isAuthorized = true;
-                }
-            } catch (e) {}
-        }
+        const senderIds = await resolveSenderIds(message);
+        const isAuthorized = senderIds.some(
+            (id) => (mainNumeric !== '' && id === mainNumeric) || (lidNumeric !== '' && id === lidNumeric)
+        );
 
-        console.log(`\nFrom: ${senderNumeric}`);
+        console.log(`\nFrom: ${senderIds.join(' / ')}`);
         console.log(`Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
 
         if (!isAuthorized) {

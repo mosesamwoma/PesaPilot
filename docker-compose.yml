@@ -49,7 +49,7 @@ services:
 
       # WhatsApp
       - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
-      - WHATSAPP_LID=${WHATSAPP_LID}
+      - WHATSAPP_LID=${WHATSAPP_LID:-}
       - WHATSAPP_PIN=${WHATSAPP_PIN}
 
       # Puppeteer/Chromium not used (Baileys connects via websocket, no browser)

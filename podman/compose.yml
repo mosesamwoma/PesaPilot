@@ -48,7 +48,7 @@ services:
 
       # WhatsApp
       - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
-      - WHATSAPP_LID=${WHATSAPP_LID}
+      - WHATSAPP_LID=${WHATSAPP_LID:-}
       - WHATSAPP_PIN=${WHATSAPP_PIN}
 
       # Puppeteer/Google Chrome — this is the whole reason this file exists

@@ -75,5 +75,7 @@ def test_saved_anomalies_join_back_to_transactions(db):
     analyzer.groq = _Groq()
     result = analyzer.get_smart_anomalies(days=None, force_refresh=True)
     assert result['count'] == len(result['anomalies']) > 0
+    assert all(b['std_amount'] == b['std_amount'] for b in result['baselines'])
+    assert db._fetch_one("SELECT COUNT(*) AS n FROM spending_baselines WHERE std_amount = 'NaN'")['n'] == 0
     first = result['anomalies'][0]
     assert first['transaction_id'] and first['amount'] > 0 and first['recipient']

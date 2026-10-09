@@ -70,10 +70,11 @@ def compute_baselines(transactions: List[Dict]) -> List[Dict]:
     for category, group in df.groupby("merchant_category"):
         amounts = group["amount"]
         _, median, mad = _mad_scores(amounts)
+        std = amounts.std()
         baselines.append({
             "merchant_category": category or "other",
             "mean_amount": round(float(amounts.mean()), 2),
-            "std_amount": round(float(amounts.std() or 0), 2),
+            "std_amount": 0.0 if pd.isna(std) else round(float(std), 2),
             "median_amount": round(float(median), 2),
             "mad_amount": round(float(mad), 2),
             "sample_size": int(len(amounts)),

@@ -116,7 +116,7 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 | `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` inside the container) |
 | `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com,http://[2001:db8::1]:8501`. The bot and dashboard do not need it |
 | `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log level |
-| `WHATSAPP_QR_LINK` | `false` | Also print a third-party (api.qrserver.com) image link for the login QR. Off by default because the QR is a device-linking secret |
+| `WHATSAPP_QR_LINK` | `true` | Both bots also print a fallback link (rendered by the third-party api.qrserver.com) for the login QR, for terminals that cannot draw it. The QR is a device-linking secret, so set `false` to turn the link off |
 
 ---
 
@@ -195,15 +195,19 @@ streamlit run dashboard/app.py
 ```
 Open [http://localhost:8501](http://localhost:8501).
 
-**API + WhatsApp bots (local dev):**
+**API + WhatsApp bot (whatsapp-web.js, local dev):**
 ```bash
-npm run api           # Terminal 1
-npm run dev           # Terminal 2 — start the Baileys bot first
-npm run dev:wwebjs    # Terminal 3 — then start the whatsapp-web.js bot
+npm run api          # Terminal 1
+npm run dev:wwebjs    # Terminal 2
 ```
-The Baileys session persists in `.baileys_auth/`. Scan the whatsapp-web.js QR
-with WhatsApp → Settings → Linked Devices; its session persists in
-`.wwebjs_auth/`.
+Scan the QR: WhatsApp → Settings → Linked Devices. Session persists in `.wwebjs_auth/`.
+
+**API + WhatsApp bot (Baileys, also works locally):**
+```bash
+npm run api   # Terminal 1
+npm run dev   # Terminal 2
+```
+Session persists in `.baileys_auth/`.
 
 > The Streamlit dashboard is local-only and not included in the Docker image.
 

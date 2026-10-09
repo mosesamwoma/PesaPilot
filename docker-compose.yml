@@ -58,7 +58,7 @@ services:
       - BAILEYS_AUTH_PATH=/app/.baileys_auth
       - BAILEYS_LOG_LEVEL=${BAILEYS_LOG_LEVEL:-info}
       - WHATSAPP_USE_PAIRING_CODE=${WHATSAPP_USE_PAIRING_CODE:-false}
-      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-false}
+      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-true}
 
       # Node
       - NODE_ENV=production

@@ -374,7 +374,7 @@ class MpesaAnalyzer:
             return {
                 'success': False,
                 'error': 'duplicate',
-                'summary': f"ℹTransaction {tx_id} is already recorded.",
+                'summary': f"ℹ️ Transaction {tx_id} is already recorded.",
             }
 
         df = pd.DataFrame([tx])

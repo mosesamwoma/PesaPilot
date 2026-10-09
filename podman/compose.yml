@@ -56,7 +56,7 @@ services:
 
       # Auth storage path (inside the container) — code reads this exact var name
       - WWEBJS_AUTH_PATH=/app/.wwebjs_auth
-      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-false}
+      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-true}
 
       # Node
       - NODE_ENV=production

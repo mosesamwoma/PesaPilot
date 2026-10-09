@@ -57,10 +57,10 @@ CHART_TRIGGER_WORDS = [
 SET_BUDGET_PATTERN = re.compile(
     r'(?:'
     r'(?:set\s+)?budget(?:\s+limit)?\s+(?:for\s+)?(?P<category>[a-zA-Z ]+?)\s+'
-    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>[\d,]+(?:\.\d+)?)'
+    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount>\d[\d,]*(?:\.\d+)?)'
     r'|'
     r'set\s+(?P<category2>[a-zA-Z ]+?)\s+budget\s*'
-    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount2>[\d,]+(?:\.\d+)?)'
+    r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount2>\d[\d,]*(?:\.\d+)?)'
     r')\s*(?P<period>weekly|monthly)?',
     re.IGNORECASE,
 )
@@ -323,7 +323,7 @@ def budget_status_text(rows: List[Dict], dashboard: bool = False) -> str:
         spent = float(row.get('spent_this_period') or 0)
         pct = (spent / limit * 100) if limit else 0
         threshold = float(row.get('alert_threshold_pct') or 80)
-        icon = "" if pct >= 100 else "" if pct >= threshold else ""
+        icon = "🔴" if pct >= 100 else "🟡" if pct >= threshold else "🟢"
         lines.append(
             f"{icon} {str(row.get('category', '')).title()} ({row.get('period', 'monthly')}): "
             f"KES {spent:,.0f} / {limit:,.0f} ({pct:.0f}%)"
@@ -334,8 +334,8 @@ def budget_status_text(rows: List[Dict], dashboard: bool = False) -> str:
 def forecast_header(forecast_data: Dict, horizon: int) -> str:
     trend = forecast_data.get('trend', 'Stable')
     risk = forecast_data.get('risk_level', 'Low')
-    trend_icon = {'Increasing': '', 'Decreasing': '', 'Stable': ''}.get(trend, '')
-    risk_icon = {'Low': '', 'Moderate': '', 'High': ''}.get(risk, '')
+    trend_icon = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(trend, '')
+    risk_icon = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(risk, '')
     return (
         f"**{horizon}-Day Spending Forecast**\n\n"
         f"Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}\n"

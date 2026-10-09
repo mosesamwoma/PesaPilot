@@ -144,9 +144,9 @@ client.on('qr', (qr) => {
         console.warn(`QR rendering error: ${e.message}`);
     }
 
-    if ((process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true') {
-        const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
-        console.log(`\nQR image link (third-party service, opt-in): ${qrServerUrl}\n`);
+    if ((process.env.WHATSAPP_QR_LINK || 'true').toLowerCase() !== 'false') {
+        const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+        console.log(`\nQR unreadable in your terminal? Open this fallback link in a browser and scan it (third-party service; set WHATSAPP_QR_LINK=false to turn off):\n${qrServerUrl}\n`);
     }
 
     console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
@@ -416,6 +416,10 @@ const maxRetries = 3;
 function startClient() {
     client.initialize().catch(async (err) => {
         console.error(`client.initialize() failed: ${err.message}`);
+
+        try {
+            await client.destroy();
+        } catch (e) {}
 
         if (retryCount < maxRetries) {
             retryCount++;

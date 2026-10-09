@@ -67,7 +67,7 @@ const config: Config = {
     apiUrl: process.env.API_URL || 'http://127.0.0.1:8000',
     authPath: process.env.BAILEYS_AUTH_PATH || './.baileys_auth',
     usePairingCode: (process.env.WHATSAPP_USE_PAIRING_CODE || 'false').toLowerCase() === 'true',
-    showQrLink: (process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true',
+    showQrLink: (process.env.WHATSAPP_QR_LINK || 'true').toLowerCase() !== 'false',
     logLevel: process.env.BAILEYS_LOG_LEVEL || 'info',
 };
 
@@ -468,7 +468,7 @@ async function startBaileys(): Promise<WASocket> {
 
                 if (config.showQrLink) {
                     const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-                    console.log(`\nQR image link (third-party service, opt-in):\n${qrServerUrl}\n`);
+                    console.log(`\nQR unreadable in your terminal? Open this fallback link in a browser and scan it (third-party service; set WHATSAPP_QR_LINK=false to turn off):\n${qrServerUrl}\n`);
                 } else {
                     console.log('\nQR unreadable in your terminal? Set WHATSAPP_USE_PAIRING_CODE=true to link with a code instead.');
                 }

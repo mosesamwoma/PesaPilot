@@ -532,10 +532,10 @@ def main() -> None:
             st.info(forecast_data.get('message', 'Not enough transaction history yet for a forecast.'))
         else:
             fc1, fc2, fc3, fc4 = st.columns(4)
-            trend_emoji = {'Increasing': '', 'Decreasing': '', 'Stable': ''}.get(
+            trend_emoji = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(
                 forecast_data.get('trend', 'Stable'), ''
             )
-            risk_emoji = {'Low': '', 'Moderate': '', 'High': ''}.get(
+            risk_emoji = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(
                 forecast_data.get('risk_level', 'Low'), ''
             )
             forecast_metrics: list[tuple[Any, str, Any]] = [
@@ -566,7 +566,7 @@ def main() -> None:
                 st.subheader("AI Insight")
                 st.markdown(f"""
                 <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
-                {insight.replace(chr(10), '<br>')}
+                {html.escape(insight).replace(chr(10), '<br>')}
                 </div>
                 """, unsafe_allow_html=True)
 

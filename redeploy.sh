@@ -5,8 +5,8 @@ LOCAL_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 read -rp "VPS username: " VPS_USER
 read -rp "VPS host/IP: " VPS_HOST
-read -rp "Remote project path [default: ~/PesaPilot]: " VPS_PATH_INPUT
-VPS_PATH="${VPS_PATH_INPUT:-~/PesaPilot}"
+read -rp "Remote project path, relative to the remote home [default: PesaPilot]: " VPS_PATH_INPUT
+VPS_PATH="${VPS_PATH_INPUT:-PesaPilot}"
 
 DO_BUILD=true
 TAIL_LOGS=false
@@ -35,6 +35,7 @@ rsync -avz --progress \
   --exclude '__pycache__' \
   --exclude '.wwebjs_auth' \
   --exclude '.wwebjs_cache' \
+  --exclude '.pytest_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
 
 ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yml $VPS_PATH/.containerignore"

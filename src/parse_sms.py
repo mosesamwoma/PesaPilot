@@ -84,6 +84,7 @@ class MpesaParser:
         r'sim card has been activated',
         re.IGNORECASE | re.MULTILINE,
     )
+    _TX_HEADER_RE = re.compile(r'^\W*([A-Z0-9]{10})\s+(?i:confirmed)\b')
     _MANUAL_PREFIX_RE = re.compile(r'^\s*\d{3,8}\s*-\s*')
 
     def parse_xml_to_csv(self, xml_path: str, output_path: Optional[str] = None) -> pd.DataFrame:
@@ -195,7 +196,9 @@ class MpesaParser:
             if timestamp > now + timedelta(days=1):
                 timestamp = now
 
-            record['transaction_id'] = record['transaction_id'] or f"MANUAL_{int(now.timestamp())}"
+            if record['transaction_id'] is None:
+                return None
+
             record.update({
                 'timestamp': timestamp.isoformat(),
                 'readable_date': timestamp.strftime('%d/%m/%Y %H:%M:%S'),
@@ -284,6 +287,11 @@ class MpesaParser:
             name = name_match.group(1).replace('\\', '')
             name = re.sub(r'\s+', ' ', name).strip(' .-')
             if len(name) >= 2 and re.search(r'[A-Za-z]', name):
+                if name.lower() == 'm-pesa card':
+                    account = self._ACCOUNT_RE.search(body)
+                    merchant = re.sub(r'\s+', ' ', re.sub(r'\bg\.co/\S+', '', account.group(1))).strip(' .-') if account else ''
+                    if merchant:
+                        return merchant.title()
                 return name.title()
         return 'Unknown'
 
@@ -292,12 +300,8 @@ class MpesaParser:
         return m.group(1) if m else None
 
     def _extract_transaction_id(self, body: str) -> Optional[str]:
-        for m in re.finditer(r'\b([A-Z][A-Z0-9]{9,})\b', body):
-            tx_id = m.group(1)
-            if not re.search(r'\d', tx_id):
-                continue
-            return tx_id
-        return None
+        m = self._TX_HEADER_RE.match(body or '')
+        return m.group(1) if m else None
 
     def _keyword_matches(self, text: str, keyword: str) -> bool:
         if keyword in self._SUBSTRING_KEYWORDS:

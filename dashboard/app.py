@@ -111,7 +111,7 @@ def generate_daily_summary_text(analyzer: "MpesaAnalyzer") -> str:
         return daily_summary_text(analyzer.db.get_today_summary(), manual_sms_hint=False)
     except Exception as e:
         logger.error(f"Daily summary error: {e}")
-        return "⚠️ Could not generate summary. Please try again."
+        return "Could not generate summary. Please try again."
 
 
 def generate_summary_text(analyzer: "MpesaAnalyzer", days: Optional[int]) -> str:
@@ -119,7 +119,7 @@ def generate_summary_text(analyzer: "MpesaAnalyzer", days: Optional[int]) -> str
         return range_summary_text(analyzer.db.get_range_summary(days=days), days)
     except Exception as e:
         logger.error(f"Summary error: {e}")
-        return "⚠️ Could not generate summary. Please try again."
+        return "Could not generate summary. Please try again."
 
 
 def chat_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str) -> Optional[go.Figure]:
@@ -197,26 +197,26 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         return {'content': content, 'sql': sql, 'results': results, 'fig': fig}
 
     if not is_valid_question_length(question):
-        return reply("⚠️ Question too short or too long (2-500 chars).")
+        return reply("Question too short or too long (2-500 chars).")
 
     if not is_safe_question(question):
         logger.warning("BLOCKED: destructive operation")
-        return reply("⚠️ Invalid question.")
+        return reply("Invalid question.")
 
     question_lower = question.lower().strip()
 
     if is_set_budget_command(question_lower):
         parsed, problem = parse_set_budget(question)
         if parsed is None:
-            return reply(clean_response(f"❌ {problem}"))
+            return reply(clean_response(f"{problem}"))
         result = analyzer.set_budget(parsed['category'], parsed['amount'], period=parsed['period'])
         if result.get('success'):
             content = (
-                f"🎯 Budget set: {parsed['category'].title()} — KES {parsed['amount']:,.0f} per {parsed['period'][:-2]}.\n"
-                f"Check the 🎯 Budgets page anytime to see progress."
+                f"Budget set: {parsed['category'].title()} — KES {parsed['amount']:,.0f} per {parsed['period'][:-2]}.\n"
+                f"Check the Budgets page anytime to see progress."
             )
         else:
-            content = f"❌ Couldn't set that budget: {result.get('error', 'unknown error')}"
+            content = f"Couldn't set that budget: {result.get('error', 'unknown error')}"
         return reply(clean_response(content))
 
     if matches_any_keyword(question_lower, BUDGET_STATUS_KEYWORDS):
@@ -236,12 +236,12 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
         if not forecast_data.get('sufficient_data'):
             msg = forecast_data.get('message', 'Not enough transaction history yet for a forecast.')
-            return reply(f"📉 {clean_response(msg)}")
+            return reply(f"{clean_response(msg)}")
 
-        fig = chat_forecast_chart(forecast_data, title=f"🔮 {horizon}-Day Spending Forecast")
+        fig = chat_forecast_chart(forecast_data, title=f"{horizon}-Day Spending Forecast")
         ai_summary = forecast_data.get('insight', '')
         header = forecast_header(forecast_data, horizon)
-        return reply(clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else "")), fig=fig)
+        return reply(clean_response(header + (f"\n{ai_summary}" if ai_summary else "")), fig=fig)
 
     if matches_any_keyword(question_lower, ANOMALY_KEYWORDS):
         anomaly_days = parse_days_from_question(question_lower, default=90)
@@ -254,11 +254,11 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
             df = pd.DataFrame(flagged)
             fig = chat_bar_chart(
                 df.head(15), 'recipient', 'amount',
-                title=f"🕵️ Unusual Transactions ({window})"
+                title=f"Unusual Transactions ({window})"
             )
-            header = f"🕵️ **{len(flagged)} Unusual Transaction(s) Found ({window})**\n\n"
+            header = f"**{len(flagged)} Unusual Transaction(s) Found ({window})**\n\n"
         else:
-            header = f"✅ **No Unusual Transactions ({window})**\n\n"
+            header = f"**No Unusual Transactions ({window})**\n\n"
 
         return reply(clean_response(header + result.get('insight', '')), fig=fig)
 
@@ -272,9 +272,9 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         chart_result = analyzer.generate_dynamic_chart(question, dark=True)
         fig = chart_result['fig']
         if fig is None:
-            return reply(f"❌ {chart_result['error'] or 'No data available yet for that chart.'}")
+            return reply(f"{chart_result['error'] or 'No data available yet for that chart.'}")
         spec = chart_result['spec']
-        content = f"📊 **{spec.get('title')}**\n\n{chart_result['summary']}\n✅ Chart generated"
+        content = f"**{spec.get('title')}**\n\n{chart_result['summary']}\nChart generated"
         return reply(content, fig=fig)
 
     if _SUMMARY_COMMAND_RE.search(question_lower) and len(question_lower.split()) <= 6:
@@ -283,7 +283,7 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
     result = analyzer.ask_question(question)
     if result.get('error'):
-        content = f"⚠️ {clean_response(result.get('error', 'Error'))}"
+        content = f"{clean_response(result.get('error', 'Error'))}"
     else:
         content = clean_response(result.get('analysis', 'No response'))
 
@@ -298,13 +298,13 @@ def main() -> None:
         st.markdown("*Your M-Pesa Financial Advisor*")
         st.divider()
 
-        page: str = st.radio("Navigate", ["📊 Dashboard", "🔮 Forecast", "🎯 Budgets", "💬 Ask AI", "📋 Transactions", "🕵️ Anomalies"])
+        page: str = st.radio("Navigate", ["Dashboard", "Forecast", "Budgets", "Ask AI", "Transactions", "Anomalies"])
         st.divider()
 
         period_label_choice: str = st.selectbox("Analysis period", list(PERIOD_OPTIONS), index=1)
         days: Optional[int] = PERIOD_OPTIONS[period_label_choice]
 
-        if st.button("🔄 Refresh Data", use_container_width=True):
+        if st.button("Refresh Data", width='stretch'):
             analyzer.clear_cache()
             st.rerun()
 
@@ -318,8 +318,8 @@ def main() -> None:
     recent_txs: list[dict[str, Any]] = data.get('recent_transactions', [])
     insights: str = data.get('insights', '')
 
-    if page == "📊 Dashboard":
-        st.title("📊 Financial Dashboard")
+    if page == "Dashboard":
+        st.title("Financial Dashboard")
         st.caption(f"{PERIOD_LABEL_BY_DAYS.get(days, 'Selected period')} · M-Pesa transaction analysis")
 
         c1, c2, c3, c4 = st.columns(4)
@@ -368,7 +368,7 @@ def main() -> None:
                     yaxis=dict(gridcolor='#2d3250'),
                     legend=dict(bgcolor='rgba(0,0,0,0)'),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No trend data available.")
 
@@ -389,7 +389,7 @@ def main() -> None:
                     legend=dict(bgcolor='rgba(0,0,0,0)'),
                     margin=dict(l=0, r=0, t=10, b=0),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No category data available.")
 
@@ -417,12 +417,12 @@ def main() -> None:
                     xaxis=dict(gridcolor='#2d3250'),
                     yaxis=dict(autorange='reversed', gridcolor='#2d3250'),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No merchant data available.")
 
         with col_r2:
-            st.subheader("💡 AI Insights")
+            st.subheader("AI Insights")
             if insights:
                 st.markdown(f"""
                 <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
@@ -436,7 +436,7 @@ def main() -> None:
         col_h1, col_h2 = st.columns(2)
 
         with col_h1:
-            st.subheader("🔥 Spending Heatmap")
+            st.subheader("Spending Heatmap")
             st.caption(f"KES per category per day of week ({PERIOD_LABEL_BY_DAYS.get(days, 'selected period').lower()})")
             raw_for_heat: list[dict[str, Any]] = analyzer.db.get_transactions(days=days, limit=20000)
             if raw_for_heat:
@@ -477,7 +477,7 @@ def main() -> None:
                             xaxis=dict(gridcolor='#2d3250'),
                             yaxis=dict(gridcolor='#2d3250'),
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     else:
                         st.info("Not enough data for a heatmap yet.")
                 else:
@@ -486,7 +486,7 @@ def main() -> None:
                 st.info("Load transactions to see the spending heatmap.")
 
         with col_h2:
-            st.subheader("📊 Amount Distribution")
+            st.subheader("Amount Distribution")
             st.caption(f"Frequency of transaction sizes ({PERIOD_LABEL_BY_DAYS.get(days, 'selected period').lower()})")
             if recent_txs:
                 df_hist: pd.DataFrame = pd.DataFrame(recent_txs)
@@ -512,14 +512,14 @@ def main() -> None:
                         yaxis=dict(gridcolor='#2d3250'),
                         bargap=0.05,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("No debit transactions to chart.")
             else:
                 st.info("No transaction data available.")
 
-    elif page == "🔮 Forecast":
-        st.title("🔮 Spending Forecast")
+    elif page == "Forecast":
+        st.title("Spending Forecast")
         st.caption("AI-projected spending based on your real transaction history")
 
         horizon_label = st.radio("Forecast horizon", ["7 days", "30 days"], horizontal=True)
@@ -532,11 +532,11 @@ def main() -> None:
             st.info(forecast_data.get('message', 'Not enough transaction history yet for a forecast.'))
         else:
             fc1, fc2, fc3, fc4 = st.columns(4)
-            trend_emoji = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(
-                forecast_data.get('trend', 'Stable'), '➡️'
+            trend_emoji = {'Increasing': '', 'Decreasing': '', 'Stable': ''}.get(
+                forecast_data.get('trend', 'Stable'), ''
             )
-            risk_emoji = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(
-                forecast_data.get('risk_level', 'Low'), '🟢'
+            risk_emoji = {'Low': '', 'Moderate': '', 'High': ''}.get(
+                forecast_data.get('risk_level', 'Low'), ''
             )
             forecast_metrics: list[tuple[Any, str, Any]] = [
                 (fc1, "Predicted Spend",  fmt_ksh(forecast_data.get('total_predicted', 0))),
@@ -559,11 +559,11 @@ def main() -> None:
             fig = chat_forecast_chart(forecast_data, title="")
             if fig:
                 fig.update_layout(margin=dict(l=0, r=0, t=10, b=0))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             insight: str = forecast_data.get('insight', '')
             if insight:
-                st.subheader("💡 AI Insight")
+                st.subheader("AI Insight")
                 st.markdown(f"""
                 <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
                 {insight.replace(chr(10), '<br>')}
@@ -572,8 +572,8 @@ def main() -> None:
 
             st.caption(f"Based on {forecast_data.get('history_days', 0)} days of spending history")
 
-    elif page == "🎯 Budgets":
-        st.title("🎯 Budget Goals")
+    elif page == "Budgets":
+        st.title("Budget Goals")
         st.caption("Set spending limits per category and track progress live")
 
         budgets: list[dict[str, Any]] = analyzer.get_budgets_overview()
@@ -618,7 +618,7 @@ def main() -> None:
                 period_input: str = st.selectbox("Period", ["monthly", "weekly"])
             threshold_input: int = st.slider("Alert threshold (%)", min_value=50, max_value=100, value=80, step=5)
 
-            submitted = st.form_submit_button("💾 Save Budget", use_container_width=True)
+            submitted = st.form_submit_button("Save Budget", width='stretch')
             if submitted:
                 if limit_input <= 0:
                     st.error("Enter a limit greater than 0.")
@@ -639,7 +639,7 @@ def main() -> None:
             "The WhatsApp bot checks this automatically every 2 hours and pings you when a budget "
             "crosses its threshold. Use this button to check right now instead of waiting."
         )
-        if st.button("🔔 Check Now", use_container_width=True):
+        if st.button("Check Now", width='stretch'):
             with st.spinner("Checking budgets..."):
                 new_alerts: list[dict[str, Any]] = analyzer.check_budget_alerts()
             if new_alerts:
@@ -647,10 +647,10 @@ def main() -> None:
                     icon = "🚨" if alert.get('alert_level') == 'over' else "⚠️"
                     st.warning(f"{icon} {alert.get('message', '')}")
             else:
-                st.success("✅ Nothing new to report — no budgets have newly crossed their threshold.")
+                st.success("Nothing new to report — no budgets have newly crossed their threshold.")
 
-    elif page == "💬 Ask AI":
-        st.title("💬 Ask PesaPilot")
+    elif page == "Ask AI":
+        st.title("Ask PesaPilot")
         st.caption("Ask anything about your M-Pesa transactions — same commands as the WhatsApp bot")
 
         if 'chat_history' not in st.session_state:
@@ -670,28 +670,28 @@ def main() -> None:
         cols = st.columns(3)
         for i, q in enumerate(suggestions):
             with cols[i % 3]:
-                if st.button(q, key=f"sugg_{i}", use_container_width=True):
+                if st.button(q, key=f"sugg_{i}", width='stretch'):
                     st.session_state.pending_question = q
 
         st.divider()
 
         for i, msg in enumerate(st.session_state.chat_history):
             if msg['role'] == 'user':
-                st.markdown(f'<div class="chat-msg-user">🧑 {html.escape(msg["content"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chat-msg-user">{html.escape(msg["content"])}</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="chat-msg-bot">🤖 {html.escape(msg["content"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chat-msg-bot">{html.escape(msg["content"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
                 if msg.get('fig') is not None:
                     fig_obj = msg['fig']
                     if hasattr(fig_obj, 'savefig'):
-                        st.pyplot(fig_obj, use_container_width=True)
+                        st.pyplot(fig_obj, width='stretch')
                     else:
-                        st.plotly_chart(fig_obj, use_container_width=True, key=f"chat_fig_{i}")
+                        st.plotly_chart(fig_obj, width='stretch', key=f"chat_fig_{i}")
                 if msg.get('sql'):
                     with st.expander("View SQL", expanded=False):
                         st.markdown(f'<div class="sql-box">{html.escape(msg["sql"])}</div>', unsafe_allow_html=True)
                 if msg.get('results'):
                     with st.expander(f"View results ({len(msg['results'])} rows)", expanded=False):
-                        st.dataframe(pd.DataFrame(msg['results']).head(20), use_container_width=True)
+                        st.dataframe(pd.DataFrame(msg['results']).head(20), width='stretch')
 
         pending = st.session_state.pop('pending_question', None)
         question: Optional[str] = st.chat_input("Ask about your spending...") or pending
@@ -710,8 +710,8 @@ def main() -> None:
             st.session_state.chat_history.append(bot_msg)
             st.rerun()
 
-    elif page == "📋 Transactions":
-        st.title("📋 Recent Transactions")
+    elif page == "Transactions":
+        st.title("Recent Transactions")
         if recent_txs:
             df: pd.DataFrame = pd.DataFrame(recent_txs)
             cols_show: list[str] = [c for c in ['timestamp', 'type', 'amount', 'recipient', 'merchant_category', 'balance'] if c in df.columns]
@@ -735,13 +735,13 @@ def main() -> None:
             if selected_cat != 'All':
                 mask &= df['merchant_category'] == selected_cat
 
-            st.dataframe(df_show[mask], use_container_width=True, height=500)
+            st.dataframe(df_show[mask], width='stretch', height=500)
             st.caption(f"Showing {mask.sum()} transactions")
         else:
             st.info("No transactions found. Load your M-Pesa XML backup to get started.")
 
-    elif page == "🕵️ Anomalies":
-        st.title("🕵️ Unusual Transactions")
+    elif page == "Anomalies":
+        st.title("Unusual Transactions")
         st.caption(
             "ML-flagged transactions that stand out from YOUR OWN normal pattern in that "
             "category — not compared to other people. Some flagged items are perfectly "
@@ -749,7 +749,7 @@ def main() -> None:
         )
 
         anom_days: int = st.slider("Lookback period (days)", 14, 730, 90, key="anomaly_days_slider")
-        force_refresh: bool = st.button("🔄 Re-run detection now", use_container_width=False)
+        force_refresh: bool = st.button("Re-run detection now", width='content')
 
         with st.spinner("Scanning your spending pattern..."):
             smart_result: dict[str, Any] = analyzer.get_smart_anomalies(days=anom_days, force_refresh=force_refresh)
@@ -760,7 +760,7 @@ def main() -> None:
         if insight_text:
             st.markdown(f"""
             <div style="background:#1e2130;border-radius:12px;padding:16px;border:1px solid #2d3250;color:#c8cdd8;line-height:1.7;">
-            💡 {html.escape(insight_text).replace(chr(10), '<br>')}
+            {html.escape(insight_text).replace(chr(10), '<br>')}
             </div>
             """, unsafe_allow_html=True)
             st.markdown("")
@@ -773,7 +773,7 @@ def main() -> None:
                 model_label = "learned pattern" if 'isolation' in model_used else "statistical check"
                 st.markdown(f"""
                 <div class="anomaly-badge">
-                    🕵️ <strong>{html.escape(str(a.get('recipient', 'Unknown')))}</strong> — KES {float(a.get('amount', 0)):,.2f}
+                    <strong>{html.escape(str(a.get('recipient', 'Unknown')))}</strong> — KES {float(a.get('amount', 0)):,.2f}
                     &nbsp;·&nbsp; {str(a.get('merchant_category', 'other')).title()}
                     &nbsp;·&nbsp; {str(a.get('timestamp', ''))[:16]}
                     &nbsp;·&nbsp; unusualness score: {score:.1f} ({model_label})
@@ -781,7 +781,7 @@ def main() -> None:
                 """, unsafe_allow_html=True)
                 st.markdown("")
         else:
-            st.success(f"✅ No unusual transactions detected in the last {anom_days} days.")
+            st.success(f"No unusual transactions detected in the last {anom_days} days.")
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
     return agg
 
 
-LLM_UNAVAILABLE_MESSAGE = "⚠️ I couldn't reach the AI service just now. Please try again in a moment."
+LLM_UNAVAILABLE_MESSAGE = "I couldn't reach the AI service just now. Please try again in a moment."
 
 
 def _anomaly_fallback_text(anomalies: List[Dict], limit: int = 5) -> str:
@@ -286,7 +286,7 @@ class MpesaAnalyzer:
                 'anomalies': saved,
                 'baselines': baselines,
                 'count': len(saved),
-                'insight': insight or "No unusual transactions detected in your recent spending — everything looks consistent with your normal pattern. ✅",
+                'insight': insight or "No unusual transactions detected in your recent spending — everything looks consistent with your normal pattern. ",
             }
             self._cache_set(cache_key, result)
             return result
@@ -374,7 +374,7 @@ class MpesaAnalyzer:
             return {
                 'success': False,
                 'error': 'duplicate',
-                'summary': f"ℹ️ Transaction {tx_id} is already recorded.",
+                'summary': f"ℹTransaction {tx_id} is already recorded.",
             }
 
         df = pd.DataFrame([tx])
@@ -395,7 +395,7 @@ class MpesaAnalyzer:
 
         if tx_type == 'credit':
             summary = (
-                f"✅ Money in KES {amount:,.2f}\n"
+                f"Money in KES {amount:,.2f}\n"
                 f"From: {recipient}\n"
                 f"Balance: KES {balance:,.2f}\n"
                 f"Transaction ID: {tx_id}"
@@ -403,7 +403,7 @@ class MpesaAnalyzer:
         else:
             verb = {'withdrawal': 'Withdrew', 'airtime': 'Bought airtime for'}.get(tx_type, 'Paid')
             summary = (
-                f"✅ {verb} KES {amount:,.2f}\n"
+                f"{verb} KES {amount:,.2f}\n"
                 f"To: {recipient}\n"
                 f"Category: {category.title()}\n"
                 f"Fee: KES {cost:,.2f}\n"

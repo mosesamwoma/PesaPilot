@@ -177,6 +177,10 @@ def _heuristic_spec(description: str) -> Dict[str, Any]:
         if has(word):
             spec['group_by'] = 'recipient'
             break
+    if 'day of week' in text or has('weekday') or has('weekdays'):
+        spec['group_by'] = 'weekday'
+    elif has('hour') or has('hours'):
+        spec['group_by'] = 'hour'
 
     days = None
     m = re.search(r'last\s+(\d{1,3})\s*day', text)

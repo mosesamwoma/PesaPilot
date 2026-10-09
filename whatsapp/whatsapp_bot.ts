@@ -74,17 +74,18 @@ const config: Config = {
 
 function validateConfig(config: Config): void {
     if (!config.mainNumber) {
-        console.error('\n❌ ERROR: WHATSAPP_MAIN_NUMBER is required in .env');
+        console.error('\nERROR: WHATSAPP_MAIN_NUMBER is required in .env');
         process.exit(1);
     }
 
     if (!config.whatsappLid) {
-        console.warn('\n⚠️  WHATSAPP_LID is not set. Messages from linked-device IDs will be ignored until you add it.');
-        console.warn('   Send the bot a message, then copy the "From:" number from the log into WHATSAPP_LID.\n');
+        console.error('\nERROR: WHATSAPP_LID is required in .env');
+        console.error(' Send the bot a message, then copy the "From:" number from the log into WHATSAPP_LID.\n');
+        process.exit(1);
     }
 
     if (!config.whatsappPin) {
-        console.error('\n❌ ERROR: WHATSAPP_PIN is required in .env');
+        console.error('\nERROR: WHATSAPP_PIN is required in .env');
         process.exit(1);
     }
 }
@@ -94,15 +95,15 @@ validateConfig(config);
 
 function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
-    console.log('🤖 PesaPilot WhatsApp Bot v1.2 (Baileys TypeScript)');
+    console.log('PesaPilot WhatsApp Bot v1.2 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
-    console.log(`✅ Phone Number : configured`);
-    console.log(`${config.whatsappLid ? '✅' : '⚠️ '} LID          : ${config.whatsappLid ? 'configured' : 'not set'}`);
-    console.log(`✅ PIN          : configured`);
-    console.log(`🔗 API URL      : ${config.apiUrl}`);
-    console.log(`📂 Auth path    : ${config.authPath}`);
-    console.log(`🔑 Login mode   : ${config.usePairingCode ? 'Pairing code' : 'QR code'}`);
-    console.log(`📊 Log level    : ${config.logLevel}`);
+    console.log(`Phone Number : configured`);
+    console.log('LID          : configured');
+    console.log(`PIN          : configured`);
+    console.log(`API URL      : ${config.apiUrl}`);
+    console.log(`Auth path    : ${config.authPath}`);
+    console.log(`Login mode   : ${config.usePairingCode ? 'Pairing code' : 'QR code'}`);
+    console.log(`Log level    : ${config.logLevel}`);
     console.log('═══════════════════════════════════════════════════════\n');
 }
 
@@ -112,10 +113,10 @@ printBanner(config);
 function ensureAuthDirectory(authPath: string): void {
     try {
         fs.mkdirSync(authPath, { recursive: true });
-        console.log(`✅ Auth directory ready: ${authPath}`);
+        console.log(`Auth directory ready: ${authPath}`);
     } catch (error) {
         const err = error as Error;
-        console.error(`❌ Failed to create auth directory: ${err.message}`);
+        console.error(`Failed to create auth directory: ${err.message}`);
         process.exit(1);
     }
 }
@@ -133,7 +134,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function stripSuffix(jid: string): string {
-    return (jid || '').replace(/@.*$/, '');
+    return (jid || '').replace(/@.*$/, '').replace(/:\d+$/, '').replace(/\D/g, '');
 }
 
 function toWhatsAppFormat(text: string): string {
@@ -206,8 +207,8 @@ const STARTUP_TIMEOUT_MS = 120 * 1000;
 
 const startupWatchdog = setTimeout(() => {
     if (!startupResolved) {
-        console.error(`\n❌ No QR/pairing code or open connection after ${STARTUP_TIMEOUT_MS / 1000}s.`);
-        console.error('   Exiting so the container restarts.\n');
+        console.error(`\nNo QR/pairing code or open connection after ${STARTUP_TIMEOUT_MS / 1000}s.`);
+        console.error(' Exiting so the container restarts.\n');
         process.exit(1);
     }
 }, STARTUP_TIMEOUT_MS);
@@ -238,7 +239,7 @@ async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data
 }
 
 async function handleManualSms(smsContent: string, sock: WASocket, jid: string, msg: QuotableMessage): Promise<void> {
-    console.log('📝 Manual SMS entry');
+    console.log('Manual SMS entry');
 
     if (!smsContent) {
         await sock.sendMessage(jid, { text: '❌ Format: PIN-SMS_CONTENT' }, { quoted: msg });
@@ -260,7 +261,7 @@ async function handleManualSms(smsContent: string, sock: WASocket, jid: string, 
         }
     } catch (error) {
         const err = error as Error;
-        console.error(`❌ SMS error: ${err.message}`);
+        console.error(`SMS error: ${err.message}`);
         await sock.sendMessage(jid, { text: '❌ Error processing SMS.' }, { quoted: msg });
         await react(sock, jid, msg.key, '❌');
     }
@@ -313,7 +314,7 @@ async function handleQuestion(userMessage: string, sock: WASocket, jid: string, 
 
     } catch (error) {
         const err = error as Error;
-        console.error(`❌ Error: ${err.message}`);
+        console.error(`Error: ${err.message}`);
         await sock.sendMessage(
             jid,
             { text: err.message.includes('API server') ? `❌ ${err.message}` : '❌ Error processing your request.' },
@@ -346,15 +347,15 @@ async function handleMessage(
             config.whatsappLid
         );
 
-        console.log(`\n📨 From: ${senderNumeric}`);
-        console.log(`📝 Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
+        console.log(`\nFrom: ${senderNumeric}`);
+        console.log(`Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
 
         if (!authorized) {
-            console.log('👤 Non-main sender — leaving for manual reply');
+            console.log('Non-main sender — leaving for manual reply');
             return;
         }
 
-        console.log('✅ Authorized');
+        console.log('Authorized');
         await react(sock, jid, key, '⏳');
 
         const quotableMsg: QuotableMessage = { ...msg, key };
@@ -369,7 +370,7 @@ async function handleMessage(
 
     } catch (error) {
         const err = error as Error;
-        console.error(`❌ Fatal: ${err.message}`);
+        console.error(`Fatal: ${err.message}`);
         try {
             const remoteJid = msg.key?.remoteJid;
             if (remoteJid) {
@@ -382,19 +383,19 @@ async function handleMessage(
 
 
 async function startBaileys(): Promise<WASocket> {
-    console.log('🔄 Initializing WhatsApp client...\n');
+    console.log('Initializing WhatsApp client...\n');
 
     try {
         const { state, saveCreds } = await useMultiFileAuthState(config.authPath);
-        console.log('✅ Auth state loaded');
+        console.log('Auth state loaded');
 
         let waVersion: [number, number, number];
         try {
             const { version, isLatest } = await fetchLatestBaileysVersion();
             waVersion = version;
-            console.log(`✅ Using WA web version: ${version.join('.')} (latest: ${isLatest})`);
+            console.log(`Using WA web version: ${version.join('.')} (latest: ${isLatest})`);
         } catch (e) {
-            console.warn(`⚠️  Could not fetch latest WA version, using Baileys default: ${(e as Error).message}`);
+            console.warn(`Could not fetch latest WA version, using Baileys default: ${(e as Error).message}`);
             waVersion = [2, 3000, 1023223821];
         }
 
@@ -409,7 +410,7 @@ async function startBaileys(): Promise<WASocket> {
         });
 
         currentSock = sock;
-        console.log('✅ Socket created');
+        console.log('Socket created');
 
         sock.ev.on('creds.update', saveCreds);
 
@@ -421,18 +422,18 @@ async function startBaileys(): Promise<WASocket> {
             if (qr && config.usePairingCode && !pairingCodeRequested && !state.creds.registered) {
                 pairingCodeRequested = true;
                 try {
-                    console.log('📱 Requesting pairing code...');
-                    const code = await sock.requestPairingCode(config.mainNumber);
+                    console.log('Requesting pairing code...');
+                    const code = await sock.requestPairingCode(stripSuffix(config.mainNumber));
                     startupResolved = true;
                     console.log('\n╔════════════════════════════════════════════════════════╗');
                     console.log('║          ENTER THIS PAIRING CODE ON YOUR PHONE         ║');
                     console.log('║  Settings → Linked Devices → Link with phone number    ║');
                     console.log('╚════════════════════════════════════════════════════════╝\n');
-                    console.log(`🔑 Pairing code: ${code}\n`);
+                    console.log(`Pairing code: ${code}\n`);
                     console.log('⏳ Waiting for connection...\n');
                 } catch (e) {
                     const err = e as Error;
-                    console.error(`❌ Failed to request pairing code: ${err.message}`);
+                    console.error(`Failed to request pairing code: ${err.message}`);
                     pairingCodeRequested = false;
                 }
             }
@@ -445,17 +446,17 @@ async function startBaileys(): Promise<WASocket> {
                 console.log('╚════════════════════════════════════════════════════════╝\n');
 
                 try {
-                    console.log('📱 QR Code (scan with WhatsApp):');
+                    console.log('QR Code (scan with WhatsApp):');
                     qrcodeTerminal.generate(qr, { small: true });
                 } catch (e) {
-                    console.warn(`⚠️  QR rendering error: ${(e as Error).message}`);
+                    console.warn(`QR rendering error: ${(e as Error).message}`);
                 }
 
                 if (config.showQrLink) {
                     const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-                    console.log(`\n🔗 QR image link (third-party service, opt-in):\n${qrServerUrl}\n`);
+                    console.log(`\nQR image link (third-party service, opt-in):\n${qrServerUrl}\n`);
                 } else {
-                    console.log('\n💡 QR unreadable in your terminal? Set WHATSAPP_USE_PAIRING_CODE=true to link with a code instead.');
+                    console.log('\nQR unreadable in your terminal? Set WHATSAPP_USE_PAIRING_CODE=true to link with a code instead.');
                 }
                 console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
             }
@@ -464,12 +465,12 @@ async function startBaileys(): Promise<WASocket> {
                 startupResolved = true;
                 isConnected = true;
                 console.log('\n╔═══════════════════════════════════════════════════════╗');
-                console.log('║              ✅ BOT IS ONLINE!                        ║');
+                console.log('║                 BOT IS ONLINE                         ║');
                 console.log('╚═══════════════════════════════════════════════════════╝');
-                console.log(`🤖 Bot WhatsApp ID : ${sock.user?.id || 'Unknown'}`);
-                console.log(`🔗 API             : ${config.apiUrl}`);
-                console.log('\n💬 Commands: Summary, Help, Bar chart, Pie chart, Trend');
-                console.log(`📝 Manual entry: PIN-SMS_CONTENT\n`);
+                console.log(`Bot WhatsApp ID : ${sock.user?.id || 'Unknown'}`);
+                console.log(`API             : ${config.apiUrl}`);
+                console.log('\nCommands: Summary, Help, Bar chart, Pie chart, Trend');
+                console.log(`Manual entry: PIN-SMS_CONTENT\n`);
             }
 
             if (connection === 'close') {
@@ -480,24 +481,24 @@ async function startBaileys(): Promise<WASocket> {
                 const loggedOut = statusCode === DisconnectReason.loggedOut;
 
                 if (loggedOut) {
-                    console.error('\n❌ Session logged out. Clearing auth so you can re-pair.');
-                    console.error('   Exiting; the container restart will show a fresh QR/pairing code.\n');
+                    console.error('\nSession logged out. Clearing auth so you can re-pair.');
+                    console.error(' Exiting; the container restart will show a fresh QR/pairing code.\n');
                     try {
                         for (const entry of fs.readdirSync(config.authPath)) {
                             fs.rmSync(`${config.authPath}/${entry}`, { recursive: true, force: true });
                         }
                     } catch (e) {
-                        console.warn(`⚠️  Could not clear auth: ${(e as Error).message}`);
+                        console.warn(`Could not clear auth: ${(e as Error).message}`);
                     }
                     process.exit(1);
                 }
 
                 if (shuttingDown) return;
 
-                console.log(`\n⚠️ Disconnected (status ${statusCode ?? 'unknown'}). Reconnecting in 5s...\n`);
+                console.log(`\nDisconnected (status ${statusCode ?? 'unknown'}). Reconnecting in 5s...\n`);
                 setTimeout(() => {
                     startBaileys().catch((err) => {
-                        console.error(`❌ Reconnect failed: ${(err as Error).message}`);
+                        console.error(`Reconnect failed: ${(err as Error).message}`);
                         process.exit(1);
                     });
                 }, 5000);
@@ -512,12 +513,12 @@ async function startBaileys(): Promise<WASocket> {
             }
         });
 
-        console.log('✅ Bot is ready and waiting for messages...\n');
+        console.log('Bot is ready and waiting for messages...\n');
         return sock;
 
     } catch (error) {
         const err = error as Error;
-        console.error(`❌ Failed to start Baileys: ${err.message}`);
+        console.error(`Failed to start Baileys: ${err.message}`);
         console.error(err.stack);
         throw error;
     }
@@ -526,28 +527,26 @@ async function startBaileys(): Promise<WASocket> {
 
 function setupDailySummary(): void {
     const mainNumericGlobal = stripSuffix(config.mainNumber);
-    const DAILY_SUMMARY_JID = config.mainNumber.includes('@')
-        ? config.mainNumber
-        : `${mainNumericGlobal}@s.whatsapp.net`;
+    const DAILY_SUMMARY_JID = `${mainNumericGlobal}@s.whatsapp.net`;
 
     cron.schedule('0 21 * * *', async () => {
         console.log('\n⏰ Running scheduled daily summary job (21:00 Africa/Nairobi)...');
         if (!currentSock || !isConnected) {
-            console.warn('⚠️  Skipped: bot is not currently connected.\n');
+            console.warn('Skipped: bot is not currently connected.\n');
             return;
         }
         try {
             const response = await callApi<DailySummaryResponse>('/daily-summary');
             const summaryText = response?.summary || '⚠️ Could not generate summary.';
             await currentSock.sendMessage(DAILY_SUMMARY_JID, { text: toWhatsAppFormat(summaryText) });
-            console.log('✅ Daily summary sent successfully\n');
+            console.log('Daily summary sent successfully\n');
         } catch (error) {
             const err = error as Error;
-            console.error(`❌ Daily summary cron error: ${err.message}\n`);
+            console.error(`Daily summary cron error: ${err.message}\n`);
         }
     }, { timezone: 'Africa/Nairobi' });
 
-    console.log('📅 Daily summary scheduled for 9:00 PM Africa/Nairobi every day\n');
+    console.log('Daily summary scheduled for 9:00 PM Africa/Nairobi every day\n');
 }
 
 setupDailySummary();
@@ -555,14 +554,12 @@ setupDailySummary();
 
 function setupBudgetCheck(): void {
     const mainNumericGlobal = stripSuffix(config.mainNumber);
-    const BUDGET_ALERT_JID = config.mainNumber.includes('@')
-        ? config.mainNumber
-        : `${mainNumericGlobal}@s.whatsapp.net`;
+    const BUDGET_ALERT_JID = `${mainNumericGlobal}@s.whatsapp.net`;
 
     cron.schedule('0 */2 * * *', async () => {
         console.log('\n⏰ Running scheduled budget check job...');
         if (!currentSock || !isConnected) {
-            console.warn('⚠️  Skipped: bot is not currently connected.\n');
+            console.warn('Skipped: bot is not currently connected.\n');
             return;
         }
         try {
@@ -570,7 +567,7 @@ function setupBudgetCheck(): void {
             const alerts = response?.alerts || [];
 
             if (alerts.length === 0) {
-                console.log('✅ Budget check: nothing new to report.\n');
+                console.log('Budget check: nothing new to report.\n');
                 return;
             }
 
@@ -581,14 +578,14 @@ function setupBudgetCheck(): void {
                 });
                 await sleep(500);
             }
-            console.log(`✅ Sent ${alerts.length} budget alert(s)\n`);
+            console.log(`Sent ${alerts.length} budget alert(s)\n`);
         } catch (error) {
             const err = error as Error;
-            console.error(`❌ Budget check cron error: ${err.message}\n`);
+            console.error(`Budget check cron error: ${err.message}\n`);
         }
     }, { timezone: 'Africa/Nairobi' });
 
-    console.log('📅 Budget check scheduled every 2 hours (Africa/Nairobi)\n');
+    console.log('Budget check scheduled every 2 hours (Africa/Nairobi)\n');
 }
 
 setupBudgetCheck();
@@ -597,13 +594,13 @@ setupBudgetCheck();
 async function shutdown(signal: string, exitCode = 0): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\n👋 Received ${signal}, shutting down...`);
+    console.log(`\nReceived ${signal}, shutting down...`);
     try {
         if (currentSock) {
             await currentSock.end(undefined);
         }
     } catch (e) {
-        console.warn(`⚠️  Error during shutdown: ${(e as Error).message}`);
+        console.warn(`Error during shutdown: ${(e as Error).message}`);
     }
     process.exit(exitCode);
 }
@@ -612,19 +609,19 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 process.on('unhandledRejection', (reason) => {
-    console.error('❌ Unhandled promise rejection:', reason);
+    console.error('Unhandled promise rejection:', reason);
 });
 
 process.on('uncaughtException', (err) => {
-    console.error('❌ Uncaught exception:', err);
+    console.error('Uncaught exception:', err);
     shutdown('uncaughtException', 1);
 });
 
 
-console.log('🚀 Starting WhatsApp client...\n');
+console.log('Starting WhatsApp client...\n');
 
 startBaileys().catch((err) => {
-    console.error(`❌ startBaileys() failed: ${(err as Error).message}`);
+    console.error(`startBaileys() failed: ${(err as Error).message}`);
     console.error((err as Error).stack);
     process.exit(1);
 });

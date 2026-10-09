@@ -17,13 +17,13 @@ echo "=============================================================="
 echo
 
 if [ ! -f "$SCHEMA_FILE" ]; then
-    echo "❌ Could not find $SCHEMA_FILE"
+    echo "Could not find $SCHEMA_FILE"
     echo "   Run this script from a checkout of the PesaPilot repo."
     exit 1
 fi
 
 if command -v psql >/dev/null 2>&1; then
-    echo "✅ PostgreSQL client already installed ($(psql --version))"
+    echo "PostgreSQL client already installed ($(psql --version))"
 else
     echo "==> Installing PostgreSQL..."
     if command -v apt-get >/dev/null 2>&1; then
@@ -43,7 +43,7 @@ else
         brew install postgresql@16
         brew services start postgresql@16
     else
-        echo "❌ Could not detect a supported package manager (apt/dnf/yum/brew)."
+        echo "Could not detect a supported package manager (apt/dnf/yum/brew)."
         echo "   Install PostgreSQL manually for your distro, then re-run this script —"
         echo "   it will skip installation and continue from schema setup."
         exit 1
@@ -86,7 +86,7 @@ if [ "$DB_EXISTS" != "1" ]; then
     run_psql -c "CREATE DATABASE $PGSQL_DB OWNER $PGSQL_USER;"
 fi
 
-echo "✅ Role and database ready"
+echo "Role and database ready"
 echo
 
 echo "==> Applying schema/init_db.sql..."
@@ -99,7 +99,7 @@ fi
 
 echo
 echo "=============================================================="
-echo " ✅ PesaPilot DB ready"
+echo " PesaPilot DB ready"
 echo "=============================================================="
 echo
 echo "Add this to your .env:"

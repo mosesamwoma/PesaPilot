@@ -93,6 +93,9 @@ def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
 
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
     df["date"] = df["timestamp"].dt.date
+    df = df[df["date"] < today_nairobi()]
+    if df.empty:
+        return pd.DataFrame(columns=["date", "amount"])
 
     daily = df.groupby("date")["amount"].sum().reset_index()
     daily.columns = ["date", "amount"]

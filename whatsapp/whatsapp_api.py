@@ -120,7 +120,7 @@ def _empty_chart(title: str) -> str:
     plt.tight_layout()
     return _encode_figure()
 
-def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str = "💰 Spending by Category") -> Optional[str]:
+def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str = "Spending by Category") -> Optional[str]:
     try:
         if df is None or df.empty or category_col not in df.columns or value_col not in df.columns:
             return _empty_chart(title)
@@ -148,7 +148,7 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
         logger.error(f"Bar chart error: {e}")
         return None
 
-def generate_forecast_chart(forecast_data: dict, title: str = "🔮 Spending Forecast") -> Optional[str]:
+def generate_forecast_chart(forecast_data: dict, title: str = "Spending Forecast") -> Optional[str]:
     try:
         hist_pts = forecast_data.get('historical', [])[-60:]
         fcst_pts = forecast_data.get('forecast', [])
@@ -188,7 +188,7 @@ def generate_daily_summary() -> str:
         return daily_summary_text(get_analyzer().db.get_today_summary())
     except Exception as e:
         logger.error(f"Daily summary error: {e}")
-        return "⚠️ Could not generate summary. Please try again."
+        return "Could not generate summary. Please try again."
 
 
 _SUMMARY_COMMAND_RE = re.compile(r'\bsummary\b')
@@ -286,16 +286,16 @@ async def ask_question(request: QuestionRequest):
         if is_set_budget_command(question_lower):
             parsed, problem = parse_set_budget(question)
             if parsed is None:
-                return reply(clean_response(f"❌ {problem}"))
+                return reply(clean_response(f"{problem}"))
             result = az.set_budget(parsed['category'], parsed['amount'], period=parsed['period'])
             if result.get('success'):
                 unit = 'week' if parsed['period'] == 'weekly' else 'month'
                 analysis = (
-                    f"🎯 Budget set: {parsed['category'].title()} — KES {parsed['amount']:,.0f} per {unit}.\n"
+                    f"Budget set: {parsed['category'].title()} — KES {parsed['amount']:,.0f} per {unit}.\n"
                     f"I'll ping you here if you get close to or go over it."
                 )
             else:
-                analysis = f"❌ Couldn't set that budget: {result.get('error', 'unknown error')}"
+                analysis = f"Couldn't set that budget: {result.get('error', 'unknown error')}"
             return reply(clean_response(analysis))
 
         if matches_any_keyword(question_lower, BUDGET_STATUS_KEYWORDS):
@@ -315,12 +315,12 @@ async def ask_question(request: QuestionRequest):
 
             if not forecast_data.get('sufficient_data'):
                 message = forecast_data.get('message', 'Not enough transaction history yet for a forecast.')
-                return reply(clean_response(f"📉 {message}"))
+                return reply(clean_response(f"{message}"))
 
-            chart_img = generate_forecast_chart(forecast_data, title=f"🔮 {horizon}-Day Spending Forecast")
+            chart_img = generate_forecast_chart(forecast_data, title=f"{horizon}-Day Spending Forecast")
             ai_summary = forecast_data.get('insight', '')
             header = forecast_header(forecast_data, horizon)
-            analysis = clean_response(header + (f"\n💡 {ai_summary}" if ai_summary else ""))
+            analysis = clean_response(header + (f"\n{ai_summary}" if ai_summary else ""))
             return reply(analysis, chart=chart_img)
 
         if matches_any_keyword(question_lower, ANOMALY_KEYWORDS):
@@ -334,11 +334,11 @@ async def ask_question(request: QuestionRequest):
                 df = pd.DataFrame(flagged)
                 chart_img = generate_bar_chart(
                     df.head(15), 'recipient', 'amount',
-                    title=f"🕵️ Unusual Transactions ({window})"
+                    title=f"Unusual Transactions ({window})"
                 )
-                header = f"🕵️ **{len(flagged)} Unusual Transaction(s) Found ({window})**\n\n"
+                header = f"**{len(flagged)} Unusual Transaction(s) Found ({window})**\n\n"
             else:
-                header = f"✅ **No Unusual Transactions ({window})**\n\n"
+                header = f"**No Unusual Transactions ({window})**\n\n"
 
             return reply(clean_response(header + result.get('insight', '')), chart=chart_img)
 
@@ -352,11 +352,11 @@ async def ask_question(request: QuestionRequest):
             chart_result = az.generate_dynamic_chart(question, dark=False)
             fig = chart_result['fig']
             if fig is None:
-                analysis = f"❌ {chart_result['error'] or 'No data available yet for that chart.'}"
+                analysis = f"{chart_result['error'] or 'No data available yet for that chart.'}"
                 return reply(analysis)
             spec = chart_result['spec']
             chart_img = chart_generator.figure_to_base64(fig)
-            analysis = f"📊 **{spec.get('title')}**\n\n{chart_result['summary']}\n✅ Chart generated"
+            analysis = f"**{spec.get('title')}**\n\n{chart_result['summary']}\nChart generated"
             return reply(analysis, chart=chart_img)
 
         if _SUMMARY_COMMAND_RE.search(question_lower) and len(question_lower.split()) <= 6:
@@ -367,7 +367,7 @@ async def ask_question(request: QuestionRequest):
         result = az.ask_question(question)
 
         if result.get('error'):
-            analysis = f"⚠️ {clean_response(result.get('error', 'Error'))}"
+            analysis = f"{clean_response(result.get('error', 'Error'))}"
         else:
             analysis = clean_response(result.get('analysis', 'No response'))
 
@@ -389,20 +389,20 @@ async def parse_sms(request: ParseSMSRequest):
             raise HTTPException(status_code=400, detail="SMS content required")
 
         if not is_valid_mpesa_sms(sms_content):
-            return ParseSMSResponse(success=False, summary="❌ Not an M-Pesa SMS")
+            return ParseSMSResponse(success=False, summary="Not an M-Pesa SMS")
 
         result = get_analyzer().parse_and_insert_sms(sms_content)
 
         if result.get('success'):
             return ParseSMSResponse(
                 success=True,
-                summary=result.get('summary', '✅ SMS parsed successfully'),
+                summary=result.get('summary', 'SMS parsed successfully'),
             )
         if result.get('summary'):
             return ParseSMSResponse(success=False, summary=result['summary'], error=result.get('error'))
         return ParseSMSResponse(
             success=False,
-            summary=f"❌ {result.get('error', 'Could not parse SMS')}",
+            summary=f"{result.get('error', 'Could not parse SMS')}",
             error=result.get('error'),
         )
 
@@ -410,7 +410,7 @@ async def parse_sms(request: ParseSMSRequest):
         raise
     except Exception as e:
         logger.error(f"SMS parse error: {str(e)}")
-        return ParseSMSResponse(success=False, summary=f"❌ Error: {str(e)[:100]}")
+        return ParseSMSResponse(success=False, summary=f"Error: {str(e)[:100]}")
 
 
 if __name__ == "__main__":

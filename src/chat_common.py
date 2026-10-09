@@ -83,7 +83,7 @@ CATEGORY_SYNONYMS: Dict[str, List[str]] = {
 
 HELP_SECTIONS = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
 
-📊 **CHARTS** (Describe what you want, in your own words):
+**CHARTS** (Describe what you want, in your own words):
   • "Pie chart of my spending by category last month"
   • "Donut chart of my spending by category"
   • "Bar chart of my top 5 recipients in August"
@@ -97,48 +97,48 @@ HELP_SECTIONS = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
     box/violin/stacked bar) + any date range (a specific month, "last
     week", "Q1", exact dates, "all time")
 
-💬 **QUESTIONS** (Ask naturally):
+**QUESTIONS** (Ask naturally):
   • "What did I spend on food?"
   • "Top 5 expenses?"
   • "How much to Safaricom?"
 
-💡 **ADVICE**:
+**ADVICE**:
   • "Give me a budget plan" → Personalized KES budget split
   • "What should I invest in?" → Sacco / MMF / T-Bill guidance
 
-📋 **REPORTS**:
+**REPORTS**:
   • "Summary" → Last 30 days
   • "Daily summary" / "Today" → Today's overview
   • "90 days" / "All time" → Extended periods
 {manual_sms}
-🔮 **FORECASTING**:
+**FORECASTING**:
   • "Forecast" / "Forecast 7 days" → Next 7-day spending prediction
   • "Forecast 30 days" → Next 30-day spending prediction
   • "Spending prediction" → Same as "forecast"
   • Returns predicted amount, trend, risk level + AI summary
 
-🕵️ **ANOMALY DETECTION**:
+**ANOMALY DETECTION**:
   • "Anomalies" / "Unusual spending" → ML-flagged unusual transactions
   • Learns YOUR normal pattern per category, not a generic threshold
 {anomaly_page}
-🎯 **BUDGET GOALS**:
+**BUDGET GOALS**:
   • "Set budget food 5000" → Monthly food budget of KES 5,000
   • "Set budget transport 3000 weekly" → Weekly transport budget
   • "My budgets" / "Budget status" → Current spend vs each limit
 {budget_tail}
-✨ Just ask naturally! Charts & analysis are smart."""
+Just ask naturally! Charts & analysis are smart."""
 
 
 def help_text(dashboard: bool = False) -> str:
     if dashboard:
         return HELP_SECTIONS.format(
             manual_sms="",
-            anomaly_page="  • Also browsable on the 🕵️ Anomalies page in the sidebar\n",
-            budget_tail="  • Manage budgets anytime on the 🎯 Budgets page in the sidebar\n",
+            anomaly_page="  • Also browsable on the Anomalies page in the sidebar\n",
+            budget_tail="  • Manage budgets anytime on the Budgets page in the sidebar\n",
         )
     return HELP_SECTIONS.format(
         manual_sms=(
-            "\n📱 **MANUAL SMS**:\n"
+            "\n**MANUAL SMS**:\n"
             "  • PIN-PASTE_SMS_HERE (e.g., 1234-UFMD8OKA...)\n"
         ),
         anomaly_page="",
@@ -258,7 +258,7 @@ def daily_summary_text(summary: Dict, manual_sms_hint: bool = True) -> str:
             "Start tracking by sending M-Pesa SMS or manual entry: PIN-SMS_CONTENT"
             if manual_sms_hint else "Start tracking by adding M-Pesa transactions."
         )
-        return f"📭 No transactions recorded today.\n\n{hint}"
+        return f"No transactions recorded today.\n\n{hint}"
 
     spent = summary.get('total_spent', 0)
     received = summary.get('total_received', 0)
@@ -267,14 +267,14 @@ def daily_summary_text(summary: Dict, manual_sms_hint: bool = True) -> str:
     debit_count = summary.get('debit_count', 0)
     fees = summary.get('total_transaction_cost', 0)
 
-    return f"""📊 **Today's Financial Summary**
+    return f"""**Today's Financial Summary**
 
-💰 Total Transactions: {transactions}
-💸 Total Spent: KES {spent:,.0f}
-💵 Total Received: KES {received:,.0f}
-📈 Net Flow: KES {received - spent:,.0f}
-🧾 M-Pesa Fees: KES {fees:,.0f}
-⚖️ Current Balance: KES {balance:,.0f}
+Total Transactions: {transactions}
+Total Spent: KES {spent:,.0f}
+Total Received: KES {received:,.0f}
+Net Flow: KES {received - spent:,.0f}
+M-Pesa Fees: KES {fees:,.0f}
+Current Balance: KES {balance:,.0f}
 
 **Insights:**
 - Average per payment: KES {spent / max(debit_count, 1):,.0f}
@@ -284,7 +284,7 @@ def daily_summary_text(summary: Dict, manual_sms_hint: bool = True) -> str:
 
 def range_summary_text(summary: Dict, days: Optional[int]) -> str:
     if not summary or summary.get('total_transactions', 0) == 0:
-        return "📭 No transactions in this period. Start tracking now!"
+        return "No transactions in this period. Start tracking now!"
 
     spent = summary.get('total_spent', 0)
     received = summary.get('total_received', 0)
@@ -294,18 +294,18 @@ def range_summary_text(summary: Dict, days: Optional[int]) -> str:
     fees = summary.get('total_transaction_cost', 0)
     span = days if days is not None else max(int(summary.get('span_days') or 1), 1)
     position = (
-        '⚠️ Deficit (spent more than received)' if spent > received
-        else '✅ Surplus (received more than spent)'
+        'Deficit (spent more than received)' if spent > received
+        else 'Surplus (received more than spent)'
     )
 
-    return f"""📊 **{period_label(days)} Financial Summary**
+    return f"""**{period_label(days)} Financial Summary**
 
-💰 Transactions: {transactions}
-💸 Total Spent: KES {spent:,.0f}
-💵 Total Received: KES {received:,.0f}
-📈 Net: KES {received - spent:,.0f}
-🧾 M-Pesa Fees: KES {fees:,.0f}
-⚖️ Balance: KES {balance:,.0f}
+Transactions: {transactions}
+Total Spent: KES {spent:,.0f}
+Total Received: KES {received:,.0f}
+Net: KES {received - spent:,.0f}
+M-Pesa Fees: KES {fees:,.0f}
+Balance: KES {balance:,.0f}
 
 **Analytics:**
 - Daily Average: KES {spent / span:,.0f}
@@ -315,15 +315,15 @@ def range_summary_text(summary: Dict, days: Optional[int]) -> str:
 
 def budget_status_text(rows: List[Dict], dashboard: bool = False) -> str:
     if not rows:
-        tail = ' to create one, or use the 🎯 Budgets page.' if dashboard else ' to create one.'
-        return f'📭 No budgets set yet. Try: "set budget food 5000"{tail}'
-    lines = ["🎯 **Your Budgets**\n"]
+        tail = ' to create one, or use the Budgets page.' if dashboard else ' to create one.'
+        return f'No budgets set yet. Try: "set budget food 5000"{tail}'
+    lines = ["**Your Budgets**\n"]
     for row in rows:
         limit = float(row.get('limit_amount') or 0)
         spent = float(row.get('spent_this_period') or 0)
         pct = (spent / limit * 100) if limit else 0
         threshold = float(row.get('alert_threshold_pct') or 80)
-        icon = "🔴" if pct >= 100 else "🟡" if pct >= threshold else "🟢"
+        icon = "" if pct >= 100 else "" if pct >= threshold else ""
         lines.append(
             f"{icon} {str(row.get('category', '')).title()} ({row.get('period', 'monthly')}): "
             f"KES {spent:,.0f} / {limit:,.0f} ({pct:.0f}%)"
@@ -334,12 +334,12 @@ def budget_status_text(rows: List[Dict], dashboard: bool = False) -> str:
 def forecast_header(forecast_data: Dict, horizon: int) -> str:
     trend = forecast_data.get('trend', 'Stable')
     risk = forecast_data.get('risk_level', 'Low')
-    trend_icon = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(trend, '➡️')
-    risk_icon = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(risk, '🟢')
+    trend_icon = {'Increasing': '', 'Decreasing': '', 'Stable': ''}.get(trend, '')
+    risk_icon = {'Low': '', 'Moderate': '', 'High': ''}.get(risk, '')
     return (
-        f"🔮 **{horizon}-Day Spending Forecast**\n\n"
-        f"💰 Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
-        f"📅 Avg per Day: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
+        f"**{horizon}-Day Spending Forecast**\n\n"
+        f"Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
+        f"Avg per Day: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
         f"{trend_icon} Trend: {trend}\n"
         f"{risk_icon} Risk Level: {risk}\n"
     )

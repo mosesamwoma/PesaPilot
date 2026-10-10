@@ -347,7 +347,7 @@ async def ask_question(request: QuestionRequest):
 
             return reply(clean_response(header + result.get('insight', '')), chart=chart_img)
 
-        if question_lower == 'help':
+        if question_lower.strip('?!. ') == 'help':
             return reply(help_text())
 
         if _DAILY_COMMAND_RE.match(question_lower):

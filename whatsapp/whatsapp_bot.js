@@ -10,7 +10,7 @@ const MAIN_NUMBER = process.env.WHATSAPP_MAIN_NUMBER;
 const WHATSAPP_LID = process.env.WHATSAPP_LID;
 const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
 const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
-const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || '/app/.wwebjs_auth';
+const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || './.wwebjs_auth';
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
 if (!MAIN_NUMBER || !WHATSAPP_PIN) {

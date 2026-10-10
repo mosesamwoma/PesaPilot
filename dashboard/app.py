@@ -273,7 +273,7 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
         return reply(clean_response(header + result.get('insight', '')), fig=fig)
 
-    if question_lower == 'help':
+    if question_lower.strip('?!. ') == 'help':
         return reply(help_text(dashboard=True))
 
     if _DAILY_COMMAND_RE.match(question_lower):

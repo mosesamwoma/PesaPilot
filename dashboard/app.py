@@ -198,7 +198,8 @@ def fmt_money(amount: Any) -> str:
 def chat_html(text: str) -> str:
     escaped = html.escape(text or '')
     bold = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', escaped)
-    return bold.replace(chr(10), '<br>')
+    headed = re.sub(r'^#{1,6}\s+(.+)$', r'<strong>\1</strong>', bold, flags=re.MULTILINE)
+    return headed.replace(chr(10), '<br>')
 
 
 def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:

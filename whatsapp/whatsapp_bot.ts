@@ -132,7 +132,9 @@ function stripSuffix(jid: string): string {
 }
 
 function toWhatsAppFormat(text: string): string {
-    return (text || '').replace(/\*\*(.+?)\*\*/g, '*$1*');
+    return (text || '')
+        .replace(/^#{1,6}\s+(.+)$/gm, (_m, title: string) => `**${title.replace(/\*\*/g, '')}**`)
+        .replace(/\*\*(.+?)\*\*/g, '*$1*');
 }
 
 function extractText(msg: proto.IWebMessageInfo): string {

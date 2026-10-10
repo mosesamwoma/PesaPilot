@@ -315,7 +315,7 @@ class PostgresDB:
             logger.error(f"transaction_exists failed: {e}")
             return False
 
-    def execute_query(self, sql: str) -> List[Dict]:
+    def execute_query(self, sql: str, strict: bool = False) -> List[Dict]:
         if not is_safe_select_sql(sql):
             logger.warning(f"execute_query rejected unsafe SQL: {(sql or '')[:100]!r}")
             return []
@@ -325,6 +325,8 @@ class PostgresDB:
             return self._fetch_all(wrapped, readonly=True)
         except Exception as e:
             logger.error(f"Query failed: {e}")
+            if strict:
+                raise
             return []
 
     def get_transactions(self, days: Optional[int] = 30, limit: Optional[int] = 1000) -> List[Dict]:

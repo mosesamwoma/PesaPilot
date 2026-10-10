@@ -25,7 +25,9 @@ function digitsOnly(value) {
 }
 
 function toWhatsAppFormat(text) {
-    return (text || '').replace(/\*\*(.+?)\*\*/g, '*$1*');
+    return (text || '')
+        .replace(/^#{1,6}\s+(.+)$/gm, (_m, title) => `**${title.replace(/\*\*/g, '')}**`)
+        .replace(/\*\*(.+?)\*\*/g, '*$1*');
 }
 
 console.log('\n═══════════════════════════════════════════════════════');

@@ -162,7 +162,14 @@ class MpesaAnalyzer:
             sql = self.groq.generate_sql(question, schema, days=days, row_limit=row_limit)
             logger.info(f"Generated SQL: {sql}")
 
-            if not is_safe_select_sql(sql):
+            results = None
+            if is_safe_select_sql(sql):
+                try:
+                    results = self.db.execute_query(sql, strict=True)
+                except Exception as query_error:
+                    logger.error(f"Generated SQL failed to run: {query_error}")
+
+            if results is None:
                 return {
                     'question': question,
                     'sql': sql,
@@ -171,7 +178,6 @@ class MpesaAnalyzer:
                     'error': None,
                 }
 
-            results = self.db.execute_query(sql)
             aggregates = _aggregate_query_results(results)
             analysis = self.groq.analyze_results(question, sql, aggregates, context=context) or LLM_UNAVAILABLE_MESSAGE
 

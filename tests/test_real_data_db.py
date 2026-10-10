@@ -79,3 +79,12 @@ def test_saved_anomalies_join_back_to_transactions(db):
     assert db._fetch_one("SELECT COUNT(*) AS n FROM spending_baselines WHERE std_amount = 'NaN'")['n'] == 0
     first = result['anomalies'][0]
     assert first['transaction_id'] and first['amount'] > 0 and first['recipient']
+
+
+def test_paybill_payments_with_phone_accounts_are_not_personal(db):
+    row = db._fetch_one(
+        "SELECT COUNT(*) AS n FROM transactions "
+        "WHERE merchant_category = 'personal' AND type <> 'credit' AND body ILIKE %s",
+        ('%for account%',),
+    )
+    assert row['n'] == 0

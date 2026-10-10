@@ -333,7 +333,7 @@ class MpesaParser:
                 return category
         if tx_type == 'airtime':
             return 'utilities'
-        if phone and tx_type in ('payment', 'transfer'):
+        if phone and not account_match and tx_type in ('payment', 'transfer'):
             return 'personal'
         return 'other'
 

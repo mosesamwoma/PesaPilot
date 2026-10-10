@@ -356,11 +356,12 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Two test files, one for each outside service:
+Three test files:
 
 | File | Covers | Needs |
 |---|---|---|
 | `tests/test_real_data_db.py` | Your real SMS export parsed and loaded into PostgreSQL: row counts, summaries, category totals, the read-only query guard, every SQL analytics function, Nairobi timestamps, the anomaly join | An SMS XML in `data/raw/` (or `PESAPILOT_SMS_XML=/path/to/export.xml`) and a disposable database whose name contains `test` (`POSTGRES_DB=pesapilot_test`, schema applied) |
+| `tests/test_api.py` | The FastAPI routes with a fake analyzer: routing, budgets, SMS ingestion, validation, CORS | Nothing |
 | `tests/test_groq.py` | The Groq client with a fake API: SQL cleanup and rejection of unsafe SQL, response caching, error handling, model routing, budget alert fallback | Nothing (no key, no network) |
 
 ```bash

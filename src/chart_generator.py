@@ -110,6 +110,9 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
         logger.warning(f"Chart spec parse failed ({e!r}); raw={raw[:200]!r}. Using heuristic fallback.")
         spec.update(_heuristic_spec(description))
 
+    for key in ("chart_type", "metric", "group_by", "transaction_type"):
+        if isinstance(spec.get(key), str):
+            spec[key] = re.sub(r'[\s-]+', '_', spec[key].strip().lower())
     if spec.get("chart_type") not in CHART_TYPES:
         spec["chart_type"] = "bar"
     if spec.get("metric") not in METRICS:

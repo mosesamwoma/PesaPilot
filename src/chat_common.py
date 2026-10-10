@@ -61,7 +61,7 @@ SET_BUDGET_PATTERN = re.compile(
     r'|'
     r'set\s+(?P<category2>[a-zA-Z ]+?)\s+budget\s*'
     r'(?:to\s+|of\s+|at\s+)?(?:kes\s*)?(?P<amount2>\d[\d,]*(?:\.\d+)?)'
-    r')\s*(?P<period>weekly|monthly)?',
+    r')\s*(?:(?:per|a|an|each|every|/)\s*)?(?P<period>weekly|monthly|week|month)?\b',
     re.IGNORECASE,
 )
 _HAS_DIGIT = re.compile(r'\d')
@@ -207,7 +207,7 @@ def parse_set_budget(question: str) -> Tuple[Optional[Dict], Optional[str]]:
     amount = float((match.group('amount') or match.group('amount2')).replace(',', ''))
     if amount <= 0:
         return None, 'The budget limit must be greater than 0.'
-    period = (match.group('period') or 'monthly').lower()
+    period = 'weekly' if (match.group('period') or '').lower().startswith('week') else 'monthly'
     return {'category': category, 'amount': amount, 'period': period}, None
 
 

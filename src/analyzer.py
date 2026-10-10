@@ -273,10 +273,10 @@ class MpesaAnalyzer:
             if flagged:
                 self.db.save_anomalies(flagged)
 
-            flagged_ids = {str(a['transaction_id']) for a in flagged}
+            current_models = {str(a['transaction_id']): a.get('model') for a in flagged}
             saved = [
                 a for a in self.db.get_saved_anomalies(days=days, limit=None)
-                if str(a.get('tx_uuid')) in flagged_ids
+                if current_models.get(str(a.get('tx_uuid'))) == a.get('model')
             ]
             insight = self.groq.generate_anomaly_insights(saved) if saved else ""
             if saved and not insight:

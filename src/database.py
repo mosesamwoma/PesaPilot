@@ -3,7 +3,7 @@ import logging
 import uuid
 from decimal import Decimal
 from datetime import datetime, timedelta, date
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 import pandas as pd
 import psycopg2
@@ -85,7 +85,7 @@ def _detect_postgres_host() -> str:
     return '127.0.0.1'
 
 
-def _pg_connection_kwargs() -> Dict[str, str]:
+def _pg_connection_kwargs() -> Dict[str, Any]:
     user = os.getenv('POSTGRES_USER')
     password = os.getenv('POSTGRES_PASSWORD')
     db = os.getenv('POSTGRES_DB')
@@ -115,6 +115,7 @@ def _pg_connection_kwargs() -> Dict[str, str]:
         'dbname': db,
         'host': host,
         'port': os.getenv('POSTGRES_PORT', '5432'),
+        'connect_timeout': 10,
     }
 
 

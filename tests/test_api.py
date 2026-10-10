@@ -177,3 +177,8 @@ def test_plain_strips_emoji_for_matplotlib():
     assert whatsapp_api._plain('🔮 7-Day Spending Forecast') == '7-Day Spending Forecast'
     assert whatsapp_api._plain('🕵️ Unusual Transactions (last 90d)') == 'Unusual Transactions (last 90d)'
     assert whatsapp_api._plain('Plain title') == 'Plain title'
+
+
+def test_set_budget_understands_per_week(client, fake):
+    ask(client, 'set budget food 100 per week')
+    assert fake.budgets == [('food', 100.0, 'weekly')]

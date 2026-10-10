@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import logging
 from typing import Optional, Any
-from src.analyzer import MpesaAnalyzer
+from src.analyzer import LLM_UNAVAILABLE_MESSAGE, MpesaAnalyzer
 from src.chat_common import (
     ANOMALY_KEYWORDS, BUDGET_KEYWORDS, BUDGET_STATUS_KEYWORDS, CHART_TRIGGER_WORDS, FORECAST_KEYWORDS,
     INVEST_KEYWORDS, budget_status_text, clean_response, daily_summary_text, forecast_header, help_text,
@@ -191,6 +191,16 @@ def fmt_ksh(amount: Optional[float]) -> str:
     return f"KES {float(amount):,.0f}"
 
 
+def fmt_money(amount: Any) -> str:
+    return f"KES {float(amount):,.2f}" if pd.notna(amount) and amount else ''
+
+
+def chat_html(text: str) -> str:
+    escaped = html.escape(text or '')
+    bold = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', escaped)
+    return bold.replace(chr(10), '<br>')
+
+
 def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
     def reply(content: str, fig=None, sql=None, results=None) -> dict:
@@ -224,11 +234,11 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
     if matches_any_keyword(question_lower, BUDGET_KEYWORDS):
         context = analyzer.build_context_string(days=30)
-        return reply(clean_response(analyzer.groq.budget_plan(context=context)))
+        return reply(clean_response(analyzer.groq.budget_plan(context=context) or LLM_UNAVAILABLE_MESSAGE))
 
     if matches_any_keyword(question_lower, INVEST_KEYWORDS):
         context = analyzer.build_context_string(days=30)
-        return reply(clean_response(analyzer.groq.investment_advice(context=context)))
+        return reply(clean_response(analyzer.groq.investment_advice(context=context) or LLM_UNAVAILABLE_MESSAGE))
 
     if matches_any_keyword(question_lower, FORECAST_KEYWORDS):
         horizon = parse_forecast_horizon(question_lower, default=7)
@@ -576,6 +586,10 @@ def main() -> None:
         st.title("Budget Goals")
         st.caption("Set spending limits per category and track progress live")
 
+        flash = st.session_state.pop('budget_flash', None)
+        if flash:
+            st.success(flash)
+
         budgets: list[dict[str, Any]] = analyzer.get_budgets_overview()
 
         st.subheader("Current Budgets")
@@ -628,7 +642,9 @@ def main() -> None:
                         alert_threshold_pct=threshold_input,
                     )
                     if result.get('success'):
-                        st.success(f"Budget saved: {category_input.title()} — KES {limit_input:,.0f} per {period_input}.")
+                        st.session_state.budget_flash = (
+                            f"Budget saved: {category_input.title()} — KES {limit_input:,.0f} per {period_input}."
+                        )
                         st.rerun()
                     else:
                         st.error(f"Could not save budget: {result.get('error', 'unknown error')}")
@@ -679,7 +695,7 @@ def main() -> None:
             if msg['role'] == 'user':
                 st.markdown(f'<div class="chat-msg-user">{html.escape(msg["content"])}</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="chat-msg-bot">{html.escape(msg["content"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chat-msg-bot">{chat_html(msg["content"])}</div>', unsafe_allow_html=True)
                 if msg.get('fig') is not None:
                     fig_obj = msg['fig']
                     if hasattr(fig_obj, 'savefig'):
@@ -717,9 +733,9 @@ def main() -> None:
             cols_show: list[str] = [c for c in ['timestamp', 'type', 'amount', 'recipient', 'merchant_category', 'balance'] if c in df.columns]
             df_show: pd.DataFrame = df[cols_show].copy()
             if 'amount' in df_show.columns:
-                df_show['amount'] = df_show['amount'].apply(lambda x: f"KES {x:,.2f}" if x else '')
+                df_show['amount'] = df_show['amount'].apply(fmt_money)
             if 'balance' in df_show.columns:
-                df_show['balance'] = df_show['balance'].apply(lambda x: f"KES {x:,.2f}" if x else '')
+                df_show['balance'] = df_show['balance'].apply(fmt_money)
 
             fc1, fc2 = st.columns(2)
             with fc1:
@@ -768,7 +784,7 @@ def main() -> None:
         if flagged_txs:
             st.subheader(f"{len(flagged_txs)} Flagged Transaction(s)")
             for a in flagged_txs[:20]:
-                score = float(a.get('score', 0))
+                score = float(a.get('score') or 0)
                 model_used = a.get('model', '')
                 model_label = "learned pattern" if 'isolation' in model_used else "statistical check"
                 st.markdown(f"""

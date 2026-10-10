@@ -212,7 +212,8 @@ client.on('message', async (message) => {
     try {
         if (!message.from || message.from.endsWith('@g.us') || message.from.endsWith('@broadcast')) return;
 
-        const userMessage = message.body.trim();
+        const userMessage = (message.body || '').trim();
+        if (!userMessage) return;
         const mainNumeric = digitsOnly(MAIN_NUMBER);
         const lidNumeric = digitsOnly(WHATSAPP_LID);
 

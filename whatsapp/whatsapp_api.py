@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -142,6 +143,8 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
                    va='center', ha='left', fontsize=10, fontweight='bold', color='#333333')
 
         ax.set_ylim(-0.5, len(chart_data)-0.5)
+        if chart_data.max() > 0:
+            ax.set_xlim(right=float(chart_data.max()) * 1.15)
         plt.tight_layout()
         return _encode_figure()
     except Exception as e:
@@ -160,14 +163,14 @@ def generate_forecast_chart(forecast_data: dict, title: str = "Spending Forecast
 
         if hist_pts:
             df_h = pd.DataFrame(hist_pts)
-            ax.plot(df_h['date'], df_h['amount'], color='#2196F3', linewidth=2.5,
+            ax.plot(pd.to_datetime(df_h['date']), df_h['amount'], color='#2196F3', linewidth=2.5,
                     marker='o', markersize=3, label='Historical Spending')
 
         if fcst_pts:
             df_f = pd.DataFrame(fcst_pts)
-            ax.plot(df_f['date'], df_f['predicted'], color='#FF6B6B', linewidth=2.5,
+            ax.plot(pd.to_datetime(df_f['date']), df_f['predicted'], color='#FF6B6B', linewidth=2.5,
                     linestyle='--', marker='o', markersize=5, label='Forecast Spending')
-            ax.fill_between(df_f['date'], df_f['lower'], df_f['upper'],
+            ax.fill_between(pd.to_datetime(df_f['date']), df_f['lower'], df_f['upper'],
                              color='#FF6B6B', alpha=0.18, label='Confidence Interval')
 
         ax.set_xlabel('Date', fontsize=12, fontweight='bold', color='#333333')
@@ -175,6 +178,8 @@ def generate_forecast_chart(forecast_data: dict, title: str = "Spending Forecast
         ax.set_title(_plain(title), fontsize=15, fontweight='bold', pad=20, color='#333333')
         ax.grid(True, alpha=0.3, linestyle='--', color='#cccccc')
         ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=12))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
         plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         return _encode_figure()

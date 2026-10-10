@@ -291,7 +291,10 @@ You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC
         category = str(alert.get('category', 'this category')).title()
         spent = alert.get('amount_spent', 0)
         limit = alert.get('limit_amount', 0)
-        pct = alert.get('pct_used', 0)
+        try:
+            pct = float(alert.get('pct_used', 0) or 0)
+        except (TypeError, ValueError):
+            pct = 0.0
         level = alert.get('alert_level', 'warning')
         period = alert.get('period', 'monthly')
 
@@ -303,7 +306,7 @@ You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the use
             f"Period: {period}\n"
             f"Spent so far: KES {spent:,.0f}\n"
             f"Budget limit: KES {limit:,.0f}\n"
-            f"Percentage used: {pct}%\n"
+            f"Percentage used: {pct:.0f}%\n"
             f"Alert level: {'OVER budget' if level == 'over' else 'Approaching budget limit'}"
         )
         result = self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
@@ -311,8 +314,8 @@ You are sending a short, PROACTIVE, UNPROMPTED WhatsApp budget alert — the use
             return result
 
         icon = "🚨" if level == "over" else "⚠️"
-        verb = "gone over" if level == "over" else "is close to"
+        verb = "has gone over" if level == "over" else "is close to"
         return (
             f"{icon} Budget check: your {category} spending {verb} its {period} limit — "
-            f"KES {spent:,.0f} of KES {limit:,.0f} ({pct}%)."
+            f"KES {spent:,.0f} of KES {limit:,.0f} ({pct:.0f}%)."
         )

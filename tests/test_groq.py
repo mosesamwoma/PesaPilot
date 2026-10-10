@@ -98,3 +98,10 @@ def test_budget_alert_has_a_fallback_when_the_llm_is_unavailable(make_client):
              'alert_level': 'warning', 'period': 'monthly'}
     message = client.budget_alert_message(alert)
     assert 'Food' in message and '4,200' in message and '84%' in message
+
+
+def test_budget_alert_fallback_wording(make_client):
+    client, _ = make_client('')
+    message = client.budget_alert_message({'category': 'personal', 'amount_spent': 864, 'limit_amount': 100,
+                                           'pct_used': 864.0, 'alert_level': 'over', 'period': 'monthly'})
+    assert 'has gone over' in message and '864%' in message and '864.0' not in message

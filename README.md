@@ -67,12 +67,64 @@ Use `.js` for local development, `.ts` (Baileys) for anything deployed — it's 
 git clone https://github.com/mosesamwoma/PesaPilot.git
 cd PesaPilot
 
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --upgrade -r requirements.txt
 
 npm install
 ```
+
+The virtual environment is named `.venv` and is activated before installing
+Python packages. On Windows PowerShell, use
+`.venv\Scripts\Activate.ps1` instead of `source .venv/bin/activate`.
+
+### Updating dependencies
+
+Run these commands from the repository root (`PesaPilot`). This project has
+one Node.js package at the root; there is no separate `frontend/` directory.
+
+```bash
+cd /path/to/PesaPilot
+
+# Activate the existing Python environment, or create it first.
+source .venv/bin/activate
+
+# Update Python tooling and dependencies.
+python -m pip install --upgrade pip
+python -m pip install --upgrade -r requirements.txt
+
+# Update Node.js dependencies in package.json/package-lock.json.
+npm update
+npm install
+
+# Optional: update npm itself.
+npm install --global npm@latest
+```
+
+If `.venv` does not exist yet:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --upgrade -r requirements.txt
+```
+
+Verify the update:
+
+```bash
+npm install-scripts ls
+npm ls --depth=0
+npm run build
+npm test
+npm audit
+```
+
+Keep `requirements.txt`, `requirements-dev.txt`, `package.json`, and
+`package-lock.json` under version control. Do not run `npm audit fix --force`
+without reviewing its proposed changes because it can introduce breaking
+dependency versions.
 
 ---
 

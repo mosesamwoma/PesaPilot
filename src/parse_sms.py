@@ -84,7 +84,7 @@ class MpesaParser:
         r'sim card has been activated',
         re.IGNORECASE | re.MULTILINE,
     )
-    _TX_HEADER_RE = re.compile(r'^\W*([A-Z0-9]{10})\s+(?i:confirmed)\b')
+    _TX_HEADER_RE = re.compile(r'^\W*(?:(?i:congratulations)\W+)?([A-Z0-9]{10})\s+(?i:confirmed)\b')
     _MANUAL_PREFIX_RE = re.compile(r'^\s*\d{3,8}\s*-\s*')
 
     def parse_xml_to_csv(self, xml_path: str, output_path: Optional[str] = None) -> pd.DataFrame:

@@ -167,7 +167,7 @@ Saves a cleaned CSV to `data/processed/` and upserts into Postgres — safe to r
 
 | Message | Result |
 |---|---|
-| Inbox SMS from sender `MPESA` starting with a 10-character transaction code and `Confirmed` | Imported — codes made only of letters are valid and are kept. Messages you sent, and messages from banks, Safaricom promos or other senders, are ignored |
+| Inbox SMS from sender `MPESA` starting with a 10-character transaction code and `Confirmed` (or `Congratulations! <code> confirmed`) | Imported — codes made only of letters are valid and are kept. Messages you sent, and messages from banks, Safaricom promos or other senders, are ignored |
 | `Give KshX cash to <agent>` | Cash **deposit** → `credit` / `banking` |
 | `Withdraw KshX from <agent>` | `withdrawal` / `banking` |
 | `You bought KshX of airtime` | `airtime` / `utilities`, recipient `Airtime` |

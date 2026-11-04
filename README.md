@@ -52,7 +52,7 @@ Use `.js` for local development, `.ts` (Baileys) for anything deployed — it's 
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.12+
 - Node.js 20+
 - Self-hosted PostgreSQL (local or VPS)
 - A [Groq](https://console.groq.com) API key (free tier works)

@@ -491,7 +491,7 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
                         luminance = 0.299 * r + 0.587 * g + 0.114 * b
                         text_color = '#111111' if luminance > 0.6 else '#ffffff'
                         ax.text(j + 0.5, i + 0.5, f"{val:,.0f}", ha='center', va='center',
-                                color=text_color, fontsize=8, fontweight='medium')
+                                color=text_color, fontsize=8)
                 cbar = quadmesh.colorbar
                 cbar.ax.yaxis.set_tick_params(color=theme['text'])
                 plt.setp(cbar.ax.get_yticklabels(), color=theme['text'])

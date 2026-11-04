@@ -2,7 +2,7 @@
 # Shipped image: Baileys only. No Chromium/Puppeteer needed in production —
 # Baileys talks to WhatsApp over a websocket, not a headless browser.
 # (whatsapp-web.js scripts in package.json remain available for local dev only.)
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 

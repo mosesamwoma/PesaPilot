@@ -7,13 +7,14 @@ import io
 import re
 import base64
 import logging
+import threading
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.dates as mdates
@@ -29,6 +30,7 @@ from src.chat_common import (
     is_safe_question, is_set_budget_command, is_valid_question_length, matches_any_keyword,
     parse_days_from_question, parse_forecast_horizon, parse_set_budget, range_summary_text,
 )
+from src.security import extract_token, load_api_token, token_matches
 from src.timeutil import now_nairobi
 
 load_dotenv()
@@ -42,18 +44,36 @@ sns.set_palette("husl")
 WHATSAPP_API_PORT = int(os.getenv('WHATSAPP_API_PORT', 8000))
 API_BIND = os.getenv('API_BIND_HOST', '127.0.0.1')
 
+# The API refuses to start without a strong API_TOKEN: every route except /health requires it.
+API_TOKEN = load_api_token()
+
+MAX_QUESTION_CHARS = 2000
+MAX_SMS_CHARS = 2000
+
 analyzer: Optional[MpesaAnalyzer] = None
+_analyzer_lock = threading.Lock()
 
 
 def get_analyzer() -> MpesaAnalyzer:
     global analyzer
     if analyzer is None:
-        analyzer = MpesaAnalyzer()
+        with _analyzer_lock:
+            if analyzer is None:
+                analyzer = MpesaAnalyzer()
     return analyzer
 
 
+def require_api_key(request: Request) -> None:
+    if not token_matches(extract_token(request.headers), API_TOKEN):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 class QuestionRequest(BaseModel):
-    question: str
+    question: str = Field(max_length=MAX_QUESTION_CHARS)
 
 
 class AnalysisResponse(BaseModel):
@@ -64,7 +84,7 @@ class AnalysisResponse(BaseModel):
 
 
 class ParseSMSRequest(BaseModel):
-    sms_content: str
+    sms_content: str = Field(max_length=MAX_SMS_CHARS)
 
 
 class ParseSMSResponse(BaseModel):
@@ -74,10 +94,10 @@ class ParseSMSResponse(BaseModel):
 
 
 class SetBudgetRequest(BaseModel):
-    category: str
-    limit_amount: float
-    period: str = 'monthly'
-    alert_threshold_pct: int = 80
+    category: str = Field(min_length=1, max_length=40)
+    limit_amount: float = Field(gt=0, le=1_000_000_000, allow_inf_nan=False)
+    period: str = Field('monthly', max_length=10)
+    alert_threshold_pct: int = Field(80, ge=1, le=100)
 
 
 class BudgetAlertsResponse(BaseModel):
@@ -109,6 +129,11 @@ def _encode_figure() -> str:
     return img_b64
 
 def _empty_chart(title: str) -> str:
+    with chart_generator.PLOT_LOCK:
+        return _empty_chart_unlocked(title)
+
+
+def _empty_chart_unlocked(title: str) -> str:
     fig, ax = plt.subplots(figsize=(11, 7), facecolor='white', edgecolor='#e0e0e0')
     ax.text(0.5, 0.5, 'No data available\n\nAdd transactions to generate charts',
             ha='center', va='center', fontsize=14, color='#666666', weight='bold', family='monospace')
@@ -122,6 +147,11 @@ def _empty_chart(title: str) -> str:
     return _encode_figure()
 
 def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str = "Spending by Category") -> Optional[str]:
+    with chart_generator.PLOT_LOCK:
+        return _generate_bar_chart_unlocked(df, category_col, value_col, title)
+
+
+def _generate_bar_chart_unlocked(df: pd.DataFrame, category_col: str, value_col: str, title: str) -> Optional[str]:
     try:
         if df is None or df.empty or category_col not in df.columns or value_col not in df.columns:
             return _empty_chart(title)
@@ -148,10 +178,15 @@ def generate_bar_chart(df: pd.DataFrame, category_col: str, value_col: str, titl
         plt.tight_layout()
         return _encode_figure()
     except Exception as e:
-        logger.error(f"Bar chart error: {e}")
+        logger.error(f"Bar chart error: {type(e).__name__}")
         return None
 
 def generate_forecast_chart(forecast_data: dict, title: str = "Spending Forecast") -> Optional[str]:
+    with chart_generator.PLOT_LOCK:
+        return _generate_forecast_chart_unlocked(forecast_data, title)
+
+
+def _generate_forecast_chart_unlocked(forecast_data: dict, title: str) -> Optional[str]:
     try:
         hist_pts = forecast_data.get('historical', [])[-60:]
         fcst_pts = forecast_data.get('forecast', [])
@@ -184,7 +219,7 @@ def generate_forecast_chart(forecast_data: dict, title: str = "Spending Forecast
         plt.tight_layout()
         return _encode_figure()
     except Exception as e:
-        logger.error(f"Forecast chart error: {e}")
+        logger.error(f"Forecast chart error: {type(e).__name__}")
         return None
 
 
@@ -204,11 +239,21 @@ _DAILY_COMMAND_RE = re.compile(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if API_BIND not in ('127.0.0.1', 'localhost', '::1'):
+        logger.warning(
+            "API is listening on %s. Keep the published port on loopback or behind a reverse proxy "
+            "with TLS; every route except /health requires API_TOKEN.", API_BIND,
+        )
     get_analyzer()
     yield
 
 
-app = FastAPI(title="PesaPilot API", version="1.2", lifespan=lifespan)
+# Interactive docs and the OpenAPI schema are disabled: they would advertise every route.
+app = FastAPI(
+    title="PesaPilot API", version="1.2", lifespan=lifespan,
+    docs_url=None, redoc_url=None, openapi_url=None,
+)
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 _cors_origins = [o.strip() for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]
 
@@ -217,17 +262,17 @@ if _cors_origins:
         CORSMiddleware,
         allow_origins=_cors_origins,
         allow_methods=["GET", "POST"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
     )
 
 
-@app.get("/daily-summary")
-async def daily_summary():
+@router.get("/daily-summary")
+def daily_summary():
     return {"summary": generate_daily_summary()}
 
 
-@app.get("/budget-check", response_model=BudgetAlertsResponse)
-async def budget_check():
+@router.get("/budget-check", response_model=BudgetAlertsResponse)
+def budget_check():
     try:
         alerts = get_analyzer().check_budget_alerts()
         return BudgetAlertsResponse(alerts=alerts, count=len(alerts))
@@ -236,13 +281,13 @@ async def budget_check():
         return BudgetAlertsResponse(alerts=[], count=0)
 
 
-@app.get("/budgets")
-async def list_budgets():
+@router.get("/budgets")
+def list_budgets():
     return {"budgets": get_analyzer().get_budgets_overview()}
 
 
-@app.post("/budgets")
-async def create_budget(request: SetBudgetRequest):
+@router.post("/budgets")
+def create_budget(request: SetBudgetRequest):
     result = get_analyzer().set_budget(
         category=request.category,
         limit_amount=request.limit_amount,
@@ -254,24 +299,19 @@ async def create_budget(request: SetBudgetRequest):
     return result
 
 
-@app.get("/anomalies")
-async def list_anomalies(days: int = Query(90, ge=1, le=1000)):
+@router.get("/anomalies")
+def list_anomalies(days: int = Query(90, ge=1, le=1000)):
     return get_analyzer().get_smart_anomalies(days=days, force_refresh=False)
 
 
 @app.get("/health")
-async def health():
-    return {
-        "status": "healthy",
-        "service": "PesaPilot API",
-        "version": "1.2",
-        "port": WHATSAPP_API_PORT,
-        "timestamp": now_nairobi().isoformat(),
-    }
+def health():
+    # Public on purpose (container health check) and deliberately minimal.
+    return {"status": "healthy", "timestamp": now_nairobi().isoformat()}
 
 
-@app.post("/ask", response_model=AnalysisResponse)
-async def ask_question(request: QuestionRequest):
+@router.post("/ask", response_model=AnalysisResponse)
+def ask_question(request: QuestionRequest):
     try:
         question = request.question.strip()
 
@@ -370,23 +410,18 @@ async def ask_question(request: QuestionRequest):
             return reply(range_summary_text(summary, days))
 
         result = az.ask_question(question)
-
-        if result.get('error'):
-            analysis = f"{clean_response(result.get('error', 'Error'))}"
-        else:
-            analysis = clean_response(result.get('analysis', 'No response'))
-
+        analysis = clean_response(result.get('analysis') or 'No response')
         return reply(analysis, error=result.get('error'))
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Server error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)[:100]}") from e
+        logger.exception("Server error in /ask")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
-@app.post("/parse-sms", response_model=ParseSMSResponse)
-async def parse_sms(request: ParseSMSRequest):
+@router.post("/parse-sms", response_model=ParseSMSResponse)
+def parse_sms(request: ParseSMSRequest):
     try:
         sms_content = request.sms_content.strip()
 
@@ -413,11 +448,14 @@ async def parse_sms(request: ParseSMSRequest):
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"SMS parse error: {str(e)}")
-        return ParseSMSResponse(success=False, summary=f"Error: {str(e)[:100]}")
+    except Exception:
+        logger.exception("SMS parse error")
+        return ParseSMSResponse(success=False, summary="Could not process that SMS. Please try again.")
+
+
+app.include_router(router)
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=API_BIND, port=WHATSAPP_API_PORT, log_level="warning")
+    uvicorn.run(app, host=API_BIND, port=WHATSAPP_API_PORT, log_level="warning", server_header=False)

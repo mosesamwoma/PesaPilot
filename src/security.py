@@ -1,8 +1,3 @@
-"""Shared secret-handling helpers.
-
-Nothing in this module contains a secret. It only validates values that come
-from the environment (.env) and compares tokens in constant time.
-"""
 import hmac
 import os
 import re
@@ -30,13 +25,11 @@ TOKEN_HELP = (
 
 
 def is_placeholder(value: Optional[str]) -> bool:
-    """True for empty values and the obvious 'fill me in' examples."""
     cleaned = (value or '').strip()
     return not cleaned or bool(_PLACEHOLDER_RE.match(cleaned))
 
 
 def load_api_token() -> str:
-    """Return API_TOKEN from the environment or raise if it is missing/weak."""
     token = os.getenv('API_TOKEN', '').strip()
     if is_placeholder(token) or len(token) < MIN_API_TOKEN_LENGTH:
         raise RuntimeError(TOKEN_HELP)
@@ -44,14 +37,12 @@ def load_api_token() -> str:
 
 
 def token_matches(supplied: Optional[str], expected: str) -> bool:
-    """Constant-time token comparison."""
     if not supplied or not expected:
         return False
     return hmac.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8'))
 
 
 def extract_token(headers) -> Optional[str]:
-    """Read the token from 'X-API-Key' or 'Authorization: Bearer <token>'."""
     supplied = headers.get('x-api-key')
     if supplied:
         return supplied.strip()

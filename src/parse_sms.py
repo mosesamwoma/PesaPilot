@@ -84,8 +84,21 @@ class MpesaParser:
         r'sim card has been activated',
         re.IGNORECASE | re.MULTILINE,
     )
+    # "ABC1234DEF Confirmed." and "Congratulations! ABC1234DEF confirmed." both carry the
+    # 10-character transaction code that identifies a real M-Pesa transaction.
     _TX_HEADER_RE = re.compile(r'^\W*(?:(?i:congratulations)\W+)?([A-Z0-9]{10})\s+(?i:confirmed)\b')
     _MANUAL_PREFIX_RE = re.compile(r'^\s*\d{3,8}\s*-\s*')
+
+    # Senders (letters only, lower-case) whose inbox messages are M-Pesa transactions.
+    # "MPESA JUMBE" is Safaricom's public-friendly mirror of the same transactions.
+    _MPESA_SENDERS = frozenset({'mpesa', 'mpesajumbe'})
+    _JUMBE_RE = re.compile(r'\bJumbeID\b|\bYou sent\s*:', re.IGNORECASE)
+    _JUMBE_RECIPIENT_RE = re.compile(
+        r'(?:Paid to|Sent to|Received from|From)\s*:\s*(.+?)\s*(?:\r?\n|$)', re.IGNORECASE,
+    )
+    _ISO_BODY_DATE_RE = re.compile(
+        r'(\d{4})-(\d{2})-(\d{2})\s+at\s+(\d{1,2}):(\d{2})(?::(\d{2}))?', re.IGNORECASE,
+    )
 
     def parse_xml_to_csv(self, xml_path: str, output_path: Optional[str] = None) -> pd.DataFrame:
         logger.info(f"Parsing XML: {xml_path}")
@@ -111,7 +124,11 @@ class MpesaParser:
             logger.warning("No M-Pesa transactions found.")
             return df
 
-        df = df.drop_duplicates(subset=['transaction_id'], keep='first')
+        # The same transaction can arrive twice (e.g. the normal M-Pesa SMS and its "MPESA JUMBE"
+        # copy, which has no balance or fee). Keep the richest copy, whichever came first.
+        df['_has_balance'] = df['balance'].notna()
+        df = df.sort_values('_has_balance', ascending=False, kind='stable')
+        df = df.drop_duplicates(subset=['transaction_id'], keep='first').drop(columns='_has_balance')
         df = df.sort_values('timestamp', ascending=False).reset_index(drop=True)
 
         if output_path:
@@ -122,7 +139,7 @@ class MpesaParser:
 
     def _is_inbound_mpesa(self, elem) -> bool:
         sender = re.sub(r'[^a-z]', '', (elem.get('address') or '').lower())
-        if sender != 'mpesa':
+        if sender not in self._MPESA_SENDERS:
             return False
         if (elem.get('type') or '1') != '1':
             return False
@@ -250,6 +267,8 @@ class MpesaParser:
 
     def _determine_type(self, body: str) -> str:
         lower = body.lower()
+        if self._JUMBE_RE.search(body):
+            return 'credit' if re.search(r'you received\s*:', lower) else 'payment'
         if re.search(r'reversal of transaction', lower) and 'credited' in lower:
             return 'credit'
         if re.search(r'give\s+ksh\s?[\d,.]+\s*cash\s+to', lower):
@@ -274,6 +293,13 @@ class MpesaParser:
             return 'M-Pesa Reversal'
         if tx_type == 'airtime' and re.search(r'you bought', lower):
             return 'Airtime'
+
+        if self._JUMBE_RE.search(body):
+            jumbe = self._JUMBE_RECIPIENT_RE.search(body)
+            if jumbe:
+                name = re.sub(r'\s+', ' ', jumbe.group(1)).strip(' .-')
+                if len(name) >= 2 and re.search(r'[A-Za-z]', name):
+                    return name.title()
 
         for trigger in self._RECIPIENT_TRIGGERS:
             m = re.search(trigger, body, re.IGNORECASE)
@@ -340,7 +366,7 @@ class MpesaParser:
     def _body_datetime(self, body: str) -> Optional[datetime]:
         m = self._BODY_DATE_RE.search(body or '')
         if not m:
-            return None
+            return self._iso_body_datetime(body)
         day, month, year, hour, minute, meridiem = m.groups()
         year_i = int(year)
         if year_i < 100:
@@ -348,6 +374,16 @@ class MpesaParser:
         hour_i = int(hour) % 12 + (12 if meridiem.upper() == 'PM' else 0)
         try:
             return datetime(year_i, int(month), int(day), hour_i, int(minute))
+        except ValueError:
+            return None
+
+    def _iso_body_datetime(self, body: str) -> Optional[datetime]:
+        m = self._ISO_BODY_DATE_RE.search(body or '')
+        if not m:
+            return None
+        year, month, day, hour, minute, second = m.groups()
+        try:
+            return datetime(int(year), int(month), int(day), int(hour), int(minute), int(second or 0))
         except ValueError:
             return None
 

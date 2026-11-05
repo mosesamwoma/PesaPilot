@@ -1,13 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PGSQL_USER="${PGSQL_USER:-pesapilot}"
-PGSQL_PASSWORD="${PGSQL_PASSWORD:-pesapilot}"
-PGSQL_DB="${PGSQL_DB:-pesapilot}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCHEMA_FILE="$PROJECT_ROOT/schema/init_db.sql"
+
+# Read a KEY from .env without sourcing it (values may contain shell characters).
+env_value() {
+    [ -f "$PROJECT_ROOT/.env" ] || return 0
+    grep -E "^$1=" "$PROJECT_ROOT/.env" | tail -n1 | cut -d= -f2- || true
+}
+
+# Settings come from the environment, then from .env. There is no default password.
+PGSQL_USER="${PGSQL_USER:-$(env_value POSTGRES_USER)}"
+PGSQL_PASSWORD="${PGSQL_PASSWORD:-$(env_value POSTGRES_PASSWORD)}"
+PGSQL_DB="${PGSQL_DB:-$(env_value POSTGRES_DB)}"
+PGSQL_USER="${PGSQL_USER:-pesapilot}"
+PGSQL_DB="${PGSQL_DB:-pesapilot}"
+
+if [ -z "$PGSQL_PASSWORD" ]; then
+    echo "No database password set. Run scripts/generate_secrets.sh first (or export PGSQL_PASSWORD)."
+    exit 1
+fi
+case "$(echo "$PGSQL_PASSWORD" | tr '[:upper:]' '[:lower:]')" in
+    change-me*|pesapilot|password) echo "POSTGRES_PASSWORD is a placeholder. Run scripts/generate_secrets.sh."; exit 1 ;;
+esac
+if [ "${#PGSQL_PASSWORD}" -lt 12 ]; then
+    echo "POSTGRES_PASSWORD must be at least 12 characters."
+    exit 1
+fi
+# The password is embedded in a psql script, so keep it free of quoting characters
+# (generate_secrets.sh produces compatible passwords).
+if ! printf '%s' "$PGSQL_PASSWORD" | grep -Eq '^[A-Za-z0-9._~@%^+=:,-]+$'; then
+    echo "POSTGRES_PASSWORD may only contain letters, digits and . _ ~ @ % ^ + = : , -"
+    echo "Use scripts/generate_secrets.sh --rotate to create a compatible one."
+    exit 1
+fi
+if ! printf '%s' "$PGSQL_USER$PGSQL_DB" | grep -Eq '^[a-z_][a-z0-9_]*$'; then
+    echo "POSTGRES_USER and POSTGRES_DB must be lower-case letters, digits and underscores."
+    exit 1
+fi
 
 echo "=============================================================="
 echo " PesaPilot — standalone PostgreSQL setup"
@@ -65,26 +97,26 @@ echo "==> Creating role '$PGSQL_USER' and database '$PGSQL_DB' (if they don't ex
 
 run_psql() {
     if id -u postgres >/dev/null 2>&1; then
-        sudo -u postgres psql -v ON_ERROR_STOP=0 "$@"
+        if [ "$(id -u)" -eq 0 ]; then
+            runuser -u postgres -- psql -v ON_ERROR_STOP=1 "$@"
+        else
+            sudo -u postgres psql -v ON_ERROR_STOP=1 "$@"
+        fi
     else
-        psql -v ON_ERROR_STOP=0 "$@"
+        psql -v ON_ERROR_STOP=1 "$@"
     fi
 }
 
-run_psql <<SQL
-DO \$\$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$PGSQL_USER') THEN
-        CREATE ROLE $PGSQL_USER WITH LOGIN PASSWORD '$PGSQL_PASSWORD';
-    END IF;
-END
-\$\$;
+# Create the role if missing, always (re)apply the password so rotation works,
+# and create the database if missing. Identifiers/values are quoted by format().
+run_psql -d postgres <<SQL
+\set u '$PGSQL_USER'
+\set pw '$PGSQL_PASSWORD'
+\set d '$PGSQL_DB'
+SELECT format('CREATE ROLE %I LOGIN', :'u') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'u') \gexec
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'u', :'pw') \gexec
+SELECT format('CREATE DATABASE %I OWNER %I', :'d', :'u') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'d') \gexec
 SQL
-
-DB_EXISTS="$(run_psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$PGSQL_DB'")"
-if [ "$DB_EXISTS" != "1" ]; then
-    run_psql -c "CREATE DATABASE $PGSQL_DB OWNER $PGSQL_USER;"
-fi
 
 echo "Role and database ready"
 echo
@@ -102,10 +134,10 @@ echo "=============================================================="
 echo " PesaPilot DB ready"
 echo "=============================================================="
 echo
-echo "Add this to your .env:"
+echo "Your .env should contain:"
 echo
 echo "  POSTGRES_USER=$PGSQL_USER"
-echo "  POSTGRES_PASSWORD=$PGSQL_PASSWORD"
+echo "  POSTGRES_PASSWORD=(unchanged - already in your .env)"
 echo "  POSTGRES_DB=$PGSQL_DB"
 echo "  POSTGRES_HOST=127.0.0.1"
 echo "  POSTGRES_PORT=5432"

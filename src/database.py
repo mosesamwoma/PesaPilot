@@ -13,6 +13,7 @@ from psycopg2.extras import execute_values, RealDictCursor
 from dotenv import load_dotenv
 
 from src.constants import SPENDING_TYPES
+from src.security import is_placeholder
 from src.sql_guard import is_safe_select_sql
 from src.timeutil import now_nairobi, since_nairobi, today_nairobi
 
@@ -101,6 +102,11 @@ def _pg_connection_kwargs() -> Dict[str, Any]:
         )
 
     assert user is not None and password is not None and db is not None
+    if is_placeholder(password):
+        raise ValueError(
+            "POSTGRES_PASSWORD is empty or still a placeholder. Generate a real one with "
+            "scripts/generate_secrets.sh and apply it with scripts/setup_db.sh."
+        )
 
     host_setting = os.getenv('POSTGRES_HOST', 'auto').strip()
     if host_setting.lower() == 'auto' or not host_setting:
@@ -109,7 +115,7 @@ def _pg_connection_kwargs() -> Dict[str, Any]:
     else:
         host = host_setting
 
-    return {
+    kwargs: Dict[str, Any] = {
         'user': user,
         'password': password,
         'dbname': db,
@@ -117,6 +123,10 @@ def _pg_connection_kwargs() -> Dict[str, Any]:
         'port': os.getenv('POSTGRES_PORT', '5432'),
         'connect_timeout': 10,
     }
+    sslmode = (os.getenv('POSTGRES_SSLMODE') or '').strip()
+    if sslmode:
+        kwargs['sslmode'] = sslmode
+    return kwargs
 
 
 def _summarize(df: pd.DataFrame, fallback_balance: float) -> Dict:

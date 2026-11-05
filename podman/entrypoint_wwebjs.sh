@@ -1,6 +1,8 @@
 #!/bin/bash
 
 set -e
+# Files created by the bot (WhatsApp session data) are private to this user.
+umask 077
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,6 +32,7 @@ REQUIRED_VARS=(
     "GROQ_API_KEY"
     "WHATSAPP_MAIN_NUMBER"
     "WHATSAPP_PIN"
+    "API_TOKEN"
 )
 
 MISSING_VARS=()
@@ -47,6 +50,33 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     echo -e "${RED}Set these in your .env file (or however you inject env vars) and try again.${NC}"
     echo -e "${RED}POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB must point at a PostgreSQL server you already set up${NC}"
     echo -e "${RED}(see scripts/setup_db.sh) — this container does not run its own database.${NC}"
+    exit 1
+fi
+
+# Refuse the example/placeholder values that ship in .env.example.
+_is_placeholder() {
+    local v
+    v="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$v" in
+        change-me*|*your-*-here*|*your_*_here*|pesapilot|password|secret|test-key|xxx*|"<"*) return 0 ;;
+    esac
+    return 1
+}
+
+WEAK_VARS=()
+for var in POSTGRES_PASSWORD GROQ_API_KEY WHATSAPP_PIN API_TOKEN; do
+    if _is_placeholder "${!var}"; then
+        WEAK_VARS+=("$var")
+    fi
+done
+if [ ${#WEAK_VARS[@]} -gt 0 ]; then
+    echo -e "${RED}These variables still hold placeholder values: ${WEAK_VARS[*]}${NC}"
+    echo -e "${RED}Run scripts/generate_secrets.sh, or set real values in .env.${NC}"
+    exit 1
+fi
+
+if [ "${#API_TOKEN}" -lt 24 ]; then
+    echo -e "${RED}API_TOKEN must be at least 24 characters (use scripts/generate_secrets.sh).${NC}"
     exit 1
 fi
 
@@ -164,8 +194,8 @@ fi
 
 echo -e "${YELLOW}Step 5: Setting directory permissions...${NC}"
 
-chmod -R 755 "$AUTH_PATH" 2>/dev/null || true
-chmod -R 755 /app/data 2>/dev/null || true
+chmod 700 "$AUTH_PATH" 2>/dev/null || true
+chmod 750 /app/data 2>/dev/null || true
 
 echo -e "${GREEN}Permissions set${NC}\n"
 
@@ -179,7 +209,7 @@ if [ -f "/app/whatsapp/whatsapp_api.py" ]; then
     python -m whatsapp.whatsapp_api &
     API_PID=$!
     echo -e "${GREEN}FastAPI started (PID: $API_PID)${NC}"
-    echo -e "${BLUE}   Listening on: http://0.0.0.0:${WHATSAPP_API_PORT:-8000}${NC}\n"
+    echo -e "${BLUE}   Listening on port ${WHATSAPP_API_PORT:-8000} inside the container (token required)${NC}\n"
 else
     echo -e "${RED}whatsapp/whatsapp_api.py not found!${NC}"
     exit 1
@@ -192,8 +222,13 @@ for i in {1..20}; do
         echo -e "${GREEN}API is healthy${NC}\n"
         break
     fi
+    if ! kill -0 "$API_PID" 2>/dev/null; then
+        echo -e "${RED}The API process exited during startup. Check the messages above.${NC}"
+        exit 1
+    fi
     if [ "$i" -eq 20 ]; then
-        echo -e "${YELLOW}API health check timeout (continuing anyway)${NC}\n"
+        echo -e "${RED}API did not become healthy within 20s.${NC}"
+        exit 1
     else
         echo -e "${BLUE}   Attempt $i/20...${NC}"
         sleep 1
@@ -231,7 +266,7 @@ echo -e "${GREEN}🚀 PesaPilot is ONLINE and READY${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
 
 echo -e "${BLUE}Running processes:${NC}"
-echo -e "${BLUE}   API:  http://0.0.0.0:${WHATSAPP_API_PORT:-8000}${NC}"
+echo -e "${BLUE}   API:  port ${WHATSAPP_API_PORT:-8000} (host exposure is set by API_BIND)${NC}"
 echo -e "${BLUE}   Bot:  WhatsApp Web (Headless)${NC}"
 echo -e "${BLUE}   API_URL: $API_URL${NC}\n"
 

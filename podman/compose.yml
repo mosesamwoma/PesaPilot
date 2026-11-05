@@ -16,15 +16,16 @@ services:
     container_name: pesapilot-local
     restart: unless-stopped
     ports:
-      # The API has no authentication, so it is published on the host's
-      # loopback only. To expose it elsewhere set API_BIND=0.0.0.0 in .env
-      # (and put it behind a firewall / reverse proxy with auth).
+      # Published on the host's loopback only. Every route except /health
+      # needs API_TOKEN, but keep it on loopback anyway: to expose it, put a
+      # TLS reverse proxy in front instead of setting API_BIND=0.0.0.0.
       - "${API_BIND:-127.0.0.1}:8000:8000"
     environment:
       # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
       - API_BIND_HOST=0.0.0.0
+      - API_TOKEN=${API_TOKEN:?Set API_TOKEN in .env (run scripts/generate_secrets.sh)}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
 
       # PostgreSQL runs separately on the host. POSTGRES_HOST=auto lets
@@ -32,13 +33,13 @@ services:
       # resolve host.containers.internal itself — Podman wires that
       # hostname up automatically, no extra_hosts entry needed.
       - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
       - POSTGRES_HOST=${POSTGRES_HOST:-auto}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
 
       # Groq
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY:?Set GROQ_API_KEY in .env}
       - LLM_MODEL_FAST=${LLM_MODEL_FAST:-openai/gpt-oss-20b}
       - LLM_MODEL_SMART=${LLM_MODEL_SMART:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.6}
@@ -47,16 +48,16 @@ services:
       - API_TIMEOUT=${API_TIMEOUT:-20}
 
       # WhatsApp
-      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
+      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER:?Set WHATSAPP_MAIN_NUMBER in .env}
       - WHATSAPP_LID=${WHATSAPP_LID:-}
-      - WHATSAPP_PIN=${WHATSAPP_PIN}
+      - WHATSAPP_PIN=${WHATSAPP_PIN:?Set WHATSAPP_PIN in .env}
 
       # Puppeteer/Google Chrome — this is the whole reason this file exists
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
       # Auth storage path (inside the container) — code reads this exact var name
       - WWEBJS_AUTH_PATH=/app/.wwebjs_auth
-      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-true}
+      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-false}
 
       # Node
       - NODE_ENV=production
@@ -81,6 +82,10 @@ services:
     # bumps it — this is arguably more important than the --disable-dev-shm-usage
     # flag the bot already passes to Chrome as a fallback.
     shm_size: 1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s

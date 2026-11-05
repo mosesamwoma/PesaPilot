@@ -41,3 +41,10 @@ sessions/
 .DS_Store
 *.swp
 *.swo
+# Never bake secrets or private data into an image
+.env
+.env.*
+*.xml
+sms-*
+scripts/
+.streamlit/

@@ -56,8 +56,10 @@ COPY whatsapp/ ./whatsapp/
 
 RUN mkdir -p data/raw data/processed data/sessions \
     && mkdir -p .wwebjs_auth \
-    && chmod -R 777 .wwebjs_auth \
-    && chmod -R 777 data
+    && chmod 700 .wwebjs_auth \
+    && chmod 750 data
+# Rootless Podman maps container root to your own unprivileged host user, so
+# no extra USER is set here (a second UID would not match the bind mounts).
 
 ENV NODE_ENV=production
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable

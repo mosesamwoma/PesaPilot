@@ -188,14 +188,14 @@ class MpesaAnalyzer:
                 'analysis': analysis,
                 'error': None,
             }
-        except Exception as e:
-            logger.error(f"ask_question failed: {e}")
+        except Exception:
+            logger.exception("ask_question failed")
             return {
                 'question': question,
                 'sql': '',
                 'results': [],
-                'analysis': f"Sorry, I couldn't process that question. Error: {str(e)}",
-                'error': str(e),
+                'analysis': "Sorry, I couldn't process that question. Please try rephrasing it.",
+                'error': 'question_failed',
             }
 
     def get_dashboard_data(self, days: Optional[int] = None, force_refresh: bool = False) -> Dict:
@@ -395,25 +395,32 @@ class MpesaAnalyzer:
         tx_type = tx.get('type', 'debit')
         amount = tx.get('amount', 0) or 0
         recipient = tx.get('recipient', 'Unknown')
-        balance = tx.get('balance', 0) or 0
-        category = tx.get('merchant_category', 'other')
+        balance = tx.get('balance')
+        category = tx.get('merchant_category') or 'other'
         cost = tx.get('transaction_cost') or 0
+        # Some confirmations (e.g. MPESA Jumbe) do not state the balance — say so instead of showing 0.
+        balance_line = (
+            f"Balance: KES {balance:,.2f}\n" if balance is not None
+            else "Balance: not shown in this SMS\n"
+        )
 
         if tx_type == 'credit':
             summary = (
                 f"Money in KES {amount:,.2f}\n"
                 f"From: {recipient}\n"
-                f"Balance: KES {balance:,.2f}\n"
+                f"{balance_line}"
                 f"Transaction ID: {tx_id}"
             )
         else:
-            verb = {'withdrawal': 'Withdrew', 'airtime': 'Bought airtime for'}.get(tx_type, 'Paid')
+            verb = {
+                'withdrawal': 'Withdrew', 'airtime': 'Bought airtime for', 'debit': 'Debited',
+            }.get(tx_type, 'Paid')
             summary = (
                 f"{verb} KES {amount:,.2f}\n"
                 f"To: {recipient}\n"
                 f"Category: {category.title()}\n"
                 f"Fee: KES {cost:,.2f}\n"
-                f"Balance: KES {balance:,.2f}\n"
+                f"{balance_line}"
                 f"Transaction ID: {tx_id}"
             )
 

@@ -49,7 +49,7 @@ podman run -d \
   -v ./sessions-local:/app/.wwebjs_auth:Z \
   -v ./data:/app/data:Z \
   --shm-size=1g \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   pesapilot
 
 # Everyday commands

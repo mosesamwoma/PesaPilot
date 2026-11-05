@@ -25,6 +25,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **WhatsApp Bot** — same questions, charts, advice, and manual SMS logging, from WhatsApp
 - **Daily summary** — 9 PM (Africa/Nairobi) end-of-day digest
 - **Two-tier AI** — fast model for chat/insights, smarter model for SQL/analysis/advice
+- **Authenticated API** — every route except `/health` requires `API_TOKEN`; loopback-only by default (see [Security](#security))
 - **SQL safety guard** — every LLM-generated query is validated `SELECT`/`WITH`-only and runs in a read-only transaction with a 10 s timeout
 - **Response caching** — in-memory TTL cache on all Groq calls, cleared on new transactions
 
@@ -79,19 +80,20 @@ npm install
 ## 2. Configure environment variables
 
 ```bash
-cp .env.example .env
+scripts/generate_secrets.sh      # creates .env (mode 600) with random POSTGRES_PASSWORD, API_TOKEN, WHATSAPP_PIN
 ```
 
-Fill in `.env` — never commit it (already in `.gitignore`).
+Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never commit `.env` (already in `.gitignore`). The app refuses to start while required values are empty or still placeholders — there are no default passwords or keys anywhere in the code.
 
 ### Required
 
 | Variable | Notes |
 |---|---|
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Same names the official Postgres Docker image uses |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Same names the official Postgres Docker image uses. The password is random (generated for you) |
+| `API_TOKEN` | Shared secret for the API (24+ random characters). The bot and anything else calling the API send it as `Authorization: Bearer <token>` |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `WHATSAPP_MAIN_NUMBER` | e.g. `254712345678` — the number you text the bot **from** |
-| `WHATSAPP_PIN` | Any 4-digit code, used for manual SMS entry |
+| `WHATSAPP_PIN` | Random code (generated for you), used for manual SMS entry. Never printed to logs |
 
 `POSTGRES_HOST=auto` (default) lets one `.env` work everywhere — bare metal (`127.0.0.1`), Docker (`host.docker.internal`, falling back to `172.17.0.1`), Podman (`host.containers.internal`). Set it explicitly to skip detection, e.g. for a remote Postgres server. Passwords with special characters are safe as-is — no URL-encoding needed.
 
@@ -112,26 +114,23 @@ Fill in `.env` — never commit it (already in `.gitignore`).
 | `WWEBJS_AUTH_PATH` | `./.wwebjs_auth` | whatsapp-web.js session storage |
 | `LLM_REASONING_EFFORT` | `low` | `low` / `medium` / `high` |
 | `API_TIMEOUT` | `20` | Seconds before a Groq call is aborted |
-| `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. The API has no authentication — only use `0.0.0.0` behind a firewall/reverse proxy |
-| `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` inside the container) |
+| `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. Keep `127.0.0.1`; to reach the API remotely use a TLS reverse proxy, not `0.0.0.0` |
+| `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` *inside* the container, which only the host-side `API_BIND` exposes) |
+| `DASHBOARD_PASSWORD` | empty | Optional login for the Streamlit dashboard. The dashboard itself only listens on `127.0.0.1` (`.streamlit/config.toml`) |
+| `POSTGRES_SSLMODE` | empty | Set to `require` / `verify-full` when Postgres is on another machine |
 | `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com,http://[2001:db8::1]:8501`. The bot and dashboard do not need it |
 | `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log level |
-| `WHATSAPP_QR_LINK` | `true` | Both bots also print a fallback link (rendered by the third-party api.qrserver.com) for the login QR, for terminals that cannot draw it. The QR is a device-linking secret, so set `false` to turn the link off |
+| `WHATSAPP_QR_LINK` | `false` | Keep `false`. `true` prints a link that sends your WhatsApp login QR (a device-linking secret) to the third-party api.qrserver.com. Use `WHATSAPP_USE_PAIRING_CODE=true` if your terminal cannot draw the QR |
 
 ---
 
 ## 3. Create the database schema
 
 ```bash
-sudo -u postgres psql
-CREATE USER pesapilot_user WITH PASSWORD 'StrongPassword123!';
-CREATE DATABASE pesapilot OWNER pesapilot_user;
-\q
+scripts/setup_db.sh
 ```
 
-```bash
-PGPASSWORD="StrongPassword123!" psql -h 127.0.0.1 -p 5432 -U pesapilot_user -d pesapilot -f schema/init_db.sql
-```
+This reads `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` from `.env`, creates (or updates the password of) the role, creates the database and applies `schema/init_db.sql`. It never prints the password and has no default one. Re-run it after rotating the password.
 
 > Postgres never runs inside Docker here — `docker-compose.yml` only runs the app. Always run `psql` from a machine with network access to your Postgres server.
 
@@ -168,6 +167,8 @@ Saves a cleaned CSV to `data/processed/` and upserts into Postgres — safe to r
 | Message | Result |
 |---|---|
 | Inbox SMS from sender `MPESA` starting with a 10-character transaction code and `Confirmed` (or `Congratulations! <code> confirmed`) | Imported — codes made only of letters are valid and are kept. Messages you sent, and messages from banks, Safaricom promos or other senders, are ignored |
+| Inbox SMS from sender `MPESA JUMBE` (`<code> Confirmed. You sent: …  Paid to: …`) | Imported as a `payment`. It has no balance or fee, and it usually mirrors a normal M-Pesa SMS with the same code — when both exist the one with the balance wins, whichever arrives first |
+| Promos such as `CONGRATULATIONS! Loan limit approved…` or `CONFIRMED. You Qualify to Borrow…` | Ignored — no transaction code, and not from M-Pesa. The same rule applies to manual `PIN-SMS` entries |
 | `Give KshX cash to <agent>` | Cash **deposit** → `credit` / `banking` |
 | `Withdraw KshX from <agent>` | `withdrawal` / `banking` |
 | `You bought KshX of airtime` | `airtime` / `utilities`, recipient `Airtime` |
@@ -195,6 +196,8 @@ streamlit run dashboard/app.py
 ```
 Open [http://localhost:8501](http://localhost:8501).
 
+> The API and both bots need `API_TOKEN` in `.env` (the API will not start without it). The dashboard reads the database directly and does not use the API.
+
 **API + WhatsApp bot (whatsapp-web.js, local dev):**
 ```bash
 npm run api          # Terminal 1
@@ -209,7 +212,7 @@ npm run dev   # Terminal 2
 ```
 Session persists in `.baileys_auth/`.
 
-> The Streamlit dashboard is local-only and not included in the Docker image.
+> The Streamlit dashboard is local-only (bound to `127.0.0.1`) and not included in the Docker image.
 
 ---
 
@@ -222,6 +225,7 @@ npm run dev:wwebjs    # whatsapp-web.js bot via nodemon
 npm run build         # Compile whatsapp_bot.ts -> dist/
 npm start             # Run compiled Baileys bot
 npm run start:wwebjs  # Run whatsapp-web.js bot
+npm run typecheck     # Type-check the TypeScript bot
 npm run clean         # Remove dist/ and auth folders
 ```
 
@@ -275,9 +279,12 @@ Anyone texting the number who isn't `WHATSAPP_MAIN_NUMBER`/`WHATSAPP_LID` is lef
 Uses Baileys (`whatsapp_bot.ts`) only — pure WebSocket, no Chromium, ~80 MB footprint. `whatsapp_bot.js` is for local dev and never runs in the container. One container runs both FastAPI and the bot.
 
 ```bash
+scripts/prepare_dirs.sh            # once: the container runs as UID 10001, not root
 docker compose up -d --build
 docker compose logs -f pesapilot
 ```
+
+The container runs as an unprivileged user with all Linux capabilities dropped and `no-new-privileges`; the app code is read-only to it, and only `sessions/` (mode 700) and `data/` are writable. Compose refuses to start if a required secret is missing.
 
 Health check (run on the VPS — the API is bound to `127.0.0.1` by default): `curl http://127.0.0.1:8000/health`
 
@@ -309,10 +316,13 @@ docker compose restart pesapilot
 ```bash
 curl http://127.0.0.1:8000/health
 
+TOKEN="$(grep '^API_TOKEN=' .env | cut -d= -f2-)"
 curl -X POST http://127.0.0.1:8000/ask \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"question": "What did I spend on food?"}'
 ```
+Without the token every route except `/health` returns `401`.
 
 ---
 
@@ -334,6 +344,41 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
 
 ---
 
+## Security
+
+**What protects you**
+
+- Every API route except `/health` requires `API_TOKEN` (constant-time check). Without it nobody can read financial data, ask the AI questions, change budgets or submit fake SMS transactions. The API refuses to start without a strong token, and `/docs`, `/redoc` and `/openapi.json` are disabled.
+- The API is published on `127.0.0.1` only. Keep these in `.env`:
+  ```
+  API_BIND=127.0.0.1
+  API_BIND_HOST=127.0.0.1
+  CORS_ORIGINS=
+  WHATSAPP_QR_LINK=false
+  ```
+- Errors returned to clients never contain exception text; the bot never logs your PIN or pasted SMS; the container runs as non-root.
+
+**Rotate secrets** (do this now if a `.env`, key, session folder or SMS file was ever shared, committed or pasted anywhere):
+
+1. `scripts/generate_secrets.sh --rotate` → new `POSTGRES_PASSWORD`, `API_TOKEN`, `WHATSAPP_PIN`; then `scripts/setup_db.sh` to apply the DB password.
+2. `GROQ_API_KEY`: create a new key at console.groq.com, delete the old one, paste the new one into `.env`.
+3. WhatsApp: on your phone open Settings → Linked Devices, log out every device you don't recognise, delete `sessions/` (or `.wwebjs_auth/`) and pair again.
+4. Restart: `docker compose up -d --force-recreate`.
+
+Keep `.env`, `sessions/` (`.baileys_auth/`) and your SMS `.xml` exports private — all are git-ignored and excluded from the image and from `redeploy.sh` uploads.
+
+**Before exposing anything publicly:** put the API behind a TLS reverse proxy (the token is then protected in transit). Minimal Caddy example — Caddy gets the certificate automatically:
+
+```
+api.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Callers must still send `Authorization: Bearer <API_TOKEN>`. Add rate limiting at the proxy if the hostname is public. Never set `API_BIND=0.0.0.0` instead. The Streamlit dashboard has no HTTPS of its own: keep it on localhost (reach it over `ssh -L 8501:127.0.0.1:8501`), and set `DASHBOARD_PASSWORD` if anyone else can reach the machine.
+
+---
+
 ## How the AI advice is grounded
 
 Every Groq question is paired with live context from Postgres: summary stats, top categories, top merchants, recent daily trend, detected anomalies. A Kenya-specific system prompt (`src/groq_client.py`) enforces amounts + percentages, comparisons to averages, one actionable tip, real Kenyan options (Sacco/MMF/T-Bills), a budget split, an emergency-fund nudge — never Fuliza or a named bank.
@@ -349,30 +394,6 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 
 ---
 
-## Testing
-
-```bash
-pip install -r requirements-dev.txt
-pytest
-```
-
-Three test files:
-
-| File | Covers | Needs |
-|---|---|---|
-| `tests/test_real_data_db.py` | Your real SMS export parsed and loaded into PostgreSQL: row counts, summaries, category totals, the read-only query guard, every SQL analytics function, Nairobi timestamps, the anomaly join | An SMS XML in `data/raw/` (or `PESAPILOT_SMS_XML=/path/to/export.xml`) and a disposable database whose name contains `test` (`POSTGRES_DB=pesapilot_test`, schema applied) |
-| `tests/test_api.py` | The FastAPI routes with a fake analyzer: routing, budgets, SMS ingestion, validation, CORS | Nothing |
-| `tests/test_groq.py` | The Groq client with a fake API: SQL cleanup and rejection of unsafe SQL, response caching, error handling, model routing, budget alert fallback | Nothing (no key, no network) |
-
-```bash
-POSTGRES_USER=pesapilot POSTGRES_PASSWORD=... POSTGRES_DB=pesapilot_test POSTGRES_HOST=127.0.0.1 \
-PESAPILOT_SMS_XML=data/raw/your-sms-backup.xml pytest
-```
-
-`test_real_data_db.py` skips itself when either input is missing. `tests/conftest.py` only provides the shared fixtures. Your raw SMS export is never committed — `data/raw/*` is git-ignored.
-
----
-
 ## Troubleshooting
 
 | Issue | Fix |
@@ -382,6 +403,11 @@ PESAPILOT_SMS_XML=data/raw/your-sms-backup.xml pytest
 | `ModuleNotFoundError: No module named 'src'` | Run from the project root |
 | No transactions after loading XML | Confirm it's an SMS Backup & Restore export with M-Pesa messages |
 | Port 8000 in use | Change `WHATSAPP_API_PORT`, update `API_URL` and `docker-compose.yml` |
+| API exits with `API_TOKEN must be set…` | Run `scripts/generate_secrets.sh` (or set a 24+ character `API_TOKEN` in `.env`) |
+| Bot says `API server rejected the token` | `API_TOKEN` differs between the bot and the API — they must read the same `.env` |
+| `401 Unauthorized` from curl | Send `-H "Authorization: Bearer $API_TOKEN"` (or `X-API-Key`) |
+| Container: `is not writable by the container user` | Run `scripts/prepare_dirs.sh` (folders must be owned by UID/GID 10001) |
+| Compose: `Set POSTGRES_PASSWORD in .env` | A required variable is empty — see [Configure](#2-configure-environment-variables) |
 | Baileys `405` loop, no QR | Wipe `.baileys_auth/` and restart |
 | Baileys QR never appears | Check container internet: `docker compose exec pesapilot curl -I https://web.whatsapp.com` |
 | wwebjs `Failed to launch browser` | Chrome missing or wrong `PUPPETEER_EXECUTABLE_PATH` (local dev only) |

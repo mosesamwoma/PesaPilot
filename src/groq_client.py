@@ -6,6 +6,7 @@ from typing import Optional
 from groq import Groq
 from dotenv import load_dotenv
 
+from src.security import is_placeholder
 from src.sql_guard import is_safe_select_sql
 from src.timeutil import now_nairobi
 
@@ -91,9 +92,9 @@ TTL_CHAT       =  300
 
 class GroqClient:
     def __init__(self):
-        api_key = os.getenv('GROQ_API_KEY')
-        if not api_key:
-            raise ValueError("GROQ_API_KEY must be set")
+        api_key = (os.getenv('GROQ_API_KEY') or '').strip()
+        if is_placeholder(api_key):
+            raise ValueError("GROQ_API_KEY must be set to your real key (console.groq.com -> API Keys)")
         self.client = Groq(api_key=api_key)
 
         self.model_fast = os.getenv('LLM_MODEL_FAST', 'openai/gpt-oss-20b')

@@ -5,6 +5,7 @@ import re
 import json
 import base64
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -21,6 +22,10 @@ from src.parse_sms import MpesaParser
 from src.timeutil import now_nairobi
 
 logger = logging.getLogger(__name__)
+
+# matplotlib's pyplot interface keeps global state and is not thread-safe. The API runs request
+# handlers in a thread pool, so every pyplot call in the project goes through this lock.
+PLOT_LOCK = threading.RLock()
 
 CHART_TYPES = (
     'bar', 'line', 'pie', 'donut', 'area', 'scatter',
@@ -369,6 +374,11 @@ def _pie_like(ax, fig, df, spec, theme, metric, metric_label, title, donut: bool
 
 
 def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
+    with PLOT_LOCK:
+        return _build_figure_unlocked(df, spec, dark=dark)
+
+
+def _build_figure_unlocked(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
     theme = _DARK if dark else _LIGHT
     metric = spec['metric']
     chart_type = spec['chart_type']
@@ -580,10 +590,10 @@ def build_figure(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True):
             _watermark(fig, theme)
             plt.tight_layout()
             return fig, summary
-        except Exception as e:
-            logger.error(f"build_figure failed (chart_type={chart_type}): {e}")
+        except Exception:
+            logger.exception(f"build_figure failed (chart_type={chart_type})")
             plt.close(fig)
-            return None, f"Couldn't build that chart: {e}"
+            return None, "Couldn't build that chart. Try a different chart type or date range."
 
 
 def generate_dynamic_chart(analyzer, description: str, dark: bool = True) -> Dict[str, Any]:
@@ -601,9 +611,10 @@ def generate_dynamic_chart(analyzer, description: str, dark: bool = True) -> Dic
 def figure_to_base64(fig) -> Optional[str]:
     if fig is None:
         return None
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor=fig.get_facecolor())
-    buf.seek(0)
-    encoded = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close(fig)
+    with PLOT_LOCK:
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor=fig.get_facecolor())
+        buf.seek(0)
+        encoded = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
     return encoded

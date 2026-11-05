@@ -14,15 +14,18 @@ services:
     container_name: pesapilot-bot
     restart: unless-stopped
     ports:
-      # The API has no authentication, so it is published on the host's
-      # loopback only. To expose it elsewhere set API_BIND=0.0.0.0 in .env
-      # (and put it behind a firewall / reverse proxy with auth).
+      # Published on the host's loopback only. Every route except /health
+      # needs API_TOKEN, but keep it on loopback anyway: to expose it, put a
+      # TLS reverse proxy in front instead of setting API_BIND=0.0.0.0.
       - "${API_BIND:-127.0.0.1}:8000:8000"
     environment:
       # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}
       - WHATSAPP_API_PORT=8000
+      # 0.0.0.0 here is the address *inside* the container (needed for the
+      # port mapping above); the host-side exposure is controlled by API_BIND.
       - API_BIND_HOST=0.0.0.0
+      - API_TOKEN=${API_TOKEN:?Set API_TOKEN in .env (run scripts/generate_secrets.sh)}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
 
       # PostgreSQL runs separately on the host or another server —
@@ -33,13 +36,14 @@ services:
       # automatic on Docker Desktop for Mac/Windows). Set POSTGRES_HOST
       # to an explicit host/IP here if Postgres runs elsewhere entirely.
       - POSTGRES_USER=${POSTGRES_USER:-pesapilot}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pesapilot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-pesapilot}
+      - POSTGRES_SSLMODE=${POSTGRES_SSLMODE:-}
       - POSTGRES_HOST=${POSTGRES_HOST:-auto}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
 
       # Groq
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY:?Set GROQ_API_KEY in .env}
       - LLM_MODEL_FAST=${LLM_MODEL_FAST:-openai/gpt-oss-20b}
       - LLM_MODEL_SMART=${LLM_MODEL_SMART:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.6}
@@ -48,9 +52,9 @@ services:
       - API_TIMEOUT=${API_TIMEOUT:-20}
 
       # WhatsApp
-      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER}
+      - WHATSAPP_MAIN_NUMBER=${WHATSAPP_MAIN_NUMBER:?Set WHATSAPP_MAIN_NUMBER in .env}
       - WHATSAPP_LID=${WHATSAPP_LID:-}
-      - WHATSAPP_PIN=${WHATSAPP_PIN}
+      - WHATSAPP_PIN=${WHATSAPP_PIN:?Set WHATSAPP_PIN in .env}
 
       # Puppeteer/Chromium not used (Baileys connects via websocket, no browser)
 
@@ -58,7 +62,7 @@ services:
       - BAILEYS_AUTH_PATH=/app/.baileys_auth
       - BAILEYS_LOG_LEVEL=${BAILEYS_LOG_LEVEL:-info}
       - WHATSAPP_USE_PAIRING_CODE=${WHATSAPP_USE_PAIRING_CODE:-false}
-      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-true}
+      - WHATSAPP_QR_LINK=${WHATSAPP_QR_LINK:-false}
 
       # Node
       - NODE_ENV=production
@@ -75,7 +79,14 @@ services:
 
       # Timezone
       - TZ=Africa/Nairobi
+    # The process runs as an unprivileged user inside the container and gets
+    # no extra Linux capabilities.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     volumes:
+      # Host folders must be owned by UID/GID 10001: run scripts/prepare_dirs.sh
       - ./data:/app/data
       - ./sessions:/app/.baileys_auth
     # Lets the container resolve "host.docker.internal" to the Docker

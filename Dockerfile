@@ -13,7 +13,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONIOENCODING=utf-8 \
-    PYTHONUTF8=1
+    PYTHONUTF8=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MPLCONFIGDIR=/tmp/matplotlib
 
 # ----------------------------------------------------------------
 # System deps: curl (healthcheck) + fontconfig (chart fonts) + Node.js 20.x
@@ -32,6 +34,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN node --version && npm --version
+
+# ----------------------------------------------------------------
+# Unprivileged runtime user. The app code stays root-owned (read-only to the
+# app); only the session and data folders are writable by this user.
+# The host folders you bind-mount must be owned by this UID/GID — run
+# scripts/prepare_dirs.sh once (or: sudo chown -R 10001:10001 sessions data).
+# ----------------------------------------------------------------
+ARG APP_UID=10001
+ARG APP_GID=10001
+RUN groupadd --gid ${APP_GID} pesapilot \
+    && useradd --uid ${APP_UID} --gid ${APP_GID} --home-dir /home/pesapilot \
+       --create-home --shell /usr/sbin/nologin pesapilot
 
 WORKDIR /app
 
@@ -82,11 +96,14 @@ RUN npm run build
 RUN npm prune --omit=dev \
     && npm cache clean --force
 
-RUN mkdir -p data/raw data/processed data/sessions \
-    && mkdir -p .baileys_auth \
-    && chmod -R 777 .baileys_auth \
-    && chmod -R 777 data
+RUN mkdir -p data/raw data/processed data/sessions .baileys_auth \
+    && chown -R ${APP_UID}:${APP_GID} data .baileys_auth \
+    && chmod 700 .baileys_auth \
+    && chmod 750 data
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    HOME=/home/pesapilot
+
+USER pesapilot
 
 ENTRYPOINT ["./entrypoint_baileys.sh"]

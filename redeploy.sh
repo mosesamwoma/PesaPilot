@@ -7,6 +7,11 @@ read -rp "VPS username: " VPS_USER
 read -rp "VPS host/IP: " VPS_HOST
 read -rp "Remote project path, relative to the remote home [default: PesaPilot]: " VPS_PATH_INPUT
 VPS_PATH="${VPS_PATH_INPUT:-PesaPilot}"
+# Only allow a plain relative/absolute path (no shell metacharacters) since it is used in remote commands.
+if ! printf '%s' "$VPS_PATH" | grep -Eq '^[A-Za-z0-9._/~-]+$'; then
+    echo "Remote path may only contain letters, digits and . _ / ~ -"
+    exit 1
+fi
 
 DO_BUILD=true
 TAIL_LOGS=false
@@ -22,7 +27,8 @@ done
 echo "==> Deploying from $LOCAL_PATH to $VPS_USER@$VPS_HOST:$VPS_PATH"
 
 echo "==> Syncing files..."
-rsync -avz --progress \
+# --chmod keeps .env and code private to your user on the VPS; data/raw (your SMS exports) is never uploaded.
+rsync -avz --progress --chmod=go-rwx \
   --exclude 'node_modules' \
   --exclude 'venv' \
   --exclude 'dist' \
@@ -30,6 +36,8 @@ rsync -avz --progress \
   --exclude 'assets' \
   --exclude '.git' \
   --exclude 'sessions' \
+  --exclude 'data/raw' \
+  --exclude '*.xml' \
   --exclude '.baileys_auth' \
   --exclude '*.log' \
   --exclude '__pycache__' \

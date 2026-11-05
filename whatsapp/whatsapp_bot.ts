@@ -21,6 +21,7 @@ interface Config {
     whatsappLid: string;
     whatsappPin: string;
     apiUrl: string;
+    apiToken: string;
     authPath: string;
     usePairingCode: boolean;
     showQrLink: boolean;
@@ -65,9 +66,10 @@ const config: Config = {
     whatsappLid: process.env.WHATSAPP_LID || '',
     whatsappPin: process.env.WHATSAPP_PIN || '',
     apiUrl: process.env.API_URL || 'http://127.0.0.1:8000',
+    apiToken: (process.env.API_TOKEN || '').trim(),
     authPath: process.env.BAILEYS_AUTH_PATH || './.baileys_auth',
     usePairingCode: (process.env.WHATSAPP_USE_PAIRING_CODE || 'false').toLowerCase() === 'true',
-    showQrLink: (process.env.WHATSAPP_QR_LINK || 'true').toLowerCase() !== 'false',
+    showQrLink: (process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true',
     logLevel: process.env.BAILEYS_LOG_LEVEL || 'info',
 };
 
@@ -80,6 +82,11 @@ function validateConfig(config: Config): void {
 
     if (!config.whatsappPin) {
         console.error('\nERROR: WHATSAPP_PIN is required in .env');
+        process.exit(1);
+    }
+
+    if (!config.apiToken) {
+        console.error('\nERROR: API_TOKEN is required in .env (the API rejects requests without it)');
         process.exit(1);
     }
 }
@@ -125,6 +132,14 @@ const logger = pino({
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Never print the manual-entry PIN (or the SMS pasted after it) to the logs.
+function redactForLog(text: string): string {
+    if (config.whatsappPin && text.startsWith(config.whatsappPin + '-')) {
+        return '[manual SMS entry - content hidden]';
+    }
+    return text;
 }
 
 function stripSuffix(jid: string): string {
@@ -242,6 +257,7 @@ async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data
             timeout: 30000,
             headers: {
                 'Content-Type': 'application/json',
+                Authorization: `Bearer ${config.apiToken}`,
             },
         });
         return response.data;
@@ -249,6 +265,9 @@ async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data
         const err = error as AxiosError;
         if (err.code === 'ECONNREFUSED') {
             throw new Error('API server is not running. Please start the API server.');
+        }
+        if (err.response?.status === 401) {
+            throw new Error('API server rejected the token. Check that API_TOKEN matches in .env.');
         }
         throw error;
     }
@@ -333,7 +352,7 @@ async function handleQuestion(userMessage: string, sock: WASocket, jid: string, 
         console.error(`Error: ${err.message}`);
         await sock.sendMessage(
             jid,
-            { text: err.message.includes('API server') ? `❌ ${err.message}` : '❌ Error processing your request.' },
+            { text: err.message.startsWith('API server') ? `❌ ${err.message}` : '❌ Error processing your request.' },
             { quoted: msg }
         );
         await react(sock, jid, msg.key, '❌');
@@ -364,7 +383,8 @@ async function handleMessage(
         );
 
         console.log(`\nFrom: ${senderIds.join(' / ')}`);
-        console.log(`Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
+        const loggable = redactForLog(userMessage);
+        console.log(`Msg: "${loggable.substring(0, 50)}${loggable.length > 50 ? '...' : ''}"`);
 
         if (!authorized) {
             console.log('Non-main sender — leaving for manual reply');
@@ -470,7 +490,8 @@ async function startBaileys(): Promise<WASocket> {
 
                 if (config.showQrLink) {
                     const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-                    console.log(`\nQR unreadable in your terminal? Open this fallback link in a browser and scan it (third-party service; set WHATSAPP_QR_LINK=false to turn off):\n${qrServerUrl}\n`);
+                    console.warn('\nWARNING: WHATSAPP_QR_LINK=true sends your WhatsApp login QR to a third-party service (api.qrserver.com). Anyone with this link can link a device to your WhatsApp. Set WHATSAPP_QR_LINK=false.');
+                    console.log(`QR fallback link:\n${qrServerUrl}\n`);
                 } else {
                     console.log('\nQR unreadable in your terminal? Set WHATSAPP_USE_PAIRING_CODE=true to link with a code instead.');
                 }

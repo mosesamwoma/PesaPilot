@@ -10,13 +10,16 @@ const MAIN_NUMBER = process.env.WHATSAPP_MAIN_NUMBER;
 const WHATSAPP_LID = process.env.WHATSAPP_LID;
 const WHATSAPP_PIN = process.env.WHATSAPP_PIN;
 const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
+const API_TOKEN = (process.env.API_TOKEN || '').trim();
+const AUTH_HEADERS = { Authorization: `Bearer ${API_TOKEN}` };
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || './.wwebjs_auth';
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
-if (!MAIN_NUMBER || !WHATSAPP_PIN) {
+if (!MAIN_NUMBER || !WHATSAPP_PIN || !API_TOKEN) {
     console.error('\nERROR: Missing required .env variables:');
     if (!MAIN_NUMBER) console.error('  - WHATSAPP_MAIN_NUMBER');
     if (!WHATSAPP_PIN) console.error('  - WHATSAPP_PIN');
+    if (!API_TOKEN) console.error('  - API_TOKEN');
     process.exit(1);
 }
 
@@ -146,9 +149,10 @@ client.on('qr', (qr) => {
         console.warn(`QR rendering error: ${e.message}`);
     }
 
-    if ((process.env.WHATSAPP_QR_LINK || 'true').toLowerCase() !== 'false') {
+    if ((process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true') {
         const qrServerUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-        console.log(`\nQR unreadable in your terminal? Open this fallback link in a browser and scan it (third-party service; set WHATSAPP_QR_LINK=false to turn off):\n${qrServerUrl}\n`);
+        console.warn('\nWARNING: WHATSAPP_QR_LINK=true sends your WhatsApp login QR to a third-party service (api.qrserver.com). Anyone with this link can link a device to your WhatsApp. Set WHATSAPP_QR_LINK=false.');
+        console.log(`QR fallback link:\n${qrServerUrl}\n`);
     }
 
     console.log('⏳ Waiting for scan (scan within 2 minutes)...\n');
@@ -225,7 +229,8 @@ client.on('message', async (message) => {
         );
 
         console.log(`\nFrom: ${senderIds.join(' / ')}`);
-        console.log(`Msg: "${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}"`);
+        const loggable = userMessage.startsWith(WHATSAPP_PIN + '-') ? '[manual SMS entry - content hidden]' : userMessage;
+        console.log(`Msg: "${loggable.substring(0, 50)}${loggable.length > 50 ? '...' : ''}"`);
 
         if (!isAuthorized) {
             console.log('Non-main sender — leaving for manual reply');
@@ -243,7 +248,7 @@ client.on('message', async (message) => {
                 return;
             }
             try {
-                const response = await axios.post(`${API_URL}/parse-sms`, { sms_content: smsContent }, { timeout: 20000 });
+                const response = await axios.post(`${API_URL}/parse-sms`, { sms_content: smsContent }, { timeout: 20000, headers: AUTH_HEADERS });
                 if (response.data.success) {
                     await message.reply(toWhatsAppFormat(response.data.summary));
                     try { await message.react('✅'); } catch (e) {}
@@ -259,7 +264,7 @@ client.on('message', async (message) => {
         }
 
         try {
-            const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 30000 });
+            const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 30000, headers: AUTH_HEADERS });
 
             if (response.data.chart) {
                 try {
@@ -322,7 +327,7 @@ cron.schedule('0 21 * * *', async () => {
         return;
     }
     try {
-        const response = await axios.get(`${API_URL}/daily-summary`, { timeout: 20000 });
+        const response = await axios.get(`${API_URL}/daily-summary`, { timeout: 20000, headers: AUTH_HEADERS });
         const summaryText = response?.data?.summary || '⚠️ Could not generate summary.';
         await client.sendMessage(DAILY_SUMMARY_CHAT_ID, toWhatsAppFormat(summaryText));
         console.log('Daily summary sent successfully\n');
@@ -340,7 +345,7 @@ cron.schedule('0 */2 * * *', async () => {
         return;
     }
     try {
-        const response = await axios.get(`${API_URL}/budget-check`, { timeout: 20000 });
+        const response = await axios.get(`${API_URL}/budget-check`, { timeout: 20000, headers: AUTH_HEADERS });
         const alerts = response?.data?.alerts || [];
 
         if (alerts.length === 0) {

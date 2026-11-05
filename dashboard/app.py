@@ -1,5 +1,6 @@
 import sys
 import os
+import hmac
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -293,15 +294,28 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
         return reply(generate_summary_text(analyzer, days))
 
     result = analyzer.ask_question(question)
-    if result.get('error'):
-        content = f"{clean_response(result.get('error', 'Error'))}"
-    else:
-        content = clean_response(result.get('analysis', 'No response'))
+    content = clean_response(result.get('analysis') or 'No response')
 
     return reply(content, sql=result.get('sql', ''), results=result.get('results', []))
 
 
+def require_dashboard_password() -> None:
+    """Optional login gate. Set DASHBOARD_PASSWORD in .env to turn it on."""
+    expected = os.getenv('DASHBOARD_PASSWORD', '')
+    if not expected or st.session_state.get('_dashboard_authed'):
+        return
+    st.title("PesaPilot")
+    supplied = st.text_input("Password", type="password")
+    if supplied:
+        if hmac.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8')):
+            st.session_state['_dashboard_authed'] = True
+            st.rerun()
+        st.error("Incorrect password.")
+    st.stop()
+
+
 def main() -> None:
+    require_dashboard_password()
     analyzer: MpesaAnalyzer = get_analyzer()
 
     with st.sidebar:

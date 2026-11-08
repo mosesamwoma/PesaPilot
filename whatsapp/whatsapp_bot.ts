@@ -38,6 +38,10 @@ interface DailySummaryResponse {
     summary: string;
 }
 
+interface PeriodSummaryResponse {
+    summary: string;
+}
+
 type QuotableMessage = proto.IWebMessageInfo & { key: proto.IMessageKey };
 
 interface BudgetAlert {
@@ -506,7 +510,7 @@ async function startBaileys(): Promise<WASocket> {
                 console.log('╚═══════════════════════════════════════════════════════╝');
                 console.log(`Bot WhatsApp ID : ${sock.user?.id || 'Unknown'}`);
                 console.log(`API             : ${config.apiUrl}`);
-                console.log('\nCommands: Summary, Help, Bar chart, Pie chart, Trend');
+                console.log('\nCommands: Summary, Weekly summary, Monthly summary, Help, Bar chart, Pie chart, Trend');
                 console.log(`Manual entry: PIN-SMS_CONTENT\n`);
             }
 
@@ -626,6 +630,72 @@ function setupBudgetCheck(): void {
 }
 
 setupBudgetCheck();
+
+
+const DEFAULT_WEEKLY_SUMMARY_CRON = '0 8 * * 1';
+const DEFAULT_MONTHLY_SUMMARY_CRON = '30 8 1 * *';
+const SUMMARY_MAX_ATTEMPTS = 3;
+const SUMMARY_RETRY_DELAY_MS = 10 * 60 * 1000;
+
+function resolveCronExpression(envName: string, fallback: string): string | null {
+    const raw = (process.env[envName] || '').trim();
+    if (!raw) return fallback;
+    if (raw.toLowerCase() === 'off') return null;
+    if (cron.validate(raw)) return raw;
+    console.warn(`${envName} is not a valid cron expression ("${raw}"), using default "${fallback}"`);
+    return fallback;
+}
+
+async function sendPeriodSummary(label: string, endpoint: string, jid: string, attempt = 1): Promise<void> {
+    try {
+        if (!currentSock || !isConnected) {
+            throw new Error('bot is not currently connected');
+        }
+        const response = await callApi<PeriodSummaryResponse>(endpoint);
+        const text = (response?.summary || '').trim();
+        if (!text) {
+            throw new Error('API returned an empty summary');
+        }
+        await currentSock.sendMessage(jid, { text: toWhatsAppFormat(text) });
+        console.log(`${label} summary sent successfully\n`);
+    } catch (error) {
+        const err = error as Error;
+        console.error(`${label} summary attempt ${attempt}/${SUMMARY_MAX_ATTEMPTS} failed: ${err.message}\n`);
+        if (attempt < SUMMARY_MAX_ATTEMPTS) {
+            console.log(`${label} summary will retry in ${SUMMARY_RETRY_DELAY_MS / 60000} minutes\n`);
+            setTimeout(() => {
+                void sendPeriodSummary(label, endpoint, jid, attempt + 1);
+            }, SUMMARY_RETRY_DELAY_MS);
+        } else {
+            console.error(`${label} summary gave up after ${SUMMARY_MAX_ATTEMPTS} attempts\n`);
+        }
+    }
+}
+
+function setupPeriodSummaries(): void {
+    const mainNumericGlobal = stripSuffix(config.mainNumber);
+    const SUMMARY_JID = `${mainNumericGlobal}@s.whatsapp.net`;
+
+    const jobs = [
+        { label: 'Weekly', endpoint: '/weekly-summary', envName: 'WEEKLY_SUMMARY_CRON', fallback: DEFAULT_WEEKLY_SUMMARY_CRON },
+        { label: 'Monthly', endpoint: '/monthly-summary', envName: 'MONTHLY_SUMMARY_CRON', fallback: DEFAULT_MONTHLY_SUMMARY_CRON },
+    ];
+
+    for (const job of jobs) {
+        const expression = resolveCronExpression(job.envName, job.fallback);
+        if (expression === null) {
+            console.log(`${job.label} summary disabled (${job.envName}=off)\n`);
+            continue;
+        }
+        cron.schedule(expression, () => {
+            console.log(`\n⏰ Running scheduled ${job.label.toLowerCase()} summary job...`);
+            void sendPeriodSummary(job.label, job.endpoint, SUMMARY_JID);
+        }, { timezone: 'Africa/Nairobi' });
+        console.log(`${job.label} summary scheduled with "${expression}" (Africa/Nairobi)\n`);
+    }
+}
+
+setupPeriodSummaries();
 
 
 async function shutdown(signal: string, exitCode = 0): Promise<void> {

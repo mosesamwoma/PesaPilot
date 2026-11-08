@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from src.parse_sms import MpesaParser
@@ -53,6 +54,12 @@ CHART_TRIGGER_WORDS = [
     'how did i spend', 'proportion', 'percentage of my spending', 'compare my spending',
     'show me my spending', 'show my spending', 'transaction costs', 'transaction fees',
 ]
+
+PERIOD_REPORT_COMMAND_RE = re.compile(
+    r"^\s*(?:(?:my|the|give me|show me|send me)\s+)*(?:last\s+)?"
+    r"(?P<kind>weekly|monthly)(?:\s+(?:summary|report|overview|recap))\s*\??\s*$"
+)
+
 
 SET_BUDGET_PATTERN = re.compile(
     r'(?:'
@@ -109,6 +116,8 @@ HELP_SECTIONS = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
 **REPORTS**:
   • "Summary" → Last 30 days
   • "Daily summary" / "Today" → Today's overview
+  • "Weekly summary" → Last full week (Mon-Sun) vs the week before
+  • "Monthly summary" → Last full calendar month vs the month before
   • "90 days" / "All time" → Extended periods
 {manual_sms}
 **FORECASTING**:
@@ -343,3 +352,135 @@ def forecast_header(forecast_data: Dict, horizon: int) -> str:
         f"{trend_icon} Trend: {trend}\n"
         f"{risk_icon} Risk Level: {risk}\n"
     )
+
+
+def period_report_kind(question_lower: str) -> Optional[str]:
+    match = PERIOD_REPORT_COMMAND_RE.match(question_lower or '')
+    return match.group('kind') if match else None
+
+
+def _report_label(report: Dict, kind: str) -> str:
+    try:
+        start = date.fromisoformat(report['start'])
+        end = date.fromisoformat(report['end'])
+    except (KeyError, TypeError, ValueError):
+        return ''
+    if kind == 'weekly':
+        return f"{start.strftime('%a %d %b')} - {end.strftime('%a %d %b')}"
+    return start.strftime('%B %Y')
+
+
+def _change_line(label: str, current: float, previous: float, previous_name: str) -> str:
+    if current <= 0 and previous <= 0:
+        return f"{label}: none in either period"
+    if previous <= 0:
+        return f"{label}: KES {current:,.0f} (nothing recorded {previous_name})"
+    diff = current - previous
+    pct = diff / previous * 100
+    if abs(pct) < 0.5:
+        return f"{label}: about the same as {previous_name} (KES {current:,.0f})"
+    direction = 'up' if diff > 0 else 'down'
+    amount = 'more' if diff > 0 else 'less'
+    return f"{label}: {direction} {abs(pct):.0f}% (KES {abs(diff):,.0f} {amount} than {previous_name})"
+
+
+def period_summary_text(report: Dict, kind: str) -> str:
+    title = 'Weekly' if kind == 'weekly' else 'Monthly'
+    previous_name = 'the week before' if kind == 'weekly' else 'the month before'
+    unit = 'week' if kind == 'weekly' else 'month'
+
+    current = (report or {}).get('current') or {}
+    previous = (report or {}).get('previous') or {}
+    label = _report_label(current, kind)
+    heading = f"**{title} Summary**" + (f" ({label})" if label else "")
+
+    if not current or current.get('total_transactions', 0) == 0:
+        return f"{heading}\n\nNo transactions were recorded for this {unit}."
+
+    spent = float(current.get('total_spent') or 0)
+    received = float(current.get('total_received') or 0)
+    fees = float(current.get('total_fees') or 0)
+    debit_count = int(current.get('debit_count') or 0)
+    days = max(int(current.get('days') or 1), 1)
+    net = received - spent
+
+    lines = [
+        heading,
+        "",
+        f"Transactions: {int(current.get('total_transactions') or 0)}",
+        f"Total Spent: KES {spent:,.0f}",
+        f"Total Received: KES {received:,.0f}",
+        f"Net Flow: KES {net:,.0f}",
+        f"M-Pesa Fees: KES {fees:,.0f}",
+    ]
+    if current.get('closing_balance') is not None:
+        lines.append(f"Closing Balance: KES {float(current['closing_balance']):,.0f}")
+
+    lines += [
+        "",
+        f"**Compared with {previous_name}:**",
+        f"- {_change_line('Spending', spent, float(previous.get('total_spent') or 0), previous_name)}",
+        f"- {_change_line('Income', received, float(previous.get('total_received') or 0), previous_name)}",
+        "",
+        "**Highlights:**",
+        f"- Per day: KES {spent / days:,.0f}",
+        f"- Per payment: KES {spent / max(debit_count, 1):,.0f}",
+    ]
+
+    busiest = current.get('busiest_day')
+    if busiest:
+        try:
+            busiest_label = date.fromisoformat(busiest['date']).strftime('%a %d %b')
+        except (KeyError, TypeError, ValueError):
+            busiest_label = ''
+        if busiest_label:
+            lines.append(f"- Busiest day: {busiest_label} (KES {float(busiest['total_spent']):,.0f})")
+
+    biggest = current.get('biggest_expense')
+    if biggest:
+        lines.append(f"- Biggest expense: KES {float(biggest['amount']):,.0f} to {biggest['recipient']}")
+
+    categories = current.get('categories') or []
+    if categories and spent > 0:
+        lines += ["", "**Top categories:**"]
+        for index, row in enumerate(categories[:5], start=1):
+            share = float(row['total_amount']) / spent * 100
+            lines.append(
+                f"{index}. {str(row['category']).title()} - KES {float(row['total_amount']):,.0f} ({share:.0f}%)"
+            )
+
+    merchants = current.get('merchants') or []
+    if merchants:
+        lines += ["", "**Top recipients:**"]
+        for index, row in enumerate(merchants[:5], start=1):
+            lines.append(
+                f"{index}. {row['recipient']} - KES {float(row['total_amount']):,.0f} "
+                f"({int(row['transactions'])}x)"
+            )
+
+    budget_lines = _period_budget_lines(report.get('budgets') or [], categories)
+    if budget_lines:
+        lines += ["", f"**Budgets ({unit}ly):**"]
+        lines += budget_lines
+
+    return "\n".join(lines)
+
+
+def _period_budget_lines(budgets: List[Dict], categories: List[Dict]) -> List[str]:
+    spent_by_category = {str(row['category']).lower(): float(row['total_amount']) for row in categories}
+    rows = []
+    for budget in budgets:
+        try:
+            limit = float(budget.get('limit_amount') or 0)
+        except (TypeError, ValueError):
+            continue
+        if limit <= 0:
+            continue
+        category = str(budget.get('category') or '').lower()
+        spent = spent_by_category.get(category, 0.0)
+        threshold = float(budget.get('alert_threshold_pct') or 80)
+        pct = spent / limit * 100
+        icon = "🔴" if pct >= 100 else "🟡" if pct >= threshold else "🟢"
+        rows.append((pct, f"{icon} {category.title()}: KES {spent:,.0f} / {limit:,.0f} ({pct:.0f}%)"))
+    rows.sort(key=lambda item: item[0], reverse=True)
+    return [line for _, line in rows[:8]]

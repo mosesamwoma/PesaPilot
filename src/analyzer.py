@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import date
 from typing import Dict, List, Optional, Union, cast
 
 import pandas as pd
@@ -12,6 +13,7 @@ from src.sql_guard import is_safe_select_sql
 from src import forecasting
 from src import anomaly_detector
 from src import budget_monitor
+from src.timeutil import report_window, window_before
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +327,17 @@ class MpesaAnalyzer:
 
     def get_budgets_overview(self) -> List[Dict]:
         return self.db.get_budget_status()
+
+    def get_period_report(self, kind: str, today: Optional[date] = None) -> Dict:
+        start, end = report_window(kind, today)
+        previous_start, previous_end = window_before(kind, start)
+        current = self.db.get_period_report(start, end)
+        previous = self.db.get_period_report(previous_start, previous_end)
+        budgets = [
+            row for row in self.db.get_budget_status()
+            if str(row.get('period') or 'monthly').lower() == kind
+        ]
+        return {'kind': kind, 'current': current, 'previous': previous, 'budgets': budgets}
 
     def check_budget_alerts(self) -> List[Dict]:
         try:

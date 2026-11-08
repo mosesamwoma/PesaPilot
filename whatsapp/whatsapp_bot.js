@@ -166,7 +166,7 @@ client.on('ready', () => {
     console.log('╚═══════════════════════════════════════════════════════╝');
     console.log(`Bot WhatsApp ID : ${client.info.wid._serialized}`);
     console.log(`API             : ${API_URL}`);
-    console.log('\nCommands: Summary, Help, Bar chart, Pie chart, Trend');
+    console.log('\nCommands: Summary, Weekly summary, Monthly summary, Help, Bar chart, Pie chart, Trend');
     console.log(`Manual entry: PIN-SMS_CONTENT\n`);
 });
 
@@ -365,6 +365,63 @@ cron.schedule('0 */2 * * *', async () => {
 }, { timezone: 'Africa/Nairobi' });
 
 console.log('Budget check scheduled every 2 hours (Africa/Nairobi)\n');
+
+const DEFAULT_WEEKLY_SUMMARY_CRON = '0 8 * * 1';
+const DEFAULT_MONTHLY_SUMMARY_CRON = '30 8 1 * *';
+const SUMMARY_MAX_ATTEMPTS = 3;
+const SUMMARY_RETRY_DELAY_MS = 10 * 60 * 1000;
+
+function resolveCronExpression(envName, fallback) {
+    const raw = (process.env[envName] || '').trim();
+    if (!raw) return fallback;
+    if (raw.toLowerCase() === 'off') return null;
+    if (cron.validate(raw)) return raw;
+    console.warn(`${envName} is not a valid cron expression ("${raw}"), using default "${fallback}"`);
+    return fallback;
+}
+
+async function sendPeriodSummary(label, endpoint, attempt = 1) {
+    try {
+        if (!isReady) {
+            throw new Error('bot is not currently connected');
+        }
+        const response = await axios.get(`${API_URL}${endpoint}`, { timeout: 30000, headers: AUTH_HEADERS });
+        const text = ((response && response.data && response.data.summary) || '').trim();
+        if (!text) {
+            throw new Error('API returned an empty summary');
+        }
+        await client.sendMessage(DAILY_SUMMARY_CHAT_ID, toWhatsAppFormat(text));
+        console.log(`${label} summary sent successfully\n`);
+    } catch (error) {
+        console.error(`${label} summary attempt ${attempt}/${SUMMARY_MAX_ATTEMPTS} failed: ${error.message}\n`);
+        if (attempt < SUMMARY_MAX_ATTEMPTS) {
+            console.log(`${label} summary will retry in ${SUMMARY_RETRY_DELAY_MS / 60000} minutes\n`);
+            setTimeout(() => {
+                sendPeriodSummary(label, endpoint, attempt + 1);
+            }, SUMMARY_RETRY_DELAY_MS);
+        } else {
+            console.error(`${label} summary gave up after ${SUMMARY_MAX_ATTEMPTS} attempts\n`);
+        }
+    }
+}
+
+const PERIOD_SUMMARY_JOBS = [
+    { label: 'Weekly', endpoint: '/weekly-summary', envName: 'WEEKLY_SUMMARY_CRON', fallback: DEFAULT_WEEKLY_SUMMARY_CRON },
+    { label: 'Monthly', endpoint: '/monthly-summary', envName: 'MONTHLY_SUMMARY_CRON', fallback: DEFAULT_MONTHLY_SUMMARY_CRON },
+];
+
+for (const job of PERIOD_SUMMARY_JOBS) {
+    const expression = resolveCronExpression(job.envName, job.fallback);
+    if (expression === null) {
+        console.log(`${job.label} summary disabled (${job.envName}=off)\n`);
+        continue;
+    }
+    cron.schedule(expression, () => {
+        console.log(`\n⏰ Running scheduled ${job.label.toLowerCase()} summary job...`);
+        sendPeriodSummary(job.label, job.endpoint);
+    }, { timezone: 'Africa/Nairobi' });
+    console.log(`${job.label} summary scheduled with "${expression}" (Africa/Nairobi)\n`);
+}
 
 function splitMessage(text, maxLength) {
     if (text.length <= maxLength) return [text];

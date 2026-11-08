@@ -24,6 +24,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **Budget goals with alerts** — proactive WhatsApp pings near/over budget
 - **WhatsApp Bot** — same questions, charts, advice, and manual SMS logging, from WhatsApp
 - **Daily summary** — 9 PM (Africa/Nairobi) end-of-day digest
+- **Weekly and monthly summaries** — every Monday 08:00 (previous Monday–Sunday) and on the 1st at 08:30 (previous calendar month), each compared with the period before, with top categories, top recipients and budget standing
 - **Two-tier AI** — fast model for chat/insights, smarter model for SQL/analysis/advice
 - **Authenticated API** — every route except `/health` requires `API_TOKEN`; loopback-only by default (see [Security](#security))
 - **SQL safety guard** — every LLM-generated query is validated `SELECT`/`WITH`-only and runs in a read-only transaction with a 10 s timeout
@@ -109,6 +110,8 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 | `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature |
 | `LLM_MAX_TOKENS` | `1536` | Max tokens per response |
 | `TZ` | `Africa/Nairobi` | Log timestamps, daily-summary cron |
+| `WEEKLY_SUMMARY_CRON` | `0 8 * * 1` | When the weekly summary is sent (5-field cron, Africa/Nairobi). `off` disables it |
+| `MONTHLY_SUMMARY_CRON` | `30 8 1 * *` | When the monthly summary is sent (5-field cron, Africa/Nairobi). `off` disables it |
 | `WHATSAPP_USE_PAIRING_CODE` | `false` | Pairing code instead of QR (Baileys) |
 | `BAILEYS_AUTH_PATH` | `./.baileys_auth` | Baileys session storage |
 | `WWEBJS_AUTH_PATH` | `./.wwebjs_auth` | whatsapp-web.js session storage |
@@ -267,10 +270,33 @@ Uses [Meta Prophet](https://facebook.github.io/prophet/) to project spending 7 o
 | `What should I invest in?` | Sacco / MMF / T-Bill suggestion |
 | `forecast` / `forecast 30 days` | Forecast with trend, risk, AI summary |
 | `Summary` / `Daily summary` / `Today` | Period or daily digest |
+| `Weekly summary` | Last full week (Mon–Sun) vs the week before |
+| `Monthly summary` | Last full calendar month vs the month before |
 | `help` | Full command list |
 | `1234-MJ7XK2P9 Confirmed...` | Manual SMS: `PIN-PASTE_SMS_HERE` |
 
 Anyone texting the number who isn't `WHATSAPP_MAIN_NUMBER`/`WHATSAPP_LID` is left alone — no auto-reply, so you can answer manually.
+
+### Scheduled summaries
+
+The bot sends these to `WHATSAPP_MAIN_NUMBER` on its own, using cron in `Africa/Nairobi` time:
+
+| Job | Default schedule | Covers | Env override |
+|---|---|---|---|
+| Daily | `0 21 * * *` | Today | not configurable |
+| Weekly | `0 8 * * 1` (Monday 08:00) | Previous Monday to Sunday | `WEEKLY_SUMMARY_CRON` |
+| Monthly | `30 8 1 * *` (1st, 08:30) | Previous calendar month | `MONTHLY_SUMMARY_CRON` |
+
+Each weekly and monthly report shows totals, net flow, M-Pesa fees, closing balance, the change against the period before, busiest day, biggest expense, top categories, top recipients, and how each weekly or monthly budget ended up. If the bot is offline or the API fails when a job fires, it retries up to 3 times, 10 minutes apart. Set a variable to `off` to disable that job, or to any valid 5-field cron expression to move it. An invalid expression is ignored with a warning and the default is used.
+
+The same reports are available on request with `Weekly summary` and `Monthly summary`, and on demand over the API:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/weekly-summary
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/monthly-summary
+```
+
+They return `{"summary": "..."}`, or `503` if the database could not be read.
 
 ---
 

@@ -17,7 +17,8 @@ from src.chat_common import (
     ANOMALY_KEYWORDS, BUDGET_KEYWORDS, BUDGET_STATUS_KEYWORDS, CHART_TRIGGER_WORDS, FORECAST_KEYWORDS,
     INVEST_KEYWORDS, budget_status_text, clean_response, daily_summary_text, forecast_header, help_text,
     is_safe_question, is_set_budget_command, is_valid_question_length, matches_any_keyword,
-    parse_days_from_question, parse_forecast_horizon, parse_set_budget, range_summary_text,
+    parse_days_from_question, parse_forecast_horizon, parse_set_budget, period_report_kind, period_summary_text,
+    range_summary_text,
 )
 from src.parse_sms import MpesaParser
 
@@ -113,6 +114,14 @@ def generate_daily_summary_text(analyzer: "MpesaAnalyzer") -> str:
     except Exception as e:
         logger.error(f"Daily summary error: {e}")
         return "Could not generate summary. Please try again."
+
+
+def generate_period_summary_text(analyzer: "MpesaAnalyzer", kind: str) -> str:
+    try:
+        return period_summary_text(analyzer.get_period_report(kind), kind)
+    except Exception as e:
+        logger.error(f"{kind} summary error: {e}")
+        return "Could not generate that summary. Please try again."
 
 
 def generate_summary_text(analyzer: "MpesaAnalyzer", days: Optional[int]) -> str:
@@ -279,6 +288,10 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
 
     if _DAILY_COMMAND_RE.match(question_lower):
         return reply(generate_daily_summary_text(analyzer))
+
+    period_kind = period_report_kind(question_lower)
+    if period_kind:
+        return reply(generate_period_summary_text(analyzer, period_kind))
 
     if matches_any_keyword(question_lower, CHART_TRIGGER_WORDS):
         chart_result = analyzer.generate_dynamic_chart(question, dark=True)

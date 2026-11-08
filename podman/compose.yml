@@ -52,6 +52,10 @@ services:
       - WHATSAPP_LID=${WHATSAPP_LID:-}
       - WHATSAPP_PIN=${WHATSAPP_PIN:?Set WHATSAPP_PIN in .env}
 
+      # Scheduled summaries (cron, Africa/Nairobi; set to off to disable)
+      - WEEKLY_SUMMARY_CRON=${WEEKLY_SUMMARY_CRON:-}
+      - MONTHLY_SUMMARY_CRON=${MONTHLY_SUMMARY_CRON:-}
+
       # Puppeteer/Google Chrome — this is the whole reason this file exists
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 

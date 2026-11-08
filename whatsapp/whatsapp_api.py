@@ -28,7 +28,8 @@ from src.chat_common import (
     ANOMALY_KEYWORDS, BUDGET_KEYWORDS, BUDGET_STATUS_KEYWORDS, CHART_TRIGGER_WORDS, FORECAST_KEYWORDS,
     INVEST_KEYWORDS, budget_status_text, clean_response, daily_summary_text, forecast_header, help_text,
     is_safe_question, is_set_budget_command, is_valid_question_length, matches_any_keyword,
-    parse_days_from_question, parse_forecast_horizon, parse_set_budget, range_summary_text,
+    parse_days_from_question, parse_forecast_horizon, parse_set_budget, period_report_kind, period_summary_text,
+    range_summary_text,
 )
 from src.security import extract_token, load_api_token, token_matches
 from src.timeutil import now_nairobi
@@ -231,6 +232,18 @@ def generate_daily_summary() -> str:
         return "Could not generate summary. Please try again."
 
 
+def generate_period_summary(kind: str) -> str:
+    return period_summary_text(get_analyzer().get_period_report(kind), kind)
+
+
+def period_summary_response(kind: str) -> dict:
+    try:
+        return {"summary": generate_period_summary(kind)}
+    except Exception as e:
+        logger.error(f"{kind} summary error: {e}")
+        raise HTTPException(status_code=503, detail="Summary unavailable") from e
+
+
 _SUMMARY_COMMAND_RE = re.compile(r'\bsummary\b')
 _DAILY_COMMAND_RE = re.compile(
     r"^\s*(?:(?:my|the|give me|show me)\s+)*(?:daily|today(?:'s)?)(?:\s+(?:summary|overview|report|spending))?\s*\??\s*$"
@@ -269,6 +282,16 @@ if _cors_origins:
 @router.get("/daily-summary")
 def daily_summary():
     return {"summary": generate_daily_summary()}
+
+
+@router.get("/weekly-summary")
+def weekly_summary():
+    return period_summary_response("weekly")
+
+
+@router.get("/monthly-summary")
+def monthly_summary():
+    return period_summary_response("monthly")
 
 
 @router.get("/budget-check", response_model=BudgetAlertsResponse)
@@ -392,6 +415,14 @@ def ask_question(request: QuestionRequest):
 
         if _DAILY_COMMAND_RE.match(question_lower):
             return reply(generate_daily_summary())
+
+        period_kind = period_report_kind(question_lower)
+        if period_kind:
+            try:
+                return reply(generate_period_summary(period_kind))
+            except Exception as e:
+                logger.error(f"{period_kind} summary error: {e}")
+                return reply("Could not generate that summary. Please try again.")
 
         if matches_any_keyword(question_lower, CHART_TRIGGER_WORDS):
             chart_result = az.generate_dynamic_chart(question, dark=False)

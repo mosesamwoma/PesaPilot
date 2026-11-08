@@ -432,6 +432,106 @@ class PostgresDB:
             logger.error(f"get_range_summary failed: {e}")
             return {}
 
+    def get_period_report(self, start: date, end: date, top_n: int = 5) -> Dict:
+        report: Dict = {
+            'start': start.isoformat(),
+            'end': (end - timedelta(days=1)).isoformat(),
+            'days': (end - start).days,
+            'total_transactions': 0,
+            'total_spent': 0.0,
+            'total_received': 0.0,
+            'total_fees': 0.0,
+            'debit_count': 0,
+            'credit_count': 0,
+            'closing_balance': None,
+            'categories': [],
+            'merchants': [],
+            'biggest_expense': None,
+            'busiest_day': None,
+        }
+        try:
+            data = self._fetch_all(
+                "SELECT amount, balance, transaction_cost, type, recipient, merchant_category, timestamp "
+                "FROM transactions WHERE timestamp >= %s AND timestamp < %s ORDER BY timestamp ASC",
+                (
+                    datetime(start.year, start.month, start.day),
+                    datetime(end.year, end.month, end.day),
+                ),
+            )
+            df = pd.DataFrame(data)
+            if df.empty:
+                return report
+
+            df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601', errors='coerce')
+            debits = df[df['type'].isin(SPENDING_TYPES)].copy()
+            credits = df[df['type'] == 'credit']
+
+            report['total_transactions'] = int(len(df))
+            report['debit_count'] = int(len(debits))
+            report['credit_count'] = int(len(credits))
+            report['total_spent'] = float(debits['amount'].sum()) if not debits.empty else 0.0
+            report['total_received'] = float(credits['amount'].sum()) if not credits.empty else 0.0
+            report['total_fees'] = float(debits['transaction_cost'].fillna(0).sum()) if not debits.empty else 0.0
+
+            balances = df['balance'].dropna()
+            if not balances.empty:
+                report['closing_balance'] = float(balances.iloc[-1])
+
+            if debits.empty:
+                return report
+
+            debits['merchant_category'] = debits['merchant_category'].fillna('other')
+            debits['recipient'] = debits['recipient'].fillna('Unknown')
+
+            by_category = (debits.groupby('merchant_category')
+                           .agg(total_amount=('amount', 'sum'), transaction_count=('amount', 'count'))
+                           .reset_index()
+                           .sort_values('total_amount', ascending=False))
+            report['categories'] = [
+                {
+                    'category': str(row['merchant_category']),
+                    'total_amount': float(row['total_amount']),
+                    'transaction_count': int(row['transaction_count']),
+                }
+                for _, row in by_category.iterrows()
+            ]
+
+            by_merchant = (debits.groupby('recipient')
+                           .agg(total_amount=('amount', 'sum'), transactions=('amount', 'count'))
+                           .reset_index()
+                           .sort_values('total_amount', ascending=False)
+                           .head(top_n))
+            report['merchants'] = [
+                {
+                    'recipient': str(row['recipient']),
+                    'total_amount': float(row['total_amount']),
+                    'transactions': int(row['transactions']),
+                }
+                for _, row in by_merchant.iterrows()
+            ]
+
+            biggest = debits.loc[debits['amount'].idxmax()]
+            report['biggest_expense'] = {
+                'amount': float(biggest['amount']),
+                'recipient': str(biggest['recipient']),
+                'timestamp': biggest['timestamp'].isoformat() if pd.notna(biggest['timestamp']) else None,
+            }
+
+            dated = debits.dropna(subset=['timestamp']).copy()
+            if not dated.empty:
+                dated['day'] = dated['timestamp'].dt.date
+                per_day = dated.groupby('day')['amount'].sum()
+                top_day = per_day.idxmax()
+                report['busiest_day'] = {
+                    'date': top_day.isoformat(),
+                    'total_spent': float(per_day.loc[top_day]),
+                }
+
+            return report
+        except Exception as e:
+            logger.error(f"get_period_report failed: {e}")
+            raise
+
     def get_spending_by_category(self, days: Optional[int] = 30) -> List[Dict]:
         since = since_nairobi(days)
         try:

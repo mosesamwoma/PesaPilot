@@ -56,6 +56,10 @@ services:
       - WHATSAPP_LID=${WHATSAPP_LID:-}
       - WHATSAPP_PIN=${WHATSAPP_PIN:?Set WHATSAPP_PIN in .env}
 
+      # Scheduled summaries (cron, Africa/Nairobi; set to off to disable)
+      - WEEKLY_SUMMARY_CRON=${WEEKLY_SUMMARY_CRON:-}
+      - MONTHLY_SUMMARY_CRON=${MONTHLY_SUMMARY_CRON:-}
+
       # Puppeteer/Chromium not used (Baileys connects via websocket, no browser)
 
       # Baileys auth storage path (inside the container)

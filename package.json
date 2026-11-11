@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node dist/whatsapp_bot.js",
     "start:wwebjs": "node whatsapp/whatsapp_bot.js",
-    "dev": "nodemon --exec tsx whatsapp/whatsapp_bot.ts",
+    "dev": "nodemon --exec ts-node --esm whatsapp/whatsapp_bot.ts",
     "dev:wwebjs": "nodemon whatsapp/whatsapp_bot.js",
     "build": "tsc",
     "postbuild": "echo '{\"type\":\"module\"}' > dist/package.json",
@@ -58,8 +58,7 @@
     "@types/pino": "^7.0.5",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^5.9.3"
   },
   "allowScripts": {
     "@whiskeysockets/baileys@7.0.0-rc14": true,

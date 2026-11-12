@@ -97,6 +97,22 @@ function validateConfig(config: Config): void {
 
 validateConfig(config);
 
+function checkApiUrl(rawUrl: string): void {
+    let parsed: URL;
+    try {
+        parsed = new URL(rawUrl);
+    } catch {
+        console.error('\nERROR: API_URL is not a valid URL');
+        process.exit(1);
+    }
+    const isLoopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !isLoopback) {
+        console.warn(`\nWARNING: API_URL (${parsed.protocol}//${parsed.host}) is not HTTPS and not localhost. The API token would travel unencrypted. Use https:// or keep the API on the same machine.\n`);
+    }
+}
+
+checkApiUrl(config.apiUrl);
+
 
 function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');

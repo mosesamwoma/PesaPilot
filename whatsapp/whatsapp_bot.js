@@ -23,6 +23,20 @@ if (!MAIN_NUMBER || !WHATSAPP_PIN || !API_TOKEN) {
     process.exit(1);
 }
 
+(function checkApiUrl(rawUrl) {
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    } catch (e) {
+        console.error('\nERROR: API_URL is not a valid URL');
+        process.exit(1);
+    }
+    const isLoopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !isLoopback) {
+        console.warn(`\nWARNING: API_URL (${parsed.protocol}//${parsed.host}) is not HTTPS and not localhost. The API token would travel unencrypted. Use https:// or keep the API on the same machine.\n`);
+    }
+})(API_URL);
+
 function digitsOnly(value) {
     return (value || '').replace(/@.*$/, '').replace(/:\d+$/, '').replace(/\D/g, '');
 }

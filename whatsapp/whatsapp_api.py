@@ -31,7 +31,7 @@ from src.chat_common import (
     parse_days_from_question, parse_forecast_horizon, parse_set_budget, period_report_kind, period_summary_text,
     range_summary_text,
 )
-from src.security import extract_token, load_api_token, token_matches
+from src.security import SlidingWindowLimiter, env_int, extract_token, load_api_token, token_matches
 from src.timeutil import now_nairobi
 
 load_dotenv()
@@ -50,6 +50,11 @@ API_TOKEN = load_api_token()
 
 MAX_QUESTION_CHARS = 2000
 MAX_SMS_CHARS = 2000
+MAX_BODY_BYTES = 32 * 1024
+
+_auth_failures = SlidingWindowLimiter(env_int('API_AUTH_FAIL_LIMIT', 10), 300)
+_request_limiter = SlidingWindowLimiter(env_int('API_RATE_LIMIT_PER_MIN', 120), 60)
+_ai_limiter = SlidingWindowLimiter(env_int('API_AI_RATE_LIMIT_PER_MIN', 30), 60)
 
 analyzer: Optional[MpesaAnalyzer] = None
 _analyzer_lock = threading.Lock()
@@ -64,13 +69,34 @@ def get_analyzer() -> MpesaAnalyzer:
     return analyzer
 
 
+def _too_many(limiter: SlidingWindowLimiter, key: str) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail="Too many requests",
+        headers={"Retry-After": str(limiter.retry_after(key))},
+    )
+
+
 def require_api_key(request: Request) -> None:
-    if not token_matches(extract_token(request.headers), API_TOKEN):
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    client = request.client.host if request.client else 'unknown'
+    if token_matches(extract_token(request.headers), API_TOKEN):
+        if not _request_limiter.hit('all'):
+            raise _too_many(_request_limiter, 'all')
+        return
+    if _auth_failures.blocked(client):
+        raise _too_many(_auth_failures, client)
+    _auth_failures.hit(client)
+    logger.warning("Rejected API request with a missing or wrong token from %s", client)
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def limit_ai_calls() -> None:
+    if not _ai_limiter.hit('all'):
+        raise _too_many(_ai_limiter, 'all')
 
 
 class QuestionRequest(BaseModel):
@@ -268,6 +294,60 @@ app = FastAPI(
 )
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
+
+class BodyLimitMiddleware:
+    def __init__(self, asgi_app, max_bytes: int):
+        self.asgi_app = asgi_app
+        self.max_bytes = max_bytes
+
+    async def _reject(self, send) -> None:
+        body = b'{"detail":"Request body too large"}'
+        await send({
+            'type': 'http.response.start', 'status': 413,
+            'headers': [(b'content-type', b'application/json'), (b'content-length', str(len(body)).encode())],
+        })
+        await send({'type': 'http.response.body', 'body': body})
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            await self.asgi_app(scope, receive, send)
+            return
+        for name, value in scope.get('headers', []):
+            if name == b'content-length':
+                try:
+                    too_big = int(value) > self.max_bytes
+                except ValueError:
+                    too_big = True
+                if too_big:
+                    await self._reject(send)
+                    return
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message['type'] == 'http.request':
+                received += len(message.get('body', b''))
+                if received > self.max_bytes:
+                    raise HTTPException(status_code=413, detail="Request body too large")
+            return message
+
+        await self.asgi_app(scope, limited_receive, send)
+
+
+app.add_middleware(BodyLimitMiddleware, max_bytes=MAX_BODY_BYTES)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
 _cors_origins = [o.strip() for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]
 
 if _cors_origins:
@@ -294,7 +374,7 @@ def monthly_summary():
     return period_summary_response("monthly")
 
 
-@router.get("/budget-check", response_model=BudgetAlertsResponse)
+@router.get("/budget-check", response_model=BudgetAlertsResponse, dependencies=[Depends(limit_ai_calls)])
 def budget_check():
     try:
         alerts = get_analyzer().check_budget_alerts()
@@ -322,7 +402,7 @@ def create_budget(request: SetBudgetRequest):
     return result
 
 
-@router.get("/anomalies")
+@router.get("/anomalies", dependencies=[Depends(limit_ai_calls)])
 def list_anomalies(days: int = Query(90, ge=1, le=1000)):
     return get_analyzer().get_smart_anomalies(days=days, force_refresh=False)
 
@@ -333,7 +413,7 @@ def health():
     return {"status": "healthy", "timestamp": now_nairobi().isoformat()}
 
 
-@router.post("/ask", response_model=AnalysisResponse)
+@router.post("/ask", response_model=AnalysisResponse, dependencies=[Depends(limit_ai_calls)])
 def ask_question(request: QuestionRequest):
     try:
         question = request.question.strip()
@@ -489,4 +569,7 @@ app.include_router(router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=API_BIND, port=WHATSAPP_API_PORT, log_level="warning", server_header=False)
+    uvicorn.run(
+        app, host=API_BIND, port=WHATSAPP_API_PORT, log_level="warning",
+        server_header=False, timeout_keep_alive=5,
+    )

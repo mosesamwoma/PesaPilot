@@ -1,7 +1,6 @@
 #!/bin/bash
 
 set -e
-# Files created by the bot (WhatsApp session keys) are private to this user.
 umask 077
 
 RED='\033[0;31m'
@@ -53,7 +52,6 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Refuse the example/placeholder values that ship in .env.example.
 _is_placeholder() {
     local v
     v="$(echo "$1" | tr '[:upper:]' '[:lower:]')"

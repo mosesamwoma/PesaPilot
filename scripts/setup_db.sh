@@ -5,13 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCHEMA_FILE="$PROJECT_ROOT/schema/init_db.sql"
 
-# Read a KEY from .env without sourcing it (values may contain shell characters).
 env_value() {
     [ -f "$PROJECT_ROOT/.env" ] || return 0
     grep -E "^$1=" "$PROJECT_ROOT/.env" | tail -n1 | cut -d= -f2- || true
 }
 
-# Settings come from the environment, then from .env. There is no default password.
 PGSQL_USER="${PGSQL_USER:-$(env_value POSTGRES_USER)}"
 PGSQL_PASSWORD="${PGSQL_PASSWORD:-$(env_value POSTGRES_PASSWORD)}"
 PGSQL_DB="${PGSQL_DB:-$(env_value POSTGRES_DB)}"
@@ -29,8 +27,6 @@ if [ "${#PGSQL_PASSWORD}" -lt 12 ]; then
     echo "POSTGRES_PASSWORD must be at least 12 characters."
     exit 1
 fi
-# The password is embedded in a psql script, so keep it free of quoting characters
-# (generate_secrets.sh produces compatible passwords).
 if ! printf '%s' "$PGSQL_PASSWORD" | grep -Eq '^[A-Za-z0-9._~@%^+=:,-]+$'; then
     echo "POSTGRES_PASSWORD may only contain letters, digits and . _ ~ @ % ^ + = : , -"
     echo "Use scripts/generate_secrets.sh --rotate to create a compatible one."
@@ -107,8 +103,6 @@ run_psql() {
     fi
 }
 
-# Create the role if missing, always (re)apply the password so rotation works,
-# and create the database if missing. Identifiers/values are quoted by format().
 run_psql -d postgres <<SQL
 \set u '$PGSQL_USER'
 \set pw '$PGSQL_PASSWORD'

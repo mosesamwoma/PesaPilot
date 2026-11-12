@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Creates .env from .env.example with fresh random secrets (file mode 600).
-#
-#   scripts/generate_secrets.sh            # create .env (refuses to overwrite)
-#   scripts/generate_secrets.sh --rotate   # replace the secrets in an existing .env
-#
-# Rotates only what can be generated locally: POSTGRES_PASSWORD, API_TOKEN,
-# WHATSAPP_PIN. GROQ_API_KEY must be rotated at console.groq.com, and WhatsApp
-# linked devices on your phone (Settings -> Linked Devices). After rotating the
-# database password run scripts/setup_db.sh to apply it to PostgreSQL.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

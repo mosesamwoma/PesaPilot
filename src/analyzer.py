@@ -419,7 +419,6 @@ class MpesaAnalyzer:
         balance = tx.get('balance')
         category = tx.get('merchant_category') or 'other'
         cost = tx.get('transaction_cost') or 0
-        # Some confirmations (e.g. MPESA Jumbe) do not state the balance — say so instead of showing 0.
         balance_line = (
             f"Balance: KES {balance:,.2f}\n" if balance is not None
             else "Balance: not shown in this SMS\n"

@@ -84,14 +84,10 @@ class MpesaParser:
         r'sim card has been activated',
         re.IGNORECASE | re.MULTILINE,
     )
-    # "ABC1234DEF Confirmed." and "Congratulations! ABC1234DEF confirmed." both carry the
-    # 10-character transaction code that identifies a real M-Pesa transaction.
     _TX_HEADER_RE = re.compile(r'^\W*(?:(?i:congratulations)\W+)?([A-Z0-9]{10})\s+(?i:confirmed)\b')
     _REVERSAL_RE = re.compile(r'reversal of transaction|has been reversed|successfully reversed', re.IGNORECASE)
     _MANUAL_PREFIX_RE = re.compile(r'^\s*\d{3,8}\s*-\s*')
 
-    # Senders (letters only, lower-case) whose inbox messages are M-Pesa transactions.
-    # "MPESA JUMBE" is Safaricom's public-friendly mirror of the same transactions.
     _MPESA_SENDERS = frozenset({'mpesa', 'mpesajumbe'})
     _JUMBE_RE = re.compile(r'\bJumbeID\b|\bYou sent\s*:', re.IGNORECASE)
     _JUMBE_RECIPIENT_RE = re.compile(
@@ -125,8 +121,6 @@ class MpesaParser:
             logger.warning("No M-Pesa transactions found.")
             return df
 
-        # The same transaction can arrive twice (e.g. the normal M-Pesa SMS and its "MPESA JUMBE"
-        # copy, which has no balance or fee). Keep the richest copy, whichever came first.
         df['_has_balance'] = df['balance'].notna()
         df = df.sort_values('_has_balance', ascending=False, kind='stable')
         df = df.drop_duplicates(subset=['transaction_id'], keep='first').drop(columns='_has_balance')

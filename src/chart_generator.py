@@ -23,8 +23,6 @@ from src.timeutil import now_nairobi
 
 logger = logging.getLogger(__name__)
 
-# matplotlib's pyplot interface keeps global state and is not thread-safe. The API runs request
-# handlers in a thread pool, so every pyplot call in the project goes through this lock.
 PLOT_LOCK = threading.RLock()
 
 CHART_TYPES = (

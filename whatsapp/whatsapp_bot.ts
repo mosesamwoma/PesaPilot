@@ -154,7 +154,6 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Never print the manual-entry PIN (or the SMS pasted after it) to the logs.
 function redactForLog(text: string): string {
     if (config.whatsappPin && text.startsWith(config.whatsappPin + '-')) {
         return '[manual SMS entry - content hidden]';

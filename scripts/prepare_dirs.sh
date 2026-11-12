@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Prepares the bind-mounted folders for the non-root container user (UID/GID 10001).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

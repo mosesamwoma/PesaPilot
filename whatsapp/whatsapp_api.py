@@ -45,7 +45,6 @@ sns.set_palette("husl")
 WHATSAPP_API_PORT = int(os.getenv('WHATSAPP_API_PORT', 8000))
 API_BIND = os.getenv('API_BIND_HOST', '127.0.0.1')
 
-# The API refuses to start without a strong API_TOKEN: every route except /health requires it.
 API_TOKEN = load_api_token()
 
 MAX_QUESTION_CHARS = 2000
@@ -287,7 +286,6 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-# Interactive docs and the OpenAPI schema are disabled: they would advertise every route.
 app = FastAPI(
     title="PesaPilot API", version="1.2", lifespan=lifespan,
     docs_url=None, redoc_url=None, openapi_url=None,
@@ -409,7 +407,6 @@ def list_anomalies(days: int = Query(90, ge=1, le=1000)):
 
 @app.get("/health")
 def health():
-    # Public on purpose (container health check) and deliberately minimal.
     return {"status": "healthy", "timestamp": now_nairobi().isoformat()}
 
 

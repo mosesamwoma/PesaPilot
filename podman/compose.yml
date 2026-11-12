@@ -27,6 +27,9 @@ services:
       - API_BIND_HOST=0.0.0.0
       - API_TOKEN=${API_TOKEN:?Set API_TOKEN in .env (run scripts/generate_secrets.sh)}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - API_AUTH_FAIL_LIMIT=${API_AUTH_FAIL_LIMIT:-10}
+      - API_RATE_LIMIT_PER_MIN=${API_RATE_LIMIT_PER_MIN:-120}
+      - API_AI_RATE_LIMIT_PER_MIN=${API_AI_RATE_LIMIT_PER_MIN:-30}
 
       # PostgreSQL runs separately on the host. POSTGRES_HOST=auto lets
       # src/database.py detect Podman (via /run/.containerenv) and

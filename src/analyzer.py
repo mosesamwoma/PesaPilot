@@ -9,6 +9,7 @@ from src.chat_common import normalize_category
 from src.database import PostgresDB
 from src.groq_client import GroqClient
 from src.parse_sms import MpesaParser
+from src.security import sanitize_for_prompt
 from src.sql_guard import is_safe_select_sql
 from src import forecasting
 from src import anomaly_detector
@@ -53,7 +54,7 @@ def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> D
         if group_col in sample and amount_col:
             totals: Dict = {}
             for r in results:
-                key = r.get(group_col) or 'Unknown'
+                key = sanitize_for_prompt(r.get(group_col) or 'Unknown')
                 val = r.get(amount_col)
                 if isinstance(val, (int, float)):
                     totals[key] = totals.get(key, 0) + val
@@ -130,12 +131,12 @@ class MpesaAnalyzer:
                 for c in sorted(category_data, key=lambda x: x.get('total_amount', 0), reverse=True)[:6]:
                     amt = c.get('total_amount', 0)
                     pct = (amt / total_spent * 100) if total_spent else 0
-                    cat_lines.append(f"{c.get('merchant_category', 'Other')}: KES {amt:,.0f} ({pct:.1f}%)")
+                    cat_lines.append(f"{sanitize_for_prompt(c.get('merchant_category') or 'Other', 30)}: KES {amt:,.0f} ({pct:.1f}%)")
                 lines.append("Top spending categories: " + "; ".join(cat_lines))
 
             if top_merchants:
                 merch_lines = [
-                    f"{m.get('recipient', 'Unknown')}: KES {m.get('total_amount', 0):,.0f}"
+                    f"{sanitize_for_prompt(m.get('recipient') or 'Unknown')}: KES {m.get('total_amount', 0):,.0f}"
                     for m in top_merchants[:5]
                 ]
                 lines.append("Top merchants/recipients: " + "; ".join(merch_lines))
@@ -147,7 +148,8 @@ class MpesaAnalyzer:
 
             if anomalies:
                 anom_lines = [
-                    f"KES {a.get('amount', 0):,.0f} to {a.get('recipient', 'unknown')} on {a.get('timestamp', '')}"
+                    f"KES {a.get('amount', 0):,.0f} to {sanitize_for_prompt(a.get('recipient') or 'unknown')} "
+                    f"on {sanitize_for_prompt(a.get('timestamp') or '', 30)}"
                     for a in anomalies[:3]
                 ]
                 lines.append("Unusual transactions detected: " + "; ".join(anom_lines))

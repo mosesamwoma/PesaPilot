@@ -1,6 +1,8 @@
 import sys
 import os
 import hmac
+import threading
+import time
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
@@ -312,17 +314,50 @@ def route_ask_ai_question(analyzer: "MpesaAnalyzer", question: str) -> dict:
     return reply(content, sql=result.get('sql', ''), results=result.get('results', []))
 
 
+_LOGIN_MAX_FAILS = 5
+_LOGIN_BASE_LOCK_SECONDS = 30
+_LOGIN_MAX_LOCK_SECONDS = 900
+
+
+@st.cache_resource
+def _login_guard() -> dict[str, Any]:
+    return {'fails': 0, 'locked_until': 0.0, 'lock': threading.Lock()}
+
+
 def require_dashboard_password() -> None:
     """Optional login gate. Set DASHBOARD_PASSWORD in .env to turn it on."""
     expected = os.getenv('DASHBOARD_PASSWORD', '')
-    if not expected or st.session_state.get('_dashboard_authed'):
+    if not expected:
+        st.sidebar.warning("No DASHBOARD_PASSWORD is set: anyone who can reach this page can read your finances.")
         return
+    if st.session_state.get('_dashboard_authed'):
+        return
+
+    guard = _login_guard()
     st.title("PesaPilot")
+    remaining = guard['locked_until'] - time.time()
+    if remaining > 0:
+        st.error(f"Too many wrong attempts. Try again in {int(remaining) + 1} seconds.")
+        st.stop()
+
     supplied = st.text_input("Password", type="password")
     if supplied:
-        if hmac.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8')):
+        with guard['lock']:
+            matched = hmac.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8'))
+            if matched:
+                guard['fails'] = 0
+                guard['locked_until'] = 0.0
+            else:
+                guard['fails'] += 1
+                if guard['fails'] >= _LOGIN_MAX_FAILS:
+                    steps = guard['fails'] - _LOGIN_MAX_FAILS
+                    guard['locked_until'] = time.time() + min(
+                        _LOGIN_BASE_LOCK_SECONDS * (2 ** steps), _LOGIN_MAX_LOCK_SECONDS,
+                    )
+        if matched:
             st.session_state['_dashboard_authed'] = True
             st.rerun()
+        time.sleep(1)
         st.error("Incorrect password.")
     st.stop()
 
@@ -818,9 +853,9 @@ def main() -> None:
                 st.markdown(f"""
                 <div class="anomaly-badge">
                     <strong>{html.escape(str(a.get('recipient', 'Unknown')))}</strong> — KES {float(a.get('amount', 0)):,.2f}
-                    &nbsp;·&nbsp; {str(a.get('merchant_category', 'other')).title()}
-                    &nbsp;·&nbsp; {str(a.get('timestamp', ''))[:16]}
-                    &nbsp;·&nbsp; unusualness score: {score:.1f} ({model_label})
+                    &nbsp;·&nbsp; {html.escape(str(a.get('merchant_category', 'other')).title())}
+                    &nbsp;·&nbsp; {html.escape(str(a.get('timestamp', ''))[:16])}
+                    &nbsp;·&nbsp; unusualness score: {score:.1f} ({html.escape(model_label)})
                 </div>
                 """, unsafe_allow_html=True)
                 st.markdown("")

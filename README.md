@@ -122,6 +122,9 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 | `DASHBOARD_PASSWORD` | empty | Optional login for the Streamlit dashboard. The dashboard itself only listens on `127.0.0.1` (`.streamlit/config.toml`) |
 | `POSTGRES_SSLMODE` | empty | Set to `require` / `verify-full` when Postgres is on another machine |
 | `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com,http://[2001:db8::1]:8501`. The bot and dashboard do not need it |
+| `API_AUTH_FAIL_LIMIT` | `10` | Wrong-token attempts per IP per 5 minutes before the API answers `429` |
+| `API_RATE_LIMIT_PER_MIN` | `120` | Authenticated API requests allowed per minute |
+| `API_AI_RATE_LIMIT_PER_MIN` | `30` | Per-minute cap for `/ask`, `/anomalies` and `/budget-check` (protects your Groq quota) |
 | `BAILEYS_LOG_LEVEL` | `info` | Baileys/pino log level |
 | `WHATSAPP_QR_LINK` | `false` | Keep `false`. `true` prints a link that sends your WhatsApp login QR (a device-linking secret) to the third-party api.qrserver.com. Use `WHATSAPP_USE_PAIRING_CODE=true` if your terminal cannot draw the QR |
 
@@ -175,13 +178,13 @@ Saves a cleaned CSV to `data/processed/` and upserts into Postgres — safe to r
 | `Give KshX cash to <agent>` | Cash **deposit** → `credit` / `banking` |
 | `Withdraw KshX from <agent>` | `withdrawal` / `banking` |
 | `You bought KshX of airtime` | `airtime` / `utilities`, recipient `Airtime` |
-| Reversals | `credited to your M-PESA` → `credit`; `debited from` → `debit`; recipient `M-Pesa Reversal` |
+| Reversals (`Reversal of transaction …` and `Your original transaction … has been reversed … credited`) | `credited to your M-PESA` → `credit`; `debited from` → `debit`; recipient `M-Pesa Reversal` |
 | Balance enquiries, cancelled/failed/invalid-PIN/insufficient-funds notices, declined reversals | Skipped — not money movement |
 | Fuliza drawdown notices and Fuliza repayments | Skipped — the purchase itself is already recorded, so counting the loan or its repayment would double-count spending |
 
 Timestamps are stored in Nairobi local time (the SMS receipt time, or the time printed in the message when delivery was delayed by more than 10 minutes). `merchant_category` is decided from the recipient/account name only — never from the promotional footer of the SMS — and money sent to or received from a phone number is categorised `personal`.
 
-**Upgrading an existing database:** re-run the import above so previously stored rows are corrected (timestamps, deposits, categories, recipients), then remove rows from messages that are no longer imported:
+**Upgrading an existing database:** re-run the import above so previously stored rows are corrected (timestamps, deposits, categories, recipients, and amounts of transactions whose code contains `KES`/`KSH` such as `TBI8KES7AE`, which used to be stored as Ksh 7 instead of Ksh 80), then remove rows from messages that are no longer imported:
 
 ```sql
 DELETE FROM transactions
@@ -383,6 +386,11 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
   WHATSAPP_QR_LINK=false
   ```
 - Errors returned to clients never contain exception text; the bot never logs your PIN or pasted SMS; the container runs as non-root.
+- Abuse limits: wrong-token attempts are throttled per IP (`API_AUTH_FAIL_LIMIT`, then `429`; your valid token is never locked out), authenticated calls are capped per minute (`API_RATE_LIMIT_PER_MIN`), AI/anomaly/budget-check calls have a stricter cap (`API_AI_RATE_LIMIT_PER_MIN`), request bodies over 32 KB are rejected with `413`, and every response carries `nosniff`, `no-store` and a locked-down CSP.
+- AI-written SQL is validated (single read-only `SELECT`/`WITH`, no quoted identifiers, no system catalogs, no `pg_*`, `information_schema`, `generate_series`, `INTO`) and then runs in a read-only transaction with a 10 second timeout and a 500-row cap. Names copied from SMS messages are flattened before they reach the AI, and the AI is told to treat them as data, never instructions.
+- The Streamlit dashboard locks out for 30 seconds (doubling up to 15 minutes) after 5 wrong passwords, and warns in the sidebar when `DASHBOARD_PASSWORD` is not set.
+- The production image no longer ships `whatsapp-web.js` / `puppeteer` (dev-only packages with known advisories): they are dev dependencies and `npm prune --omit=dev` removes them. `npm audit --omit=dev` reports 0 vulnerabilities.
+- The bot warns at startup if `API_URL` is neither HTTPS nor localhost, because the API token would otherwise cross the network unencrypted.
 
 **Rotate secrets** (do this now if a `.env`, key, session folder or SMS file was ever shared, committed or pasted anywhere):
 
@@ -432,6 +440,8 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | API exits with `API_TOKEN must be set…` | Run `scripts/generate_secrets.sh` (or set a 24+ character `API_TOKEN` in `.env`) |
 | Bot says `API server rejected the token` | `API_TOKEN` differs between the bot and the API — they must read the same `.env` |
 | `401 Unauthorized` from curl | Send `-H "Authorization: Bearer $API_TOKEN"` (or `X-API-Key`) |
+| `429 Too many requests` | A rate limit tripped; wait for the `Retry-After` seconds or raise `API_RATE_LIMIT_PER_MIN` / `API_AI_RATE_LIMIT_PER_MIN` in `.env` |
+| `413 Request body too large` | Request bodies are capped at 32 KB; send one SMS or question at a time |
 | Container: `is not writable by the container user` | Run `scripts/prepare_dirs.sh` (folders must be owned by UID/GID 10001) |
 | Compose: `Set POSTGRES_PASSWORD in .env` | A required variable is empty — see [Configure](#2-configure-environment-variables) |
 | Baileys `405` loop, no QR | Wipe `.baileys_auth/` and restart |

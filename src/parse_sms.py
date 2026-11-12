@@ -87,6 +87,7 @@ class MpesaParser:
     # "ABC1234DEF Confirmed." and "Congratulations! ABC1234DEF confirmed." both carry the
     # 10-character transaction code that identifies a real M-Pesa transaction.
     _TX_HEADER_RE = re.compile(r'^\W*(?:(?i:congratulations)\W+)?([A-Z0-9]{10})\s+(?i:confirmed)\b')
+    _REVERSAL_RE = re.compile(r'reversal of transaction|has been reversed|successfully reversed', re.IGNORECASE)
     _MANUAL_PREFIX_RE = re.compile(r'^\s*\d{3,8}\s*-\s*')
 
     # Senders (letters only, lower-case) whose inbox messages are M-Pesa transactions.
@@ -228,7 +229,7 @@ class MpesaParser:
 
     def _extract_amount(self, body: str) -> Optional[float]:
         values = []
-        for m in re.finditer(r'(?:Ksh|KES)\.?\s?(\d[\d,]*(?:\.\d+)?)', body, re.IGNORECASE):
+        for m in re.finditer(r'(?<![A-Za-z0-9])(?:Ksh|KES)\.?\s?(\d[\d,]*(?:\.\d+)?)', body, re.IGNORECASE):
             try:
                 values.append(float(m.group(1).replace(',', '')))
             except ValueError:
@@ -269,8 +270,8 @@ class MpesaParser:
         lower = body.lower()
         if self._JUMBE_RE.search(body):
             return 'credit' if re.search(r'you received\s*:', lower) else 'payment'
-        if re.search(r'reversal of transaction', lower) and 'credited' in lower:
-            return 'credit'
+        if self._REVERSAL_RE.search(body):
+            return 'credit' if re.search(r'credited to your m-?pesa', lower) else 'debit'
         if re.search(r'give\s+ksh\s?[\d,.]+\s*cash\s+to', lower):
             return 'credit'
         if re.search(r'withdraw\s+ksh|ksh\s?[\d,.]+\s+withdrawn|withdrew|cash out', lower):
@@ -289,7 +290,7 @@ class MpesaParser:
 
     def _extract_recipient(self, body: str, tx_type: Optional[str] = None) -> str:
         lower = body.lower()
-        if 'reversal of transaction' in lower:
+        if self._REVERSAL_RE.search(body):
             return 'M-Pesa Reversal'
         if tx_type == 'airtime' and re.search(r'you bought', lower):
             return 'Airtime'
@@ -339,7 +340,7 @@ class MpesaParser:
         body_lower = (body or '').lower()
         if tx_type == 'withdrawal' or re.search(r'give\s+ksh\s?[\d,.]+\s*cash\s+to', body_lower):
             return 'banking'
-        if 'reversal of transaction' in body_lower:
+        if self._REVERSAL_RE.search(body or ''):
             return 'other'
 
         account_match = self._ACCOUNT_RE.search(body or '')

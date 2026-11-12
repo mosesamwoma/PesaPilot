@@ -8,7 +8,7 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 
 ## Features
 
-- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, heatmap, histogram, AI insights
+- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, heatmap, histogram, AI insights; the analysis period can be a preset (7 to 365 days, all time) or any number of days from 1 to 1095 with the "Custom (choose days)" slider
 
   ![Dashboard overview](assets/1.png)
   ![Spending heatmap](assets/2.png)

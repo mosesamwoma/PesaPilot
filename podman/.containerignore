@@ -2,7 +2,7 @@
 venv/
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 .Python
@@ -12,6 +12,8 @@ __pycache__/
 node_modules/
 .npm/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 # Local environment and secrets
@@ -33,7 +35,9 @@ dist/
 # App runtime data that should be created in container
 data/
 sessions/
+sessions-local/
 .wwebjs_auth/
+.wwebjs_cache/
 .baileys_auth/
 # Editors / OS noise
 .vscode/

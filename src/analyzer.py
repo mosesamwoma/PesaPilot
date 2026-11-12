@@ -19,6 +19,7 @@ from src.timeutil import report_window, window_before
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 300
+CACHE_MAX_ENTRIES = 64
 VALID_PERIODS = ('weekly', 'monthly')
 
 
@@ -94,6 +95,11 @@ class MpesaAnalyzer:
         return None
 
     def _cache_set(self, key: str, value) -> None:
+        if len(self._cache) >= CACHE_MAX_ENTRIES:
+            now = time.time()
+            self._cache = {k: v for k, v in self._cache.items() if now - v[0] < CACHE_TTL_SECONDS}
+            while len(self._cache) >= CACHE_MAX_ENTRIES:
+                del self._cache[next(iter(self._cache))]
         self._cache[key] = (time.time(), value)
 
     def clear_cache(self) -> None:

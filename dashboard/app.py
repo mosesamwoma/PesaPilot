@@ -101,7 +101,16 @@ PERIOD_OPTIONS: dict[str, Optional[int]] = {
     "Last 365 days": 365,
     "All time": None,
 }
-PERIOD_LABEL_BY_DAYS = {v: k for k, v in PERIOD_OPTIONS.items()}
+CUSTOM_PERIOD_LABEL = "Custom (choose days)"
+CUSTOM_DAYS_MIN = 1
+CUSTOM_DAYS_MAX = 1095
+CUSTOM_DAYS_DEFAULT = 10
+
+
+def period_label(days: Optional[int]) -> str:
+    if days is None:
+        return "All time"
+    return f"Last {days} day" if days == 1 else f"Last {days} days"
 
 
 _SUMMARY_COMMAND_RE = re.compile(r'\bsummary\b')
@@ -374,8 +383,17 @@ def main() -> None:
         page: str = st.radio("Navigate", ["Dashboard", "Forecast", "Budgets", "Ask AI", "Transactions", "Anomalies"])
         st.divider()
 
-        period_label_choice: str = st.selectbox("Analysis period", list(PERIOD_OPTIONS), index=1)
-        days: Optional[int] = PERIOD_OPTIONS[period_label_choice]
+        period_label_choice: str = st.selectbox(
+            "Analysis period", list(PERIOD_OPTIONS) + [CUSTOM_PERIOD_LABEL], index=1,
+        )
+        days: Optional[int]
+        if period_label_choice == CUSTOM_PERIOD_LABEL:
+            days = st.slider(
+                "Number of days", min_value=CUSTOM_DAYS_MIN, max_value=CUSTOM_DAYS_MAX,
+                value=CUSTOM_DAYS_DEFAULT, step=1,
+            )
+        else:
+            days = PERIOD_OPTIONS[period_label_choice]
 
         if st.button("Refresh Data", width='stretch'):
             analyzer.clear_cache()
@@ -393,7 +411,7 @@ def main() -> None:
 
     if page == "Dashboard":
         st.title("Financial Dashboard")
-        st.caption(f"{PERIOD_LABEL_BY_DAYS.get(days, 'Selected period')} · M-Pesa transaction analysis")
+        st.caption(f"{period_label(days)} · M-Pesa transaction analysis")
 
         c1, c2, c3, c4 = st.columns(4)
         metrics: list[tuple[Any, str, Any]] = [
@@ -510,7 +528,7 @@ def main() -> None:
 
         with col_h1:
             st.subheader("Spending Heatmap")
-            st.caption(f"KES per category per day of week ({PERIOD_LABEL_BY_DAYS.get(days, 'selected period').lower()})")
+            st.caption(f"KES per category per day of week ({period_label(days).lower()})")
             raw_for_heat: list[dict[str, Any]] = analyzer.db.get_transactions(days=days, limit=20000)
             if raw_for_heat:
                 df_heat: pd.DataFrame = pd.DataFrame(raw_for_heat)
@@ -560,7 +578,7 @@ def main() -> None:
 
         with col_h2:
             st.subheader("Amount Distribution")
-            st.caption(f"Frequency of transaction sizes ({PERIOD_LABEL_BY_DAYS.get(days, 'selected period').lower()})")
+            st.caption(f"Frequency of transaction sizes ({period_label(days).lower()})")
             if recent_txs:
                 df_hist: pd.DataFrame = pd.DataFrame(recent_txs)
                 df_hist = df_hist[df_hist['type'] != 'credit'].copy()

@@ -327,6 +327,10 @@ client.on('disconnected', (reason) => {
     isReady = false;
     console.log(`\nDisconnected: ${reason}`);
     if (shuttingDown) return;
+    if (reason === 'LOGOUT') {
+        console.error(' Session logged out. Waiting for a fresh QR code to re-link the bot.\n');
+        return;
+    }
     console.error(' Exiting so the process restarts and re-initialises the client.\n');
     process.exit(1);
 });

@@ -55,7 +55,7 @@ WORKDIR /app
 # into the shipped image)
 # ----------------------------------------------------------------
 COPY entrypoint_baileys.sh /app/entrypoint_baileys.sh
-RUN chmod +x /app/entrypoint_baileys.sh
+RUN chmod 755 /app/entrypoint_baileys.sh
 
 # ----------------------------------------------------------------
 # Python deps

@@ -321,7 +321,7 @@ docker compose logs -f pesapilot
 
 The container runs as an unprivileged user with all Linux capabilities dropped and `no-new-privileges`; the app code is read-only to it, and only `sessions/` (mode 700) and `data/` are writable. Compose refuses to start if a required secret is missing.
 
-Health check (run on the VPS — the API is bound to `127.0.0.1` by default): `curl http://127.0.0.1:8000/health`
+Health check (run on the VPS — Compose publishes the API on `127.0.0.1:8011`): `curl http://127.0.0.1:8011/health`
 
 **Persisted (bind mounts):**
 
@@ -347,12 +347,12 @@ docker compose exec pesapilot rm -rf /app/.baileys_auth
 docker compose restart pesapilot
 ```
 
-**Test the API** (run these on the VPS, or via `ssh -L 8000:127.0.0.1:8000 user@YOUR_VPS_IP` from your laptop):
+**Test the API** (run these on the VPS, or via `ssh -L 8011:127.0.0.1:8011 user@YOUR_VPS_IP` from your laptop):
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8011/health
 
 TOKEN="$(grep '^API_TOKEN=' .env | cut -d= -f2-)"
-curl -X POST http://127.0.0.1:8000/ask \
+curl -X POST http://127.0.0.1:8011/ask \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"question": "What did I spend on food?"}'
@@ -411,7 +411,7 @@ Keep `.env`, `sessions/` (`.baileys_auth/`) and your SMS `.xml` exports private 
 
 ```
 api.example.com {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8011
 }
 ```
 
@@ -442,7 +442,7 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | `relation ... does not exist` / missing function errors | Apply `schema/init_db.sql` |
 | `ModuleNotFoundError: No module named 'src'` | Run from the project root |
 | No transactions after loading XML | Confirm it's an SMS Backup & Restore export with M-Pesa messages |
-| Port 8000 in use | Change `WHATSAPP_API_PORT`, update `API_URL` and `docker-compose.yml` |
+| Port 8011 in use | Choose another host port in `docker-compose.yml`; keep the container port at `8000` |
 | API exits with `API_TOKEN must be set…` | Run `scripts/generate_secrets.sh` (or set a 24+ character `API_TOKEN` in `.env`) |
 | Bot says `API server rejected the token` | `API_TOKEN` differs between the bot and the API — they must read the same `.env` |
 | `401 Unauthorized` from curl | Send `-H "Authorization: Bearer $API_TOKEN"` (or `X-API-Key`) |

@@ -17,7 +17,7 @@ services:
       # Published on the host's loopback only. Every route except /health
       # needs API_TOKEN, but keep it on loopback anyway: to expose it, put a
       # TLS reverse proxy in front instead of setting API_BIND=0.0.0.0.
-      - "${API_BIND:-127.0.0.1}:8000:8000"
+      - "${API_BIND:-127.0.0.1}:8011:8000"
     environment:
       # API Configuration
       - API_URL=${API_URL:-http://127.0.0.1:8000}

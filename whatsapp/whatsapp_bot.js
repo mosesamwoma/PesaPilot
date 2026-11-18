@@ -13,7 +13,37 @@ const API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 const API_TOKEN = (process.env.API_TOKEN || '').trim();
 const AUTH_HEADERS = { Authorization: `Bearer ${API_TOKEN}` };
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || './.wwebjs_auth';
-const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+
+function findBrowserExecutable() {
+    const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/brave-browser',
+        '/usr/bin/brave-browser-stable',
+        '/opt/brave.com/brave/brave',
+        '/opt/brave-origin-bin/brave',
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+const CHROME_PATH = findBrowserExecutable();
+
+if (!CHROME_PATH) {
+    console.error('\nERROR: No supported browser executable was found.');
+    console.error('Install Chromium or Chrome, or set PUPPETEER_EXECUTABLE_PATH.');
+    console.error('Example: PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium\n');
+    process.exit(1);
+}
 
 if (!MAIN_NUMBER || !WHATSAPP_PIN || !API_TOKEN) {
     console.error('\nERROR: Missing required .env variables:');
@@ -54,7 +84,7 @@ console.log(`Phone Number : configured`);
 console.log(`LID          : ${WHATSAPP_LID ? 'configured' : 'not set (resolved automatically)'}`);
 console.log(`PIN          : configured`);
 console.log(`API URL      : ${API_URL}`);
-console.log(`Chrome       : ${CHROME_PATH}`);
+console.log(`Browser      : ${CHROME_PATH}`);
 console.log('═══════════════════════════════════════════════════════\n');
 
 const LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'SingletonTab']);

@@ -78,9 +78,9 @@ npm install
 
 Puppeteer browser downloads are disabled by the repository configuration so
 installs do not fail or download hundreds of megabytes unexpectedly. Production
-uses the Baileys bot and does not need Chrome. If you run the optional
-`whatsapp-web.js` bot locally, install Chrome separately and keep
-`PUPPETEER_EXECUTABLE_PATH` pointed at its executable.
+uses the Baileys bot and does not need a browser. If you run the optional
+`whatsapp-web.js` bot locally, install Chromium or Chrome; the bot also
+auto-detects Brave. Set `PUPPETEER_EXECUTABLE_PATH` only for a custom executable.
 
 ---
 

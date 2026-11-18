@@ -76,6 +76,12 @@ pip install -r requirements.txt
 npm install
 ```
 
+Puppeteer browser downloads are disabled by the repository configuration so
+installs do not fail or download hundreds of megabytes unexpectedly. Production
+uses the Baileys bot and does not need Chrome. If you run the optional
+`whatsapp-web.js` bot locally, install Chrome separately and keep
+`PUPPETEER_EXECUTABLE_PATH` pointed at its executable.
+
 ---
 
 ## 2. Configure environment variables

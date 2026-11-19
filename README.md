@@ -79,8 +79,12 @@ npm install
 Puppeteer browser downloads are disabled by the repository configuration so
 installs do not fail or download hundreds of megabytes unexpectedly. Production
 uses the Baileys bot and does not need a browser. If you run the optional
-`whatsapp-web.js` bot locally, install Chromium or Chrome; the bot also
-auto-detects Brave. Set `PUPPETEER_EXECUTABLE_PATH` only for a custom executable.
+`whatsapp-web.js` bot locally, install any Chromium-based browser. The bot
+auto-detects Chromium, Chrome, Brave, Helium, Edge, Vivaldi, Thorium and Opera
+(PATH, standard install folders, `/opt`, macOS and Windows locations, then the
+Puppeteer cache). Set `BROWSER_PREFERENCE=brave,helium` to choose the order, or
+`PUPPETEER_EXECUTABLE_PATH` for a custom executable. Snap and Flatpak browsers
+are not detected because they do not work with Puppeteer.
 
 ---
 
@@ -452,7 +456,8 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | Compose: `Set POSTGRES_PASSWORD in .env` | A required variable is empty — see [Configure](#2-configure-environment-variables) |
 | Baileys `405` loop, no QR | Wipe `.baileys_auth/` and restart |
 | Baileys QR never appears | Check container internet: `docker compose exec pesapilot curl -I https://web.whatsapp.com` |
-| wwebjs `Failed to launch browser` | Chrome missing or wrong `PUPPETEER_EXECUTABLE_PATH` (local dev only) |
+| wwebjs `No Chromium-based browser was found` | Install Chromium, Chrome, Brave or Helium, or set `PUPPETEER_EXECUTABLE_PATH` (local dev only) |
+| wwebjs `Failed to launch browser` | The detected browser cannot be driven (Snap/Flatpak build?). Set `PUPPETEER_EXECUTABLE_PATH` to a native install or pick another with `BROWSER_PREFERENCE` (local dev only) |
 | wwebjs `profile already in use` | Delete `.wwebjs_auth/`, restart, rescan |
 | Podman permission denied on volumes | Confirm `:Z` suffix in `podman/compose.yml` |
 | Session keeps logging out | Confirm auth path isn't wiped by your deploy process |

@@ -26,7 +26,7 @@ done
 echo "==> Deploying from $LOCAL_PATH to $VPS_USER@$VPS_HOST:$VPS_PATH"
 
 echo "==> Syncing files..."
-rsync -rlptz --progress --chmod=go-rwx --no-owner --no-group \
+rsync -avz --progress --chmod=go-rwx \
   --exclude 'node_modules' \
   --exclude 'venv' \
   --exclude 'dist' \
@@ -34,7 +34,7 @@ rsync -rlptz --progress --chmod=go-rwx --no-owner --no-group \
   --exclude 'assets' \
   --exclude '.git' \
   --exclude 'sessions' \
-  --exclude 'data/' \
+  --exclude 'data/raw' \
   --exclude '*.xml' \
   --exclude '.baileys_auth' \
   --exclude '*.log' \
@@ -43,9 +43,6 @@ rsync -rlptz --progress --chmod=go-rwx --no-owner --no-group \
   --exclude '.wwebjs_cache' \
   --exclude '.pytest_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
-
-echo "==> Preparing runtime directories..."
-ssh -t "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && ./scripts/prepare_dirs.sh"
 
 ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yml $VPS_PATH/.containerignore"
 

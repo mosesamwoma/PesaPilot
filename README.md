@@ -55,8 +55,8 @@ Use `.js` for local development, `.ts` (Baileys) for anything deployed — it's 
 ## Prerequisites
 
 - Python 3.12+
-- Node.js 20+
-- Self-hosted PostgreSQL (local or VPS)
+- Node.js 22+ (the Docker image uses Node.js 24 LTS)
+- Self-hosted PostgreSQL 13+ (local or VPS)
 - A [Groq](https://console.groq.com) API key (free tier works)
 - Docker + Docker Compose for production
 - A spare WhatsApp-capable SIM
@@ -232,8 +232,8 @@ Session persists in `.baileys_auth/`.
 
 ```bash
 npm run api          # FastAPI on 127.0.0.1:8000
-npm run dev           # Baileys bot via ts-node, auto-restart
-npm run dev:wwebjs    # whatsapp-web.js bot via nodemon
+npm run dev           # Baileys bot via tsx, auto-restart
+npm run dev:wwebjs    # whatsapp-web.js bot via node --watch
 npm run build         # Compile whatsapp_bot.ts -> dist/
 npm start             # Run compiled Baileys bot
 npm run start:wwebjs  # Run whatsapp-web.js bot
@@ -393,8 +393,8 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
   ```
 - Errors returned to clients never contain exception text; the bot never logs your PIN or pasted SMS; the container runs as non-root.
 - Abuse limits: wrong-token attempts are throttled per IP (`API_AUTH_FAIL_LIMIT`, then `429`; your valid token is never locked out), authenticated calls are capped per minute (`API_RATE_LIMIT_PER_MIN`), AI/anomaly/budget-check calls have a stricter cap (`API_AI_RATE_LIMIT_PER_MIN`), request bodies over 32 KB are rejected with `413`, and every response carries `nosniff`, `no-store` and a locked-down CSP.
-- AI-written SQL is validated (single read-only `SELECT`/`WITH`, no quoted identifiers, no system catalogs, no `pg_*`, `information_schema`, `generate_series`, `INTO`) and then runs in a read-only transaction with a 10 second timeout and a 500-row cap. Names copied from SMS messages are flattened before they reach the AI, and the AI is told to treat them as data, never instructions.
-- The Streamlit dashboard locks out for 30 seconds (doubling up to 15 minutes) after 5 wrong passwords, and warns in the sidebar when `DASHBOARD_PASSWORD` is not set.
+- AI-written SQL is validated (single read-only `SELECT`/`WITH`, no quoted identifiers, no system catalogs, no `pg_*`, `information_schema`, `generate_series`, `INTO`, and only an allowlist of aggregate, window, date, math and string functions plus PesaPilot's own analytics functions) and then runs in a read-only transaction with a 10 second timeout and a 500-row cap. Names copied from SMS messages are flattened before they reach the AI, and the AI is told to treat them as data, never instructions.
+- The Streamlit dashboard is pinned to `127.0.0.1` by `.streamlit/config.toml` (shipped in the repo, with XSRF protection on, usage stats off and error details hidden), and locks out for 30 seconds (doubling up to 15 minutes) after 5 wrong passwords, and warns in the sidebar when `DASHBOARD_PASSWORD` is not set.
 - The production image no longer ships `whatsapp-web.js` / `puppeteer` (dev-only packages with known advisories): they are dev dependencies and `npm prune --omit=dev` removes them. `npm audit --omit=dev` reports 0 vulnerabilities.
 - The bot warns at startup if `API_URL` is neither HTTPS nor localhost, because the API token would otherwise cross the network unencrypted.
 
@@ -405,7 +405,7 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
 3. WhatsApp: on your phone open Settings → Linked Devices, log out every device you don't recognise, delete `sessions/` (or `.wwebjs_auth/`) and pair again.
 4. Restart: `docker compose up -d --force-recreate`.
 
-Keep `.env`, `sessions/` (`.baileys_auth/`) and your SMS `.xml` exports private — all are git-ignored and excluded from the image and from `redeploy.sh` uploads.
+Keep `.env`, `sessions/` (`.baileys_auth/`) and your SMS `.xml` exports private — all are git-ignored and excluded from the image. `redeploy.sh` never uploads `sessions/` or SMS exports; it does upload your `.env` over SSH with owner-only permissions, so keep the local one in sync with the server.
 
 **Before exposing anything publicly:** put the API behind a TLS reverse proxy (the token is then protected in transit). Minimal Caddy example — Caddy gets the certificate automatically:
 
@@ -428,7 +428,7 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | `LLM_MODEL_FAST` | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
 | `LLM_MODEL_SMART` | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
 
-**SQL safety guard** (`src/sql_guard.py`): every LLM query passes `is_safe_select_sql()` — must start with `SELECT` or `WITH`, no `;`, no comments, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/MERGE/CALL/COPY`, no `pg_*`/`lo_*`/`dblink`/`set_config` functions. It then runs in a read-only transaction with a 10 s statement timeout, capped at 500 rows. User *questions* are only rejected when they contain actual destructive statements (e.g. `drop table …`), so ordinary questions like "how much did I spend on call credit?" work.
+**SQL safety guard** (`src/sql_guard.py`): every LLM query passes `is_safe_select_sql()` — must start with `SELECT` or `WITH`, no `;`, no comments, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/MERGE/CALL/COPY`, no `pg_*`/`lo_*`/`dblink`/`set_config` functions, no row-locking clauses, and every function call must be on a fixed allowlist of safe aggregate, window, date, math and string functions plus the six analytics functions in `schema/init_db.sql`. It then runs in a read-only transaction with a 10 s statement timeout, capped at 500 rows. User *questions* are only rejected when they contain actual destructive statements (e.g. `drop table …`), so ordinary questions like "how much did I spend on call credit?" work.
 
 **Caching:** every Groq call is cached in-memory by a hash of (system, user) prompt, TTL from 5 min (chat) to 1 hour (SQL), cleared on new transactions.
 

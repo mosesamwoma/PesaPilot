@@ -4,7 +4,9 @@
 # (whatsapp-web.js scripts in package.json remain available for local dev only.)
 FROM python:3.12-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 # ----------------------------------------------------------------
 # Force UTF-8 everywhere (Python, Node, shell, logs) so emojis in
@@ -18,7 +20,7 @@ ENV LANG=C.UTF-8 \
     MPLCONFIGDIR=/tmp/matplotlib
 
 # ----------------------------------------------------------------
-# System deps: curl (healthcheck) + fontconfig (chart fonts) + Node.js 20.x
+# System deps: curl (healthcheck) + fontconfig (chart fonts) + Node.js 24.x
 # ----------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     curl \
@@ -27,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     fontconfig \
     fonts-noto-color-emoji \
     fonts-dejavu \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs \
     && fc-cache -fv \
     && apt-get clean \
@@ -55,7 +57,7 @@ WORKDIR /app
 # into the shipped image)
 # ----------------------------------------------------------------
 COPY entrypoint_baileys.sh /app/entrypoint_baileys.sh
-RUN chmod 755 /app/entrypoint_baileys.sh
+RUN chmod +x /app/entrypoint_baileys.sh
 
 # ----------------------------------------------------------------
 # Python deps

@@ -139,8 +139,8 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
                 spec[date_key] = None
     if spec.get("category_filter"):
         spec["category_filter"] = str(spec["category_filter"]).strip().lower()
-    if not spec.get("title"):
-        spec["title"] = _default_title(spec)
+    title = re.sub(r'[\$\x00-\x1f\x7f]+', ' ', str(spec.get("title") or '')).strip()[:100]
+    spec["title"] = title or _default_title(spec)
     return spec
 
 
@@ -225,6 +225,8 @@ def _default_title(spec: Dict[str, Any]) -> str:
     cat = f" — {str(spec['category_filter']).title()}" if spec.get('category_filter') else ""
     if spec.get('chart_type') in ('line', 'area'):
         return f"{metric_label} over time{cat}{period}".strip()
+    if spec.get('chart_type') == 'histogram':
+        return f"Distribution of {metric_label.lower()}{cat}{period}".strip()
     group_label = (spec.get('group_by') or 'day').replace('_', ' ')
     return f"{metric_label} by {group_label}{cat}{period}".strip()
 

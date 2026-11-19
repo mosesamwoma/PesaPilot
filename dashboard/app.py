@@ -399,8 +399,10 @@ def main() -> None:
             analyzer.clear_cache()
             st.rerun()
 
-    with st.spinner("Loading your financial data..."):
-        data: dict[str, Any] = analyzer.get_dashboard_data(days=days)
+    data: dict[str, Any] = {}
+    if page in ("Dashboard", "Transactions"):
+        with st.spinner("Loading your financial data..."):
+            data = analyzer.get_dashboard_data(days=days)
 
     summary: dict[str, Any] = data.get('summary', {})
     category_data: list[dict[str, Any]] = data.get('spending_by_category', [])

@@ -116,7 +116,7 @@ checkApiUrl(config.apiUrl);
 
 function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
-    console.log('PesaPilot WhatsApp Bot v1.2 (Baileys TypeScript)');
+    console.log('PesaPilot WhatsApp Bot v1.3 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`Phone Number : configured`);
     console.log(`LID          : ${config.whatsappLid ? 'configured' : 'not set (resolved automatically)'}`);
@@ -158,7 +158,7 @@ function redactForLog(text: string): string {
     if (config.whatsappPin && text.startsWith(config.whatsappPin + '-')) {
         return '[manual SMS entry - content hidden]';
     }
-    return text;
+    return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, ' ');
 }
 
 function stripSuffix(jid: string): string {
@@ -252,6 +252,9 @@ let currentSock: WASocket | null = null;
 let isConnected = false;
 let startupResolved = false;
 let shuttingDown = false;
+let reconnectAttempts = 0;
+const RECONNECT_BASE_MS = 5000;
+const RECONNECT_MAX_MS = 5 * 60 * 1000;
 
 const STARTUP_TIMEOUT_MS = 120 * 1000;
 
@@ -383,6 +386,7 @@ async function handleMessage(
     msg: proto.IWebMessageInfo,
     sock: WASocket
 ): Promise<void> {
+    let authorizedSender = false;
     try {
         if (!msg.message) return;
         if (!msg.key || msg.key.fromMe) return;
@@ -410,6 +414,7 @@ async function handleMessage(
             return;
         }
 
+        authorizedSender = true;
         console.log('Authorized');
         await react(sock, jid, key, '⏳');
 
@@ -428,7 +433,7 @@ async function handleMessage(
         console.error(`Fatal: ${err.message}`);
         try {
             const remoteJid = msg.key?.remoteJid;
-            if (remoteJid) {
+            if (remoteJid && authorizedSender) {
                 await sock.sendMessage(remoteJid, { text: '❌ Something went wrong.' });
             }
         } catch (e) {
@@ -520,6 +525,7 @@ async function startBaileys(): Promise<WASocket> {
             if (connection === 'open') {
                 startupResolved = true;
                 isConnected = true;
+                reconnectAttempts = 0;
                 console.log('\n╔═══════════════════════════════════════════════════════╗');
                 console.log('║                 BOT IS ONLINE                         ║');
                 console.log('╚═══════════════════════════════════════════════════════╝');
@@ -551,13 +557,15 @@ async function startBaileys(): Promise<WASocket> {
 
                 if (shuttingDown) return;
 
-                console.log(`\nDisconnected (status ${statusCode ?? 'unknown'}). Reconnecting in 5s...\n`);
+                const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+                reconnectAttempts += 1;
+                console.log(`\nDisconnected (status ${statusCode ?? 'unknown'}). Reconnecting in ${Math.round(delayMs / 1000)}s...\n`);
                 setTimeout(() => {
                     startBaileys().catch((err) => {
                         console.error(`Reconnect failed: ${(err as Error).message}`);
                         process.exit(1);
                     });
-                }, 5000);
+                }, delayMs);
             }
         });
 

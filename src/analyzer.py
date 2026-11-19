@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from datetime import date
 from typing import Dict, List, Optional, Union, cast
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 300
 CACHE_MAX_ENTRIES = 64
 VALID_PERIODS = ('weekly', 'monthly')
+MAX_BUDGET_LIMIT = 1_000_000_000
 
 
 def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> Dict:
@@ -323,8 +325,12 @@ class MpesaAnalyzer:
         period = (period or 'monthly').strip().lower()
         if period not in VALID_PERIODS:
             return {'success': False, 'error': "Period must be 'weekly' or 'monthly'"}
-        if not limit_amount or limit_amount <= 0:
+        if not isinstance(limit_amount, (int, float)) or isinstance(limit_amount, bool) or not math.isfinite(limit_amount):
+            return {'success': False, 'error': 'Budget limit must be a number'}
+        if limit_amount <= 0:
             return {'success': False, 'error': 'Budget limit must be greater than 0'}
+        if limit_amount > MAX_BUDGET_LIMIT:
+            return {'success': False, 'error': 'Budget limit is too large'}
         if not 1 <= alert_threshold_pct <= 100:
             return {'success': False, 'error': 'Alert threshold must be between 1 and 100'}
         budget = self.db.upsert_budget(normalized, limit_amount, period, alert_threshold_pct)

@@ -101,7 +101,10 @@ class MpesaParser:
         logger.info(f"Parsing XML: {xml_path}")
         transactions = []
 
-        context = etree.iterparse(xml_path, events=('end',), tag='sms', recover=True)
+        context = etree.iterparse(
+            xml_path, events=('end',), tag='sms', recover=True,
+            resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False,
+        )
         for _, elem in context:
             try:
                 if self._is_inbound_mpesa(elem):

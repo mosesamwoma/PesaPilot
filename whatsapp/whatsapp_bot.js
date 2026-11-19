@@ -71,6 +71,10 @@ function digitsOnly(value) {
     return (value || '').replace(/@.*$/, '').replace(/:\d+$/, '').replace(/\D/g, '');
 }
 
+function safeLog(text) {
+    return (text || '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, ' ');
+}
+
 function toWhatsAppFormat(text) {
     return (text || '')
         .replace(/^#{1,6}\s+(.+)$/gm, (_m, title) => `**${title.replace(/\*\*/g, '')}**`)
@@ -78,7 +82,7 @@ function toWhatsAppFormat(text) {
 }
 
 console.log('\n═══════════════════════════════════════════════════════');
-console.log('PesaPilot WhatsApp Bot v1.2');
+console.log('PesaPilot WhatsApp Bot v1.3');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`Phone Number : configured`);
 console.log(`LID          : ${WHATSAPP_LID ? 'configured' : 'not set (resolved automatically)'}`);
@@ -259,6 +263,7 @@ async function resolveSenderIds(message) {
 }
 
 client.on('message', async (message) => {
+    let authorizedSender = false;
     try {
         if (!message.from || message.from.endsWith('@g.us') || message.from.endsWith('@broadcast')) return;
 
@@ -273,7 +278,7 @@ client.on('message', async (message) => {
         );
 
         console.log(`\nFrom: ${senderIds.join(' / ')}`);
-        const loggable = userMessage.startsWith(WHATSAPP_PIN + '-') ? '[manual SMS entry - content hidden]' : userMessage;
+        const loggable = userMessage.startsWith(WHATSAPP_PIN + '-') ? '[manual SMS entry - content hidden]' : safeLog(userMessage);
         console.log(`Msg: "${loggable.substring(0, 50)}${loggable.length > 50 ? '...' : ''}"`);
 
         if (!isAuthorized) {
@@ -281,6 +286,7 @@ client.on('message', async (message) => {
             return;
         }
 
+        authorizedSender = true;
         console.log('Authorized');
         try { await message.react('⏳'); } catch (e) {}
 
@@ -349,7 +355,9 @@ client.on('message', async (message) => {
 
     } catch (error) {
         console.error(`Fatal: ${error.message}`);
-        try { await message.reply('❌ Something went wrong.'); } catch (e) {}
+        if (authorizedSender) {
+            try { await message.reply('❌ Something went wrong.'); } catch (e) {}
+        }
     }
 });
 

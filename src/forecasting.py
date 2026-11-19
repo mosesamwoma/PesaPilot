@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -157,10 +158,11 @@ def _classify_risk(
         return RISK_LOW
 
     overshoot_pct = (forecast_total - baseline_total) / baseline_total * 100
+    horizon_volatility = volatility_ratio / math.sqrt(max(horizon_days, 1))
 
-    if overshoot_pct > 25 or volatility_ratio > 0.9:
+    if overshoot_pct > 25 or horizon_volatility > 0.9:
         return RISK_HIGH
-    if overshoot_pct > 10 or volatility_ratio > 0.6:
+    if overshoot_pct > 10 or horizon_volatility > 0.6:
         return RISK_MODERATE
     return RISK_LOW
 

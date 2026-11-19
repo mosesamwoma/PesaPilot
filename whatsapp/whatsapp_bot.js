@@ -3,6 +3,7 @@ const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const cron = require('node-cron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 require('dotenv').config();
 
@@ -14,36 +15,205 @@ const API_TOKEN = (process.env.API_TOKEN || '').trim();
 const AUTH_HEADERS = { Authorization: `Bearer ${API_TOKEN}` };
 const AUTH_PATH = process.env.WWEBJS_AUTH_PATH || './.wwebjs_auth';
 
-function findBrowserExecutable() {
-    const candidates = [
-        process.env.PUPPETEER_EXECUTABLE_PATH,
-        '/usr/bin/chromium',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/usr/bin/brave-browser',
-        '/usr/bin/brave-browser-stable',
-        '/opt/brave.com/brave/brave',
-        '/opt/brave-origin-bin/brave',
-    ].filter(Boolean);
+const IS_WINDOWS = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+const HOME_DIR = os.homedir();
+const WIN_ROOTS = [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean);
 
-    for (const candidate of candidates) {
-        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) {
-            return candidate;
+const BROWSER_FAMILIES = [
+    {
+        id: 'chromium',
+        names: ['chromium', 'chromium-browser', 'ungoogled-chromium'],
+        linux: ['/usr/lib/chromium/chromium', '/usr/lib/chromium-browser/chromium-browser'],
+        mac: ['/Applications/Chromium.app/Contents/MacOS/Chromium'],
+        win: ['Chromium\\Application\\chrome.exe']
+    },
+    {
+        id: 'chrome',
+        names: ['google-chrome-stable', 'google-chrome', 'google-chrome-beta', 'google-chrome-unstable', 'chrome'],
+        linux: ['/opt/google/chrome/chrome', '/opt/google/chrome/google-chrome'],
+        mac: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+        win: ['Google\\Chrome\\Application\\chrome.exe']
+    },
+    {
+        id: 'brave',
+        names: ['brave-browser', 'brave-browser-stable', 'brave', 'brave-origin'],
+        linux: ['/opt/brave.com/brave/brave', '/opt/brave-bin/brave', '/opt/brave-origin-bin/brave', '/usr/lib/brave-bin/brave'],
+        mac: ['/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'],
+        win: ['BraveSoftware\\Brave-Browser\\Application\\brave.exe']
+    },
+    {
+        id: 'helium',
+        names: ['helium', 'helium-browser'],
+        linux: ['/opt/helium/helium', '/opt/helium-browser/helium', '/opt/helium-bin/helium', '/opt/helium-browser-bin/helium'],
+        mac: ['/Applications/Helium.app/Contents/MacOS/Helium'],
+        win: ['Helium\\Application\\helium.exe', 'Programs\\Helium\\helium.exe']
+    },
+    {
+        id: 'edge',
+        names: ['microsoft-edge-stable', 'microsoft-edge', 'msedge'],
+        linux: ['/opt/microsoft/msedge/msedge'],
+        mac: ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'],
+        win: ['Microsoft\\Edge\\Application\\msedge.exe']
+    },
+    {
+        id: 'vivaldi',
+        names: ['vivaldi-stable', 'vivaldi'],
+        linux: ['/opt/vivaldi/vivaldi'],
+        mac: ['/Applications/Vivaldi.app/Contents/MacOS/Vivaldi'],
+        win: ['Vivaldi\\Application\\vivaldi.exe']
+    },
+    {
+        id: 'thorium',
+        names: ['thorium-browser', 'thorium'],
+        linux: ['/opt/chromium.org/thorium/thorium-browser', '/opt/thorium-browser/thorium-browser'],
+        mac: ['/Applications/Thorium.app/Contents/MacOS/Thorium'],
+        win: ['Thorium\\Application\\thorium.exe']
+    },
+    {
+        id: 'opera',
+        names: ['opera'],
+        linux: ['/usr/lib/x86_64-linux-gnu/opera/opera', '/usr/lib64/opera/opera'],
+        mac: ['/Applications/Opera.app/Contents/MacOS/Opera'],
+        win: ['Opera\\opera.exe', 'Programs\\Opera\\opera.exe']
+    }
+];
+
+function isExecutableFile(candidate) {
+    try {
+        if (!candidate || !path.isAbsolute(candidate)) return false;
+        if (!fs.statSync(candidate).isFile()) return false;
+        if (!IS_WINDOWS) fs.accessSync(candidate, fs.constants.X_OK);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function listDir(dir) {
+    try {
+        return fs.readdirSync(dir);
+    } catch (e) {
+        return [];
+    }
+}
+
+function fromPath(name) {
+    const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    const fileNames = IS_WINDOWS ? [`${name}.exe`, name] : [name];
+    const found = [];
+    for (const dir of dirs) {
+        for (const fileName of fileNames) {
+            const full = path.join(dir, fileName);
+            if (isExecutableFile(full)) found.push(full);
         }
     }
+    return found;
+}
+
+function fromOptScan(names) {
+    const found = [];
+    for (const entry of listDir('/opt')) {
+        for (const name of names) {
+            const direct = path.join('/opt', entry, name);
+            if (isExecutableFile(direct)) found.push(direct);
+            for (const sub of listDir(path.join('/opt', entry))) {
+                const nested = path.join('/opt', entry, sub, name);
+                if (isExecutableFile(nested)) found.push(nested);
+            }
+        }
+    }
+    return found;
+}
+
+function fromPuppeteerCache() {
+    const found = [];
+    const roots = [process.env.PUPPETEER_CACHE_DIR, path.join(HOME_DIR, '.cache', 'puppeteer')].filter(Boolean);
+    for (const root of roots) {
+        for (const version of listDir(path.join(root, 'chrome'))) {
+            const versionDir = path.join(root, 'chrome', version);
+            for (const platformDir of listDir(versionDir)) {
+                const linux = path.join(versionDir, platformDir, 'chrome');
+                const win = path.join(versionDir, platformDir, 'chrome.exe');
+                const mac = path.join(versionDir, platformDir, 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
+                for (const candidate of [linux, win, mac]) {
+                    if (isExecutableFile(candidate)) found.push(candidate);
+                }
+            }
+        }
+    }
+    return found;
+}
+
+function candidatesForFamily(family) {
+    const found = [];
+    for (const name of family.names) found.push(...fromPath(name));
+    if (IS_MAC) {
+        for (const candidate of family.mac) {
+            found.push(candidate, path.join(HOME_DIR, candidate));
+        }
+    } else if (IS_WINDOWS) {
+        for (const root of WIN_ROOTS) {
+            for (const relative of family.win) found.push(path.join(root, relative));
+        }
+    } else {
+        for (const name of family.names) {
+            found.push(path.join('/usr/bin', name), path.join('/usr/local/bin', name), path.join(HOME_DIR, '.local', 'bin', name));
+        }
+        found.push(...family.linux);
+        found.push(...fromOptScan(family.names));
+    }
+    return found.filter(isExecutableFile);
+}
+
+function orderedFamilies() {
+    const preferred = (process.env.BROWSER_PREFERENCE || '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+    const known = new Set(BROWSER_FAMILIES.map((family) => family.id));
+    for (const value of preferred) {
+        if (!known.has(value)) {
+            console.warn(`BROWSER_PREFERENCE: unknown browser "${value}" ignored (known: ${[...known].join(', ')})`);
+        }
+    }
+    const first = preferred.map((value) => BROWSER_FAMILIES.find((family) => family.id === value)).filter(Boolean);
+    const rest = BROWSER_FAMILIES.filter((family) => !first.includes(family));
+    return [...first, ...rest];
+}
+
+function findBrowserExecutable() {
+    for (const envName of ['PUPPETEER_EXECUTABLE_PATH', 'CHROME_PATH']) {
+        const configured = (process.env[envName] || '').trim();
+        if (!configured) continue;
+        if (isExecutableFile(configured)) {
+            return { path: configured, label: `${envName}` };
+        }
+        console.warn(`WARNING: ${envName}="${configured}" is not an executable file; trying auto-detection instead.`);
+    }
+
+    for (const family of orderedFamilies()) {
+        const [first] = candidatesForFamily(family);
+        if (first) return { path: first, label: family.id };
+    }
+
+    const [cached] = fromPuppeteerCache();
+    if (cached) return { path: cached, label: 'puppeteer cache' };
 
     return null;
 }
 
-const CHROME_PATH = findBrowserExecutable();
+const BROWSER = findBrowserExecutable();
 
-if (!CHROME_PATH) {
-    console.error('\nERROR: No supported browser executable was found.');
-    console.error('Install Chromium or Chrome, or set PUPPETEER_EXECUTABLE_PATH.');
-    console.error('Example: PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium\n');
+if (!BROWSER) {
+    console.error('\nERROR: No Chromium-based browser was found.');
+    console.error(`Looked for: ${BROWSER_FAMILIES.map((family) => family.id).join(', ')} (PATH, standard install folders, /opt, Puppeteer cache).`);
+    console.error('Install one of them, or set PUPPETEER_EXECUTABLE_PATH to the full path of its executable.');
+    console.error('Example: PUPPETEER_EXECUTABLE_PATH=/usr/bin/brave-browser\n');
     process.exit(1);
 }
+
+const CHROME_PATH = BROWSER.path;
 
 if (!MAIN_NUMBER || !WHATSAPP_PIN || !API_TOKEN) {
     console.error('\nERROR: Missing required .env variables:');
@@ -88,7 +258,7 @@ console.log(`Phone Number : configured`);
 console.log(`LID          : ${WHATSAPP_LID ? 'configured' : 'not set (resolved automatically)'}`);
 console.log(`PIN          : configured`);
 console.log(`API URL      : ${API_URL}`);
-console.log(`Browser      : ${CHROME_PATH}`);
+console.log(`Browser      : ${BROWSER.label} (${CHROME_PATH})`);
 console.log('═══════════════════════════════════════════════════════\n');
 
 const LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'SingletonTab']);

@@ -45,8 +45,11 @@ interface PeriodSummaryResponse {
 type QuotableMessage = proto.IWebMessageInfo & { key: proto.IMessageKey };
 
 interface BudgetAlert {
+    budget_id: string;
+    period_start: string;
     category: string;
     alert_level: 'warning' | 'over';
+    amount_spent: number;
     message: string;
 }
 
@@ -635,14 +638,31 @@ function setupBudgetCheck(): void {
                 return;
             }
 
+            let delivered = 0;
             for (const alert of alerts) {
-                const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
-                await currentSock.sendMessage(BUDGET_ALERT_JID, {
-                    text: `${icon} ${toWhatsAppFormat(alert.message)}`,
-                });
+                try {
+                    const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
+                    await currentSock.sendMessage(BUDGET_ALERT_JID, {
+                        text: `${icon} ${toWhatsAppFormat(alert.message)}`,
+                    });
+                } catch (sendError) {
+                    console.error(`Budget alert for ${alert.category} not delivered, will retry next check: ${(sendError as Error).message}`);
+                    continue;
+                }
+                delivered += 1;
+                try {
+                    await callApi('/budget-alerts/ack', 'POST', {
+                        budget_id: alert.budget_id,
+                        period_start: alert.period_start,
+                        alert_level: alert.alert_level,
+                        amount_spent: alert.amount_spent,
+                    });
+                } catch (ackError) {
+                    console.error(`Budget alert for ${alert.category} was sent but could not be acknowledged (may repeat): ${(ackError as Error).message}`);
+                }
                 await sleep(500);
             }
-            console.log(`Sent ${alerts.length} budget alert(s)\n`);
+            console.log(`Sent ${delivered}/${alerts.length} budget alert(s)\n`);
         } catch (error) {
             const err = error as Error;
             console.error(`Budget check cron error: ${err.message}\n`);

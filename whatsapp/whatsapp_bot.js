@@ -579,12 +579,29 @@ cron.schedule('0 */2 * * *', async () => {
             return;
         }
 
+        let delivered = 0;
         for (const alert of alerts) {
-            const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
-            await client.sendMessage(DAILY_SUMMARY_CHAT_ID, `${icon} ${toWhatsAppFormat(alert.message)}`);
+            try {
+                const icon = alert.alert_level === 'over' ? '🚨' : '⚠️';
+                await client.sendMessage(DAILY_SUMMARY_CHAT_ID, `${icon} ${toWhatsAppFormat(alert.message)}`);
+            } catch (sendError) {
+                console.error(`Budget alert for ${alert.category} not delivered, will retry next check: ${sendError.message}`);
+                continue;
+            }
+            delivered++;
+            try {
+                await axios.post(`${API_URL}/budget-alerts/ack`, {
+                    budget_id: alert.budget_id,
+                    period_start: alert.period_start,
+                    alert_level: alert.alert_level,
+                    amount_spent: alert.amount_spent
+                }, { timeout: 20000, headers: AUTH_HEADERS });
+            } catch (ackError) {
+                console.error(`Budget alert for ${alert.category} was sent but could not be acknowledged (may repeat): ${ackError.message}`);
+            }
             await new Promise(resolve => setTimeout(resolve, 500));
         }
-        console.log(`Sent ${alerts.length} budget alert(s)\n`);
+        console.log(`Sent ${delivered}/${alerts.length} budget alert(s)\n`);
     } catch (error) {
         console.error(`Budget check cron error: ${error.message}\n`);
     }

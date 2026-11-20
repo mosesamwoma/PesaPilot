@@ -9,7 +9,9 @@ import base64
 import logging
 import threading
 from contextlib import asynccontextmanager
-from typing import Optional
+from datetime import date
+from typing import Literal, Optional
+from uuid import UUID
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
@@ -129,6 +131,13 @@ class SetBudgetRequest(BaseModel):
 class BudgetAlertsResponse(BaseModel):
     alerts: list
     count: int
+
+
+class BudgetAlertAck(BaseModel):
+    budget_id: UUID
+    period_start: date
+    alert_level: Literal['warning', 'over']
+    amount_spent: float = Field(ge=0, le=1_000_000_000, allow_inf_nan=False)
 
 
 def is_valid_mpesa_sms(text: str) -> bool:
@@ -375,11 +384,21 @@ def monthly_summary():
 @router.get("/budget-check", response_model=BudgetAlertsResponse, dependencies=[Depends(limit_ai_calls)])
 def budget_check():
     try:
-        alerts = get_analyzer().check_budget_alerts()
+        alerts = get_analyzer().get_pending_budget_alerts()
         return BudgetAlertsResponse(alerts=alerts, count=len(alerts))
     except Exception as e:
         logger.error(f"budget_check endpoint error: {e}")
         return BudgetAlertsResponse(alerts=[], count=0)
+
+
+@router.post("/budget-alerts/ack")
+def budget_alert_ack(request: BudgetAlertAck):
+    recorded = get_analyzer().acknowledge_budget_alert(
+        str(request.budget_id), request.period_start.isoformat(), request.alert_level, request.amount_spent
+    )
+    if not recorded:
+        raise HTTPException(status_code=409, detail="Alert could not be recorded")
+    return {"success": True}
 
 
 @router.get("/budgets")

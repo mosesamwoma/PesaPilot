@@ -353,7 +353,7 @@ class MpesaAnalyzer:
         ]
         return {'kind': kind, 'current': current, 'previous': previous, 'budgets': budgets}
 
-    def check_budget_alerts(self) -> List[Dict]:
+    def get_pending_budget_alerts(self) -> List[Dict]:
         try:
             status_rows = self.db.get_budget_status()
             if not status_rows:
@@ -361,32 +361,48 @@ class MpesaAnalyzer:
 
             recent = self.db.get_recent_budget_alerts(since_days=45)
             already_alerted = {
-                (r['budget_id'], r['period_start'], r['alert_level']) for r in recent
+                (str(r['budget_id']), str(r['period_start']), r['alert_level']) for r in recent
             }
 
             due = budget_monitor.evaluate_budgets(status_rows, already_alerted)
-            if not due:
-                return []
-
-            results = []
-            for alert in due:
-                message = self.groq.budget_alert_message(alert)
-                sent = self.db.record_budget_alert(
-                    budget_id=alert['budget_id'],
-                    period_start=alert['period_start'],
-                    alert_level=alert['alert_level'],
-                    amount_spent=alert['amount_spent'],
-                )
-                if sent:
-                    results.append({
-                        'category': alert['category'],
-                        'alert_level': alert['alert_level'],
-                        'message': message,
-                    })
-            return results
+            return [
+                {
+                    'budget_id': str(alert['budget_id']),
+                    'period_start': alert['period_start'],
+                    'alert_level': alert['alert_level'],
+                    'amount_spent': alert['amount_spent'],
+                    'category': alert['category'],
+                    'message': self.groq.budget_alert_message(alert),
+                }
+                for alert in due
+            ]
         except Exception as e:
-            logger.error(f"check_budget_alerts failed: {e}")
+            logger.error(f"get_pending_budget_alerts failed: {e}")
             return []
+
+    def acknowledge_budget_alert(self, budget_id: str, period_start: str,
+                                 alert_level: str, amount_spent: float) -> bool:
+        if alert_level not in (budget_monitor.ALERT_WARNING, budget_monitor.ALERT_OVER):
+            return False
+        return self.db.record_budget_alert(
+            budget_id=budget_id,
+            period_start=period_start,
+            alert_level=alert_level,
+            amount_spent=amount_spent,
+        )
+
+    def check_budget_alerts(self) -> List[Dict]:
+        results = []
+        for alert in self.get_pending_budget_alerts():
+            if self.acknowledge_budget_alert(
+                alert['budget_id'], alert['period_start'], alert['alert_level'], alert['amount_spent']
+            ):
+                results.append({
+                    'category': alert['category'],
+                    'alert_level': alert['alert_level'],
+                    'message': alert['message'],
+                })
+        return results
 
     def generate_dynamic_chart(self, description: str, dark: bool = True) -> Dict:
         from src import chart_generator

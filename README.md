@@ -146,11 +146,11 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 scripts/setup_db.sh
 ```
 
-This reads `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` from `.env`, creates (or updates the password of) the role, creates the database and applies `schema/init_db.sql`. It never prints the password and has no default one. Re-run it after rotating the password.
+This reads `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` from `.env`, creates (or updates the password of) the role, creates the database and applies `schema/0001_init.sql`. It never prints the password and has no default one. Re-run it after rotating the password.
 
 > Postgres never runs inside Docker here — `docker-compose.yml` only runs the app. Always run `psql` from a machine with network access to your Postgres server.
 
-`schema/init_db.sql` is idempotent — re-running it on an existing database is safe and picks up schema fixes. All SQL functions and views compute dates in `Africa/Nairobi` time regardless of the database server's timezone. The old `run_query` function and the unused `daily_summary` / `category_summary` views were removed; drop them from an existing database with `DROP FUNCTION IF EXISTS run_query(TEXT); DROP VIEW IF EXISTS daily_summary, category_summary;`.
+`schema/0001_init.sql` is idempotent — re-running it on an existing database is safe and picks up schema fixes. All SQL functions and views compute dates in `Africa/Nairobi` time regardless of the database server's timezone. The old `run_query` function and the unused `daily_summary` / `category_summary` views were removed; drop them from an existing database with `DROP FUNCTION IF EXISTS run_query(TEXT); DROP VIEW IF EXISTS daily_summary, category_summary;`.
 
 Already have a `transactions` table without `transaction_cost`? Run this additive migration instead:
 
@@ -433,7 +433,7 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | `LLM_MODEL_FAST` | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
 | `LLM_MODEL_SMART` | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
 
-**SQL safety guard** (`src/sql_guard.py`): every LLM query passes `is_safe_select_sql()` — must start with `SELECT` or `WITH`, no `;`, no comments, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/MERGE/CALL/COPY`, no `pg_*`/`lo_*`/`dblink`/`set_config` functions, no row-locking clauses, and every function call must be on a fixed allowlist of safe aggregate, window, date, math and string functions plus the six analytics functions in `schema/init_db.sql`. It then runs in a read-only transaction with a 10 s statement timeout, capped at 500 rows. User *questions* are only rejected when they contain actual destructive statements (e.g. `drop table …`), so ordinary questions like "how much did I spend on call credit?" work.
+**SQL safety guard** (`src/sql_guard.py`): every LLM query passes `is_safe_select_sql()` — must start with `SELECT` or `WITH`, no `;`, no comments, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/MERGE/CALL/COPY`, no `pg_*`/`lo_*`/`dblink`/`set_config` functions, no row-locking clauses, and every function call must be on a fixed allowlist of safe aggregate, window, date, math and string functions plus the six analytics functions in `schema/0001_init.sql`. It then runs in a read-only transaction with a 10 s statement timeout, capped at 500 rows. User *questions* are only rejected when they contain actual destructive statements (e.g. `drop table …`), so ordinary questions like "how much did I spend on call credit?" work.
 
 **Caching:** every Groq call is cached in-memory by a hash of (system, user) prompt, TTL from 5 min (chat) to 1 hour (SQL), cleared on new transactions.
 
@@ -444,7 +444,7 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | Issue | Fix |
 |---|---|
 | `.env file not found!` | Copy `.env.example` to `.env` first |
-| `relation ... does not exist` / missing function errors | Apply `schema/init_db.sql` |
+| `relation ... does not exist` / missing function errors | Apply `schema/0001_init.sql` |
 | `ModuleNotFoundError: No module named 'src'` | Run from the project root |
 | No transactions after loading XML | Confirm it's an SMS Backup & Restore export with M-Pesa messages |
 | Port 8011 in use | Choose another host port in `docker-compose.yml`; keep the container port at `8000` |

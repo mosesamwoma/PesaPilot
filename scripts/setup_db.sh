@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SCHEMA_FILE="$PROJECT_ROOT/schema/init_db.sql"
+SCHEMA_FILE="$PROJECT_ROOT/schema/0001_init.sql"
 
 env_value() {
     [ -f "$PROJECT_ROOT/.env" ] || return 0
@@ -115,7 +115,7 @@ SQL
 echo "Role and database ready"
 echo
 
-echo "==> Applying schema/init_db.sql..."
+echo "==> Applying schema/0001_init.sql..."
 
 if command -v psql >/dev/null 2>&1; then
     PGPASSWORD="$PGSQL_PASSWORD" psql -v ON_ERROR_STOP=1 \

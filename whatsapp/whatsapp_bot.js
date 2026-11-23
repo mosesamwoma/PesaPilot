@@ -484,7 +484,7 @@ client.on('message', async (message) => {
         }
 
         try {
-            const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 30000, headers: AUTH_HEADERS });
+            const response = await axios.post(`${API_URL}/ask`, { question: userMessage }, { timeout: 90000, headers: AUTH_HEADERS });
 
             if (response.data.chart) {
                 try {

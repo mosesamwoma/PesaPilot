@@ -1,6 +1,7 @@
 import os
 import hashlib
 import logging
+import threading
 import time
 from typing import Optional
 from groq import Groq
@@ -51,6 +52,7 @@ class _ResponseCache:
 
     def __init__(self):
         self._store: dict = {}
+        self._lock = threading.Lock()
 
     @staticmethod
     def _key(system: str, user: str) -> str:
@@ -59,40 +61,53 @@ class _ResponseCache:
 
     def get(self, system: str, user: str):
         key = self._key(system, user)
-        entry = self._store.get(key)
-        if entry and time.time() < entry['expires_at']:
-            logger.debug(f"Cache HIT  [{key[:12]}]")
-            return entry['response']
-        if entry:
-            logger.debug(f"Cache MISS (expired) [{key[:12]}]")
-            del self._store[key]
+        with self._lock:
+            entry = self._store.get(key)
+            if entry and time.time() < entry['expires_at']:
+                logger.debug(f"Cache HIT  [{key[:12]}]")
+                return entry['response']
+            if entry:
+                logger.debug(f"Cache MISS (expired) [{key[:12]}]")
+                self._store.pop(key, None)
         return None
 
     def set(self, system: str, user: str, response: str, ttl: int):
         key = self._key(system, user)
-        if len(self._store) >= _CACHE_MAX_ENTRIES:
-            now = time.time()
-            self._store = {k: v for k, v in self._store.items() if now < v['expires_at']}
-            while len(self._store) >= _CACHE_MAX_ENTRIES:
-                del self._store[next(iter(self._store))]
-        self._store[key] = {
-            'response':   response,
-            'expires_at': time.time() + ttl,
-        }
+        with self._lock:
+            if len(self._store) >= _CACHE_MAX_ENTRIES:
+                now = time.time()
+                self._store = {k: v for k, v in self._store.items() if now < v['expires_at']}
+                while len(self._store) >= _CACHE_MAX_ENTRIES:
+                    self._store.pop(next(iter(self._store)), None)
+            self._store[key] = {
+                'response':   response,
+                'expires_at': time.time() + ttl,
+            }
         logger.debug(f"Cache SET  [{key[:12]}] ttl={ttl}s")
 
     def clear(self):
-        self._store.clear()
+        with self._lock:
+            self._store.clear()
         logger.info("Cache cleared")
 
     @property
     def size(self) -> int:
-        now = time.time()
-        self._store = {k: v for k, v in self._store.items() if now < v['expires_at']}
-        return len(self._store)
+        with self._lock:
+            now = time.time()
+            self._store = {k: v for k, v in self._store.items() if now < v['expires_at']}
+            return len(self._store)
 
 
 _cache = _ResponseCache()
+
+
+def _env_number(name: str, default, cast, low, high):
+    try:
+        value = cast((os.getenv(name) or '').strip() or default)
+    except ValueError:
+        logger.warning(f"{name} is not a valid number; using {default}")
+        return default
+    return max(low, min(high, value))
 
 
 TTL_SQL        = 3600
@@ -115,11 +130,11 @@ class GroqClient:
         if legacy:
             self.model_fast = legacy
 
-        self.temperature = float(os.getenv('LLM_TEMPERATURE', 0.6))
-
-        self.max_tokens = int(os.getenv('LLM_MAX_TOKENS', 1536))
-        self.reasoning_effort = os.getenv('LLM_REASONING_EFFORT', 'low')
-        self.timeout = int(os.getenv('API_TIMEOUT', 20))
+        self.temperature = _env_number('LLM_TEMPERATURE', 0.6, float, 0.0, 2.0)
+        self.max_tokens = _env_number('LLM_MAX_TOKENS', 1536, int, 256, 8192)
+        effort = (os.getenv('LLM_REASONING_EFFORT') or 'low').strip().lower()
+        self.reasoning_effort = effort if effort in ('low', 'medium', 'high') else 'low'
+        self.timeout = _env_number('API_TIMEOUT', 20, int, 5, 120)
 
     def _chat(self, system: str, user: str, model: Optional[str] = None, timeout: Optional[int] = None,
               max_tokens: Optional[int] = None) -> str:
@@ -165,6 +180,10 @@ class GroqClient:
             _cache.set(system, user, response, ttl=ttl)
         return response
 
+    @property
+    def available(self) -> bool:
+        return self.client is not None
+
     @staticmethod
     def invalidate_cache():
         _cache.clear()
@@ -174,7 +193,7 @@ class GroqClient:
         return _cache.size
 
     def generate_sql(self, question: str, schema: str, days: Optional[int] = None,
-                      row_limit: Optional[int] = None) -> str:
+                      row_limit: Optional[int] = None, feedback: str = "") -> str:
         today = now_nairobi().strftime("%Y-%m-%d")
         if days is not None:
             date_rule = f"- Filter to the last {days} days from today ({today})"
@@ -193,6 +212,10 @@ class GroqClient:
             f"- Limit {row_limit} rows" if row_limit is not None
             else "- Do not add an arbitrary LIMIT — return every matching row unless the question asks for a specific top-N"
         )
+        feedback_rule = (
+            f"\n- Your previous attempt failed ({sanitize_for_prompt(feedback, 300)}). Return a corrected query."
+            if feedback else ""
+        )
         system = f"""You are a PostgreSQL expert. Generate ONE SQL SELECT query.
 
 Schema:
@@ -203,7 +226,12 @@ Rules:
 {date_rule}
 - Exclude type='credit' for spending
 - Use only the tables, views and functions listed in the schema
-{limit_rule}"""
+- Allowed SQL functions: SUM, AVG, COUNT, MIN, MAX, ROUND, COALESCE, NULLIF, GREATEST, LEAST, DATE_TRUNC, EXTRACT,
+  TO_CHAR, LOWER, UPPER, LENGTH, window functions (ROW_NUMBER, RANK, LAG, LEAD, SUM/AVG OVER), PERCENTILE_CONT,
+  STDDEV. Never use GENERATE_SERIES, UNNEST, pg_* or system tables.
+- The timestamp column is already Nairobi local time; compare it with (NOW() AT TIME ZONE 'Africa/Nairobi')
+- Spending is type != 'credit'. Fees are the transaction_cost column, not part of amount
+{limit_rule}{feedback_rule}"""
         sql = self._cached_chat(system, question, ttl=TTL_SQL, model=self.model_smart)
         sql = sql.replace('```sql', '').replace('```', '').strip()
 
@@ -242,7 +270,7 @@ Answer the user's question conversationally and helpfully. Apply Rules 1-7 where
         return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast)
 
     def generate_chart_spec(self, description: str, system_prompt: str) -> str:
-        return self._cached_chat(system_prompt, description, ttl=TTL_CHAT, model=self.model_fast, max_tokens=400)
+        return self._cached_chat(system_prompt, description, ttl=TTL_CHAT, model=self.model_fast, max_tokens=1200)
 
     def budget_plan(self, context: str = "") -> str:
         system = KENYA_SYSTEM_PROMPT + """
@@ -278,9 +306,12 @@ You are explaining a {horizon}-day spending FORECAST produced by a statistical m
             f"Historical average daily spend: KES {forecast_data.get('historical_avg_daily', 0):,.0f}\n"
             f"Total predicted spend for this period: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
             f"Average predicted daily spend: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
-            f"Trend: {forecast_data.get('trend', 'Stable')}\n"
+            f"Trend versus the user's recent daily pace (KES {forecast_data.get('recent_avg_daily', 0):,.0f}/day): {forecast_data.get('trend', 'Stable')}\n"
+            f"Likely range for the total: KES {forecast_data.get('total_lower', 0):,.0f} to KES {forecast_data.get('total_upper', 0):,.0f}\n"
             f"Risk level: {forecast_data.get('risk_level', 'Low')}\n"
-            f"Based on {forecast_data.get('history_days', 0)} days of transaction history."
+            f"Forecast confidence: {forecast_data.get('confidence', 'Medium')}"
+            + (" (history is spiky, so say plainly that the range is wide)" if forecast_data.get('confidence') == 'Low' else "")
+            + f"\nBased on {forecast_data.get('history_days', 0)} days of transaction history."
         )
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
 
@@ -289,16 +320,31 @@ You are explaining a {horizon}-day spending FORECAST produced by a statistical m
             return ""
         system = KENYA_SYSTEM_PROMPT + """
 
-You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC USER compared to their own normal spending pattern in that same category — not compared to other people. Apply Rules 1-7 wherever they fit. For each item, name the amount, recipient/category, and briefly why it stands out relative to their usual pattern in that category. Don't be alarmist — some flagged transactions are perfectly legitimate one-offs (a big one-time purchase, a rare emergency). End with one practical next step (e.g. review it, or ignore if expected). Max 180 words. No database/SQL/model/technical language — never say "IsolationForest", "z-score", or "outlier model" by name."""
+You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC USER compared to their own normal spending pattern in that same category — not compared to other people. Apply Rules 1-7 wherever they fit. For each item, name the amount, recipient/category, and explain why it stands out using ONLY the verified reason provided (never invent a different reason; for a possible duplicate payment, tell them to check they did not pay twice). Don't be alarmist — some flagged transactions are perfectly legitimate one-offs (a big one-time purchase, a rare emergency). End with one practical next step (e.g. review it, or ignore if expected). Max 180 words. No database/SQL/model/technical language — never say "IsolationForest", "z-score", or "outlier model" by name."""
         lines = [
             f"KES {float(a.get('amount') or 0):,.0f} to {sanitize_for_prompt(a.get('recipient') or 'Unknown')} "
             f"({sanitize_for_prompt(a.get('merchant_category') or 'other', 30)}) "
             f"on {sanitize_for_prompt(a.get('timestamp') or '', 30)} "
-            f"— unusualness score {a.get('score', 0)}"
+            f"— unusualness {a.get('score', 0)}/10; verified reason: "
+            f"{sanitize_for_prompt('; '.join(a.get('reasons') or ['unusual for its category']), 200)}"
             for a in anomalies[:6]
         ]
         user = "Flagged transactions:\n" + "\n".join(lines)
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
+
+    def chart_commentary(self, description: str, facts: str) -> str:
+        """One or two grounded sentences about a chart the user just asked for."""
+        system = KENYA_SYSTEM_PROMPT + """
+
+You are adding a short caption under a chart. Use ONLY the verified facts provided; never invent numbers. Write 2 sentences, maximum 55 words: the most useful insight first, then one practical suggestion. No headers, no bullets, no emojis."""
+        user = f"Chart requested: {sanitize_for_prompt(description, 200)}\nVerified facts:\n{facts}"
+        return self._cached_chat(system, user, ttl=TTL_CHAT, model=self.model_fast, max_tokens=500)
+
+    def health_coach(self, facts: str) -> str:
+        system = KENYA_SYSTEM_PROMPT + """
+
+You are the user's money coach. You are given a computed financial health score with its components, runway, spending patterns and recurring payments, all verified from their real M-Pesa data. Explain the score in plain language: celebrate the strongest area first, then the two weakest areas with the exact numbers, then give exactly three concrete actions for the next 7 days, each sized in KES. Never contradict or recompute the numbers. Max 200 words."""
+        return self._cached_chat(system, facts, ttl=TTL_INSIGHTS, model=self.model_smart, max_tokens=1800)
 
     def budget_alert_message(self, alert: dict) -> str:
         category = sanitize_for_prompt(alert.get('category') or 'this category', 40).title()

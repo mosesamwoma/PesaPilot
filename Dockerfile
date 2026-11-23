@@ -1,17 +1,31 @@
-# PesaPilot — Baileys (TypeScript) WhatsApp bot + FastAPI dashboard API
+# PesaPilot — Baileys (TypeScript) WhatsApp bot + FastAPI API
 # Shipped image: Baileys only. No Chromium/Puppeteer needed in production —
 # Baileys talks to WhatsApp over a websocket, not a headless browser.
 # (whatsapp-web.js scripts in package.json remain available for local dev only.)
-FROM python:3.12-slim
+#
+# Multi-stage build: Node is copied from the official Node image instead of piping a
+# remote setup script into bash as root, which removes a supply-chain risk from the build.
+
+# ---------------------------------------------------------------- stage 1: build the bot
+FROM node:24-bookworm-slim AS nodebuild
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+WORKDIR /build
+COPY package*.json tsconfig.json ./
+RUN npm ci --ignore-scripts && npm cache clean --force
+COPY whatsapp/ ./whatsapp/
+RUN npm run build \
+    && npm prune --omit=dev \
+    && npm cache clean --force
+
+# ---------------------------------------------------------------- stage 2: runtime
+FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
-# ----------------------------------------------------------------
 # Force UTF-8 everywhere (Python, Node, shell, logs) so emojis in
 # WhatsApp replies / AI responses / chart titles never get mangled
-# ----------------------------------------------------------------
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONIOENCODING=utf-8 \
@@ -19,30 +33,25 @@ ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     MPLCONFIGDIR=/tmp/matplotlib
 
-# ----------------------------------------------------------------
-# System deps: curl (healthcheck) + fontconfig (chart fonts) + Node.js 24.x
-# ----------------------------------------------------------------
-RUN apt-get update && apt-get install -y \
+# curl (healthcheck) + fontconfig/fonts (chart text)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    gnupg \
     fontconfig \
     fonts-noto-color-emoji \
     fonts-dejavu \
-    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y nodejs \
-    && fc-cache -fv \
+    && fc-cache -f \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN node --version && npm --version
+# Node runtime from the official image (same Debian release, so it links cleanly).
+COPY --from=nodebuild /usr/local/bin/node /usr/local/bin/node
+RUN node --version
 
-# ----------------------------------------------------------------
 # Unprivileged runtime user. The app code stays root-owned (read-only to the
 # app); only the session and data folders are writable by this user.
 # The host folders you bind-mount must be owned by this UID/GID — run
 # scripts/prepare_dirs.sh once (or: sudo chown -R 10001:10001 sessions data).
-# ----------------------------------------------------------------
 ARG APP_UID=10001
 ARG APP_GID=10001
 RUN groupadd --gid ${APP_GID} pesapilot \
@@ -51,52 +60,22 @@ RUN groupadd --gid ${APP_GID} pesapilot \
 
 WORKDIR /app
 
-# ----------------------------------------------------------------
-# Entrypoint (Baileys only — podman/entrypoint_wwebjs.sh stays in the repo
-# for the whatsapp-web.js/Podman variant, but is intentionally NOT copied
-# into the shipped image)
-# ----------------------------------------------------------------
 COPY entrypoint_baileys.sh /app/entrypoint_baileys.sh
-RUN chmod +x /app/entrypoint_baileys.sh
+RUN chmod 755 /app/entrypoint_baileys.sh
 
-# ----------------------------------------------------------------
-# Python deps
-# ----------------------------------------------------------------
+# Python deps (all pinned in requirements.txt)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# ----------------------------------------------------------------
-# Node deps (full install incl. devDependencies for the tsc build step;
-# puppeteer/whatsapp-web.js get installed here too since they're still
-# in package.json for local dev, but they are NEVER invoked at runtime
-# in this image since only dist/whatsapp_bot.js gets executed)
-#
-# PUPPETEER_SKIP_DOWNLOAD=true is required here: puppeteer's postinstall
-# script otherwise tries to download a full Chrome binary, which fails
-# the build entirely on networks/CI runners that block that host. This
-# must be a real ENV var at build time — .env is never read by `docker
-# build`, and older var names like PUPPETEER_SKIP_CHROMIUM_DOWNLOAD are
-# ignored by current puppeteer versions.
-# ----------------------------------------------------------------
-ENV PUPPETEER_SKIP_DOWNLOAD=true
+# Compiled bot + production node_modules from stage 1
+COPY package*.json ./
+COPY --from=nodebuild /build/node_modules ./node_modules
+COPY --from=nodebuild /build/dist ./dist
 
-COPY package*.json tsconfig.json ./
-RUN npm ci \
-    && npm cache clean --force
-
-# ----------------------------------------------------------------
 # App source
-# ----------------------------------------------------------------
 COPY src/ ./src/
 COPY whatsapp/ ./whatsapp/
-
-# Compile whatsapp_bot.ts -> dist/whatsapp_bot.js (Baileys)
-RUN npm run build
-
-# Drop devDependencies now that the build is done, to slim the image
-RUN npm prune --omit=dev \
-    && npm cache clean --force
 
 RUN mkdir -p data/raw data/processed data/sessions .baileys_auth \
     && chown -R ${APP_UID}:${APP_GID} data .baileys_auth \

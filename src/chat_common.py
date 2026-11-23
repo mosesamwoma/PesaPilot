@@ -53,7 +53,39 @@ CHART_TRIGGER_WORDS = [
     'breakdown of', 'spending by', 'spending per', 'where did i spend', 'where did my money go',
     'how did i spend', 'proportion', 'percentage of my spending', 'compare my spending',
     'show me my spending', 'show my spending', 'transaction costs', 'transaction fees',
+    'treemap', 'tree map', 'waffle', 'radar', 'pareto', 'waterfall', 'calendar', 'ecdf', 'kde', 'ridge plot',
+    'ridgeline', 'swarm', 'strip plot', 'lollipop', 'hexbin', 'joint plot', 'pair plot', 'correlation',
+    'cluster map', 'clustermap', 'moving average', 'rolling average', 'cumulative', 'cash flow', 'cashflow',
+    'money in vs', 'income vs', 'overview dashboard', 'regression', 'bubble',
 ]
+
+EXPLICIT_CHART_RE = re.compile(
+    r'\b(?:chart|charts|graph|graphs|plot|plots|heat ?map|histogram|treemap|tree map|waffle|visuali[sz]e|'
+    r'visuali[sz]ation|diagram|pie|donut|doughnut|violin|ridgeline|ridge plot|swarm|lollipop|pareto|waterfall|'
+    r'sparkline|scorecard)\b',
+    re.IGNORECASE,
+)
+
+HEALTH_KEYWORDS = [
+    'financial health', 'health score', 'money score', 'financial fitness', 'how am i doing financially',
+    'how healthy are my finances', 'how are my finances', 'money health', 'improve my finances',
+    'how can i save', 'save more money', 'savings tips', 'money tips', 'financial score',
+]
+
+RECURRING_KEYWORDS = [
+    'recurring', 'subscription', 'subscriptions', 'my habits', 'spending habits', 'regular payments',
+    'repeat payments', 'habitual',
+]
+
+RUNWAY_KEYWORDS = [
+    'runway', 'how long will my money last', 'how long will my balance last', 'days left', 'when will i run out',
+    'will i run out', 'days of cover', 'how many days can i last',
+]
+
+SUMMARY_COMMAND_RE = re.compile(r'\bsummary\b')
+DAILY_COMMAND_RE = re.compile(
+    r"^\s*(?:(?:my|the|give me|show me)\s+)*(?:daily|today(?:'s)?)(?:\s+(?:summary|overview|report|spending))?\s*\??\s*$"
+)
 
 PERIOD_REPORT_COMMAND_RE = re.compile(
     r"^\s*(?:(?:my|the|give me|show me|send me)\s+)*(?:last\s+)?"
@@ -88,23 +120,25 @@ CATEGORY_SYNONYMS: Dict[str, List[str]] = {
     'other': ['other', 'miscellaneous', 'misc'],
 }
 
-HELP_SECTIONS = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
+HELP_SECTIONS = """🤖 **PesaPilot v1.4 - Your AI Financial Assistant**
 
-**CHARTS** (Describe what you want, in your own words):
+**CHARTS** (describe what you want, in your own words; I pick the best chart if you don't name one):
   • "Pie chart of my spending by category last month"
-  • "Donut chart of my spending by category"
-  • "Bar chart of my top 5 recipients in August"
-  • "Show my transport spending as a line chart this year"
-  • "How much has M-Pesa charged me in fees this month?"
-  • "Heatmap of my spending by day of the week"
-  • "Stacked bar of my spending by category and day"
-  • "Distribution of my transaction amounts last 90 days"
-  • "Spread of my food spending" or "Violin plot of my spending by category"
-  • Any chart type (bar/pie/donut/line/area/scatter/histogram/heatmap/
-    box/violin/stacked bar) + any date range (a specific month, "last
-    week", "Q1", exact dates, "all time")
+  • "Treemap / waffle / donut / radar / pareto of my spending"
+  • "Line chart of daily spending" · "7-day moving average" · "Cumulative money in vs out"
+  • "Money in vs money out by month" · "Where did my income go" (waterfall)
+  • "Calendar heatmap of my spending" · "Heatmap by hour and weekday"
+  • "Violin / box / strip / swarm / ridge / ECDF / KDE / histogram of my payment sizes"
+  • "Scatter / bubble / regression / hexbin / joint / pair plot", "Correlation between categories"
+  • "Overview dashboard" · "Forecast my spending next 14 days"
+  • Any period: "last month", "in August", "Q1", "last 90 days", "2025", exact dates, "all time"
 
-**QUESTIONS** (Ask naturally):
+**SMART INSIGHTS**:
+  • "Financial health score" → score out of 100 with tips and a scorecard chart
+  • "Recurring payments" / "my habits" → subscriptions and daily habits detected from your history
+  • "How long will my money last?" → cash runway from your recent spending
+
+**QUESTIONS** (ask naturally):
   • "What did I spend on food?"
   • "Top 5 expenses?"
   • "How much to Safaricom?"
@@ -121,14 +155,12 @@ HELP_SECTIONS = """🤖 **PesaPilot v1.2 - Your AI Financial Assistant**
   • "90 days" / "All time" → Extended periods
 {manual_sms}
 **FORECASTING**:
-  • "Forecast" / "Forecast 7 days" → Next 7-day spending prediction
-  • "Forecast 30 days" → Next 30-day spending prediction
-  • "Spending prediction" → Same as "forecast"
-  • Returns predicted amount, trend, risk level + AI summary
+  • "Forecast" / "Forecast 7 days" / "Forecast 30 days"
+  • Backtested on your own history, with a likely range and honest confidence
 
 **ANOMALY DETECTION**:
-  • "Anomalies" / "Unusual spending" → ML-flagged unusual transactions
-  • Learns YOUR normal pattern per category, not a generic threshold
+  • "Anomalies" / "Unusual spending" → flagged transactions with the reason for each
+  • Learns YOUR normal pattern per recipient and category, and spots possible duplicate payments
 {anomaly_page}
 **BUDGET GOALS**:
   • "Set budget food 5000" → Monthly food budget of KES 5,000
@@ -343,20 +375,74 @@ def budget_status_text(rows: List[Dict], dashboard: bool = False) -> str:
 def forecast_header(forecast_data: Dict, horizon: int) -> str:
     trend = forecast_data.get('trend', 'Stable')
     risk = forecast_data.get('risk_level', 'Low')
+    confidence = forecast_data.get('confidence')
     trend_icon = {'Increasing': '📈', 'Decreasing': '📉', 'Stable': '➡️'}.get(trend, '')
     risk_icon = {'Low': '🟢', 'Moderate': '🟡', 'High': '🔴'}.get(risk, '')
-    return (
-        f"**{horizon}-Day Spending Forecast**\n\n"
-        f"Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}\n"
-        f"Avg per Day: KES {forecast_data.get('avg_predicted_daily', 0):,.0f}\n"
-        f"{trend_icon} Trend: {trend}\n"
-        f"{risk_icon} Risk Level: {risk}\n"
-    )
+    lines = [
+        f"**{horizon}-Day Spending Forecast**",
+        "",
+        f"Predicted Spend: KES {forecast_data.get('total_predicted', 0):,.0f}",
+    ]
+    low, high = forecast_data.get('total_lower'), forecast_data.get('total_upper')
+    if low is not None and high is not None:
+        lines.append(f"Likely Range: KES {low:,.0f} to {high:,.0f}")
+    lines += [
+        f"Avg per Day: KES {forecast_data.get('avg_predicted_daily', 0):,.0f} "
+        f"(recent pace KES {forecast_data.get('recent_avg_daily', 0):,.0f})",
+        f"{trend_icon} Trend: {trend} vs your recent pace",
+        f"{risk_icon} Risk Level: {risk}",
+    ]
+    if confidence:
+        backtest = (forecast_data.get('backtest') or {}).get('error_pct_7d')
+        note = f" (typical 7-day error {backtest:.0f}% in backtests)" if backtest is not None else ''
+        lines.append(f"Confidence: {confidence}{note}")
+    return "\n".join(lines) + "\n"
 
 
 def period_report_kind(question_lower: str) -> Optional[str]:
     match = PERIOD_REPORT_COMMAND_RE.match(question_lower or '')
     return match.group('kind') if match else None
+
+
+def detect_intent(question: str) -> Tuple[str, Optional[str]]:
+    """Single source of truth for routing a chat message (WhatsApp API and dashboard share it).
+
+    An explicit chart request always wins over advice keywords, so "bar chart of my investment spending"
+    draws a chart instead of giving investment advice.
+    """
+    q = (question or '').lower().strip()
+    if is_set_budget_command(q):
+        return 'set_budget', None
+    if matches_any_keyword(q, BUDGET_STATUS_KEYWORDS):
+        return 'budget_status', None
+    if matches_any_keyword(q, ANOMALY_KEYWORDS):
+        return 'anomalies', None
+    if q.strip('?!. ') in ('help', 'commands', 'menu') or 'what can you do' in q:
+        return 'help', None
+    if DAILY_COMMAND_RE.match(q):
+        return 'daily', None
+    kind = period_report_kind(q)
+    if kind:
+        return 'period', kind
+    if EXPLICIT_CHART_RE.search(q):
+        return 'chart', None
+    if matches_any_keyword(q, HEALTH_KEYWORDS):
+        return 'health', None
+    if matches_any_keyword(q, RECURRING_KEYWORDS):
+        return 'recurring', None
+    if matches_any_keyword(q, RUNWAY_KEYWORDS):
+        return 'runway', None
+    if matches_any_keyword(q, BUDGET_KEYWORDS):
+        return 'budget_plan', None
+    if matches_any_keyword(q, INVEST_KEYWORDS):
+        return 'invest', None
+    if matches_any_keyword(q, FORECAST_KEYWORDS):
+        return 'forecast', None
+    if matches_any_keyword(q, CHART_TRIGGER_WORDS):
+        return 'chart', None
+    if SUMMARY_COMMAND_RE.search(q) and len(q.split()) <= 6:
+        return 'summary', None
+    return 'ask', None
 
 
 def _report_label(report: Dict, kind: str) -> str:

@@ -25,7 +25,7 @@ path = os.environ["ENV_FILE"]
 new = {
     "POSTGRES_PASSWORD": secrets.token_urlsafe(24),
     "API_TOKEN": secrets.token_urlsafe(32),
-    "WHATSAPP_PIN": f"{secrets.randbelow(10**6):06d}",
+    "WHATSAPP_PIN": f"{secrets.randbelow(10**8):08d}",
 }
 lines = open(path, encoding="utf-8").read().splitlines()
 seen = set()

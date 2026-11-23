@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 import uuid
 from decimal import Decimal
 from datetime import datetime, timedelta, date
@@ -7,12 +8,14 @@ from typing import Any, List, Dict, Optional
 
 import pandas as pd
 import psycopg2
+import psycopg2.errors
 import psycopg2.extensions
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import execute_values, RealDictCursor
 from dotenv import load_dotenv
 
 from src.constants import SPENDING_TYPES
+from src.frames import build_frame
 from src.security import is_placeholder
 from src.sql_guard import is_safe_select_sql
 from src.timeutil import now_nairobi, since_nairobi, today_nairobi
@@ -29,6 +32,8 @@ psycopg2.extensions.register_type(_DEC2FLOAT)
 _MAX_SCORE = 999.999
 _QUERY_ROW_LIMIT = 500
 _QUERY_TIMEOUT_MS = 10000
+_MAX_CONNECT_ATTEMPTS = 5
+_TRANSIENT_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 
 def _serialize_value(v):
@@ -122,6 +127,12 @@ def _pg_connection_kwargs() -> Dict[str, Any]:
         'host': host,
         'port': os.getenv('POSTGRES_PORT', '5432'),
         'connect_timeout': 10,
+        'application_name': 'pesapilot',
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 5,
+        'options': '-c statement_timeout=60000 -c idle_in_transaction_session_timeout=60000',
     }
     sslmode = (os.getenv('POSTGRES_SSLMODE') or '').strip()
     if sslmode:
@@ -186,63 +197,96 @@ class PostgresDB:
         except Exception as e:
             logger.error(f"Error closing connection pool: {e}")
 
-    def _fetch_all(self, sql: str, params: Optional[tuple] = None, readonly: bool = False) -> List[Dict]:
-        conn = self._pool.getconn()
+    def _run(self, work, readonly: bool = False):
+        """Run work(conn) in one transaction, transparently replacing dead pooled connections.
+
+        A Postgres restart (package upgrade, reboot, failover) leaves dead sockets in the pool; those are
+        discarded and the call is retried on a fresh connection instead of failing until the app restarts.
+        """
+        last_error: Optional[Exception] = None
+        for attempt in range(1, _MAX_CONNECT_ATTEMPTS + 1):
+            conn = self._pool.getconn()
+            broken = False
+            try:
+                if conn.closed:
+                    raise psycopg2.InterfaceError('connection already closed')
+                if readonly:
+                    conn.readonly = True
+                result = work(conn)
+                conn.commit()
+                return result
+            except psycopg2.errors.QueryCanceled:
+                self._safe_rollback(conn)
+                raise
+            except _TRANSIENT_ERRORS as e:
+                broken = True
+                last_error = e
+                self._safe_rollback(conn)
+                logger.warning(f"Database connection problem (attempt {attempt}/{_MAX_CONNECT_ATTEMPTS}): {e}")
+            except Exception:
+                if not self._safe_rollback(conn):
+                    broken = True
+                raise
+            finally:
+                if readonly and not conn.closed:
+                    try:
+                        conn.readonly = False
+                    except Exception:
+                        broken = True
+                self._pool.putconn(conn, close=broken or bool(conn.closed))
+            time.sleep(min(0.2 * attempt, 1.0))
+        assert last_error is not None
+        raise last_error
+
+    @staticmethod
+    def _safe_rollback(conn) -> bool:
         try:
-            if readonly:
-                conn.readonly = True
+            if not conn.closed:
+                conn.rollback()
+            return True
+        except Exception:
+            return False
+
+    def _fetch_all(self, sql: str, params: Optional[tuple] = None, readonly: bool = False) -> List[Dict]:
+        def work(conn):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if readonly:
                     cur.execute(f"SET LOCAL statement_timeout = {_QUERY_TIMEOUT_MS}")
                 cur.execute(sql, params)
-                rows = cur.fetchall()
-            conn.commit()
-            return [_serialize_row(dict(r)) for r in rows]
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            if readonly:
-                conn.readonly = False
-            self._pool.putconn(conn)
+                return cur.fetchall()
+
+        rows = self._run(work, readonly=readonly)
+        return [_serialize_row(dict(r)) for r in rows]
 
     def _fetch_one(self, sql: str, params: Optional[tuple] = None) -> Optional[Dict]:
-        conn = self._pool.getconn()
-        try:
+        def work(conn):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(sql, params)
-                row = cur.fetchone()
-            conn.commit()
-            return _serialize_row(dict(row)) if row else None
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            self._pool.putconn(conn)
+                return cur.fetchone()
 
-    def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
-        conn = self._pool.getconn()
-        try:
+        row = self._run(work)
+        return _serialize_row(dict(row)) if row else None
+
+    def _execute(self, sql: str, params: Optional[tuple] = None) -> int:
+        def work(conn):
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            self._pool.putconn(conn)
+                return cur.rowcount
+
+        return self._run(work)
 
     def _execute_values(self, sql: str, values: list) -> None:
-        conn = self._pool.getconn()
-        try:
+        def work(conn):
             with conn.cursor() as cur:
                 execute_values(cur, sql, values)
-            conn.commit()
+
+        self._run(work)
+
+    def ping(self) -> bool:
+        try:
+            return self._fetch_one("SELECT 1 AS ok") is not None
         except Exception:
-            conn.rollback()
-            raise
-        finally:
-            self._pool.putconn(conn)
+            return False
 
     def insert_transactions(self, df: pd.DataFrame, batch_size: int = 100, overwrite: bool = True) -> int:
         if df.empty:
@@ -261,6 +305,9 @@ class PostgresDB:
                 logger.warning(f"Skipping transaction with no ID: {body_preview}")
                 continue
             rec['transaction_id'] = str(tx_id).strip()
+            for text_key in ('recipient', 'merchant_category', 'phone', 'body', 'readable_date', 'raw_date', 'type'):
+                if isinstance(rec.get(text_key), str):
+                    rec[text_key] = rec[text_key].replace('\x00', '')
             valid_records.append(rec)
 
         if not valid_records:
@@ -359,6 +406,62 @@ class PostgresDB:
         except Exception as e:
             logger.error(f"get_transactions failed: {e}")
             return []
+
+    def get_frame(self, days: Optional[int] = None, date_from: Optional[str] = None,
+                  date_to: Optional[str] = None, limit: int = 100000) -> pd.DataFrame:
+        """Typed analytics DataFrame (no SMS bodies). Window is by days back or an inclusive date range."""
+        conditions: list = []
+        params: list = []
+        since = since_nairobi(days) if days is not None else None
+        if since is not None:
+            conditions.append("timestamp >= %s")
+            params.append(since)
+        if date_from:
+            conditions.append("timestamp >= %s")
+            params.append(date_from)
+        if date_to:
+            try:
+                upper = (datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)).isoformat()
+                conditions.append("timestamp < %s")
+                params.append(upper)
+            except ValueError:
+                logger.warning(f"Ignoring invalid date_to: {date_to!r}")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(int(limit))
+        try:
+            rows = self._fetch_all(
+                f"SELECT id, transaction_id, amount, balance, transaction_cost, type, recipient, "
+                f"merchant_category, phone, timestamp FROM transactions {where_clause} "
+                f"ORDER BY timestamp ASC LIMIT %s",
+                tuple(params),
+            )
+            return build_frame(rows)
+        except Exception as e:
+            logger.error(f"get_frame failed: {e}")
+            return build_frame([])
+
+    def prune_anomalies(self, model: str, since: Optional[datetime], keep_ids: List[str]) -> int:
+        """Delete stored anomalies of this model, inside the scanned window, that are no longer flagged."""
+        try:
+            return self._execute(
+                """
+                DELETE FROM anomalies a USING transactions t
+                WHERE a.transaction_id = t.id AND a.model = %s
+                  AND (%s::timestamp IS NULL OR t.timestamp >= %s::timestamp)
+                  AND NOT (a.transaction_id = ANY(%s::uuid[]))
+                """,
+                (model, since, since, [str(k) for k in keep_ids]),
+            )
+        except Exception as e:
+            logger.error(f"prune_anomalies failed: {e}")
+            return 0
+
+    def drop_obsolete_anomaly_models(self, obsolete: List[str]) -> int:
+        try:
+            return self._execute("DELETE FROM anomalies WHERE model = ANY(%s)", (list(obsolete),))
+        except Exception as e:
+            logger.error(f"drop_obsolete_anomaly_models failed: {e}")
+            return 0
 
     def get_transactions_range(self, date_from: Optional[str] = None,
                                date_to: Optional[str] = None, limit: int = 20000) -> List[Dict]:

@@ -1,5 +1,6 @@
 import logging
 import math
+import threading
 import time
 from datetime import date
 from typing import Dict, List, Optional, Union, cast
@@ -14,8 +15,9 @@ from src.security import sanitize_for_prompt
 from src.sql_guard import is_safe_select_sql
 from src import forecasting
 from src import anomaly_detector
+from src import insights as insight_engine
 from src import budget_monitor
-from src.timeutil import report_window, window_before
+from src.timeutil import report_window, since_nairobi, window_before
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,8 @@ CACHE_TTL_SECONDS = 300
 CACHE_MAX_ENTRIES = 64
 VALID_PERIODS = ('weekly', 'monthly')
 MAX_BUDGET_LIMIT = 1_000_000_000
+MAX_SQL_ATTEMPTS = 2
+ANOMALY_HISTORY_DAYS = 730
 
 
 def _aggregate_query_results(results: List[Dict], top_group_limit: int = 8) -> Dict:
@@ -75,12 +79,12 @@ LLM_UNAVAILABLE_MESSAGE = "I couldn't reach the AI service just now. Please try 
 
 
 def _anomaly_fallback_text(anomalies: List[Dict], limit: int = 5) -> str:
-    top = sorted(anomalies, key=lambda a: float(a.get('amount') or 0), reverse=True)[:limit]
-    lines = [
-        f"- KES {float(a.get('amount') or 0):,.0f} to {a.get('recipient', 'Unknown')} on {str(a.get('timestamp', ''))[:10]}"
-        for a in top
-    ]
-    return f"{len(anomalies)} transaction(s) look unusual for their category. Largest:\n" + "\n".join(lines)
+    top = anomalies[:limit]
+    lines = []
+    for a in top:
+        why = (a.get('reasons') or ['unusual for this recipient or category'])[0]
+        lines.append(f"- {str(a.get('timestamp', ''))[:10]}: {why}")
+    return f"{len(anomalies)} transaction(s) look unusual against your own pattern. Most notable:\n" + "\n".join(lines)
 
 
 class MpesaAnalyzer:
@@ -88,24 +92,50 @@ class MpesaAnalyzer:
         self.db = PostgresDB()
         self.groq = GroqClient()
         self._cache: Dict = {}
+        self._cache_lock = threading.RLock()
 
     def _cache_get(self, key: str):
-        entry = self._cache.get(key)
-        if entry and time.time() - entry[0] < CACHE_TTL_SECONDS:
-            return entry[1]
-        self._cache.pop(key, None)
+        with self._cache_lock:
+            entry = self._cache.get(key)
+            if entry and time.time() - entry[0] < CACHE_TTL_SECONDS:
+                return entry[1]
+            self._cache.pop(key, None)
         return None
 
     def _cache_set(self, key: str, value) -> None:
-        if len(self._cache) >= CACHE_MAX_ENTRIES:
-            now = time.time()
-            self._cache = {k: v for k, v in self._cache.items() if now - v[0] < CACHE_TTL_SECONDS}
-            while len(self._cache) >= CACHE_MAX_ENTRIES:
-                del self._cache[next(iter(self._cache))]
-        self._cache[key] = (time.time(), value)
+        with self._cache_lock:
+            if len(self._cache) >= CACHE_MAX_ENTRIES:
+                now = time.time()
+                self._cache = {k: v for k, v in self._cache.items() if now - v[0] < CACHE_TTL_SECONDS}
+                while len(self._cache) >= CACHE_MAX_ENTRIES:
+                    self._cache.pop(next(iter(self._cache)), None)
+            self._cache[key] = (time.time(), value)
 
     def clear_cache(self) -> None:
-        self._cache.clear()
+        with self._cache_lock:
+            self._cache.clear()
+
+    def get_frame(self, days: Optional[int] = None) -> pd.DataFrame:
+        """Typed analytics frame, cached briefly (every smart feature reads the same history)."""
+        key = f'frame_{days}'
+        cached = self._cache_get(key)
+        if cached is not None:
+            return cached
+        frame = self.db.get_frame(days=days)
+        self._cache_set(key, frame)
+        return frame
+
+    def get_health(self) -> Dict:
+        return insight_engine.financial_health(self.get_frame())
+
+    def get_recurring(self, include_lapsed: bool = False) -> List[Dict]:
+        return insight_engine.detect_recurring(self.get_frame(), include_lapsed=include_lapsed)
+
+    def get_runway(self) -> Dict:
+        return insight_engine.runway(self.get_frame())
+
+    def get_smart_alerts(self) -> List[Dict]:
+        return insight_engine.smart_alerts(self.get_frame())
 
     def build_context_string(self, days: Optional[int] = None) -> str:
         try:
@@ -162,6 +192,10 @@ class MpesaAnalyzer:
                 ]
                 lines.append("Unusual transactions detected: " + "; ".join(anom_lines))
 
+            facts = insight_engine.facts_text(self.get_frame())
+            if facts:
+                lines.append("Verified analytics (computed from the full M-Pesa history):\n" + facts)
+
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"build_context_string failed: {e}")
@@ -171,15 +205,25 @@ class MpesaAnalyzer:
         try:
             context = self.build_context_string(days=days)
             schema = self.db.get_schema()
-            sql = self.groq.generate_sql(question, schema, days=days, row_limit=row_limit)
-            logger.info(f"Generated SQL: {sql}")
 
+            sql = ''
             results = None
-            if is_safe_select_sql(sql):
+            feedback = ''
+            for attempt in range(MAX_SQL_ATTEMPTS):
+                sql = self.groq.generate_sql(question, schema, days=days, row_limit=row_limit, feedback=feedback)
+                logger.info(f"Generated SQL (attempt {attempt + 1}): {sql}")
+                if not sql:
+                    break
+                if not is_safe_select_sql(sql):
+                    feedback = "the query was rejected by the safety checks; use a single plain SELECT with allowed functions only"
+                    continue
                 try:
                     results = self.db.execute_query(sql, strict=True)
+                    break
                 except Exception as query_error:
                     logger.error(f"Generated SQL failed to run: {query_error}")
+                    feedback = str(query_error).splitlines()[0] if str(query_error) else 'execution error'
+                    results = None
 
             if results is None:
                 return {
@@ -223,7 +267,6 @@ class MpesaAnalyzer:
             daily_trend = self.db.get_daily_trend(days=days)
             anomalies = self.db.get_anomalies(days=days)
             top_merchants = self.db.get_top_merchants(days=days, limit=10)
-            recent_txs = self.db.get_transactions(days=days, limit=None)
             context = self.build_context_string(days=days)
             insights = self.groq.generate_insights(summary, extra_context=context) if summary else ""
 
@@ -233,7 +276,6 @@ class MpesaAnalyzer:
                 'daily_trend': daily_trend,
                 'anomalies': anomalies,
                 'top_merchants': top_merchants,
-                'recent_transactions': recent_txs,
                 'insights': insights,
             }
             self._cache_set(cache_key, data)
@@ -244,8 +286,8 @@ class MpesaAnalyzer:
 
     def get_forecast(self, horizon_days: int = 7) -> Dict:
         try:
-            transactions = self.db.get_transactions(days=forecasting.TRAIN_HISTORY_DAYS, limit=None)
-            result = forecasting.generate_forecast(transactions, horizon_days=horizon_days)
+            frame = self.get_frame(days=forecasting.TRAIN_HISTORY_DAYS)
+            result = forecasting.generate_forecast(frame, horizon_days=horizon_days)
 
             if not result.get('sufficient_data'):
                 result['insight'] = result.get(
@@ -281,21 +323,32 @@ class MpesaAnalyzer:
                 return cached
 
         try:
-            transactions = self.db.get_transactions(days=days, limit=None)
-
-            baselines = anomaly_detector.compute_baselines(transactions)
+            frame = self.db.get_frame(days=ANOMALY_HISTORY_DAYS)
+            since = pd.Timestamp(since_nairobi(days)) if days is not None else None
+                
+            baselines = anomaly_detector.compute_baselines(frame)
             if baselines:
                 self.db.save_spending_baselines(baselines)
 
-            flagged = anomaly_detector.detect_anomalies(transactions)
-            if flagged:
-                self.db.save_anomalies(flagged)
+            self.db.drop_obsolete_anomaly_models(anomaly_detector.OBSOLETE_MODELS)
+            flagged_all = anomaly_detector.detect_anomalies(frame)
+            flagged = [a for a in flagged_all if since is None or pd.Timestamp(a['timestamp']) >= since]
+            if flagged_all:
+                self.db.save_anomalies(flagged_all)
+            self.db.prune_anomalies(anomaly_detector.MODEL_NAME, None, [str(a['transaction_id']) for a in flagged_all])
 
-            current_models = {str(a['transaction_id']): a.get('model') for a in flagged}
-            saved = [
-                a for a in self.db.get_saved_anomalies(days=days, limit=None)
-                if current_models.get(str(a.get('tx_uuid'))) == a.get('model')
-            ]
+            reasons = {str(a['transaction_id']): a for a in flagged}
+            saved = []
+            for row in self.db.get_saved_anomalies(days=days, limit=None):
+                info = reasons.get(str(row.get('tx_uuid')))
+                if info is None or row.get('model') != info.get('model'):
+                    continue
+                row['reasons'] = info['reasons']
+                row['rules'] = info['rules']
+                row['score'] = info['score']
+                saved.append(row)
+            saved.sort(key=lambda r: (float(r.get('score') or 0), float(r.get('amount') or 0)), reverse=True)
+
             insight = self.groq.generate_anomaly_insights(saved) if saved else ""
             if saved and not insight:
                 insight = _anomaly_fallback_text(saved)
@@ -304,7 +357,7 @@ class MpesaAnalyzer:
                 'anomalies': saved,
                 'baselines': baselines,
                 'count': len(saved),
-                'insight': insight or "No unusual transactions detected in your recent spending — everything looks consistent with your normal pattern. ",
+                'insight': insight or "No unusual transactions detected in your recent spending: everything looks consistent with your normal pattern.",
             }
             self._cache_set(cache_key, result)
             return result
@@ -334,7 +387,7 @@ class MpesaAnalyzer:
         if not 1 <= alert_threshold_pct <= 100:
             return {'success': False, 'error': 'Alert threshold must be between 1 and 100'}
         budget = self.db.upsert_budget(normalized, limit_amount, period, alert_threshold_pct)
-        self._cache.clear()
+        self.clear_cache()
         if not budget:
             return {'success': False, 'error': f"Could not save budget for {category}"}
         return {'success': True, 'budget': budget}
@@ -404,9 +457,9 @@ class MpesaAnalyzer:
                 })
         return results
 
-    def generate_dynamic_chart(self, description: str, dark: bool = True) -> Dict:
+    def generate_dynamic_chart(self, description: str, dark: bool = True, commentary: bool = True) -> Dict:
         from src import chart_generator
-        return chart_generator.generate_dynamic_chart(self, description, dark=dark)
+        return chart_generator.generate_dynamic_chart(self, description, dark=dark, commentary=commentary)
 
     def parse_and_insert_sms(self, sms_content: str) -> Dict:
         parser = MpesaParser()
@@ -428,7 +481,7 @@ class MpesaAnalyzer:
 
         df = pd.DataFrame([tx])
         inserted = self.db.insert_transactions(df, overwrite=False)
-        self._cache.clear()
+        self.clear_cache()
         self.groq.invalidate_cache()
         forecasting.invalidate_cache()
 
@@ -475,7 +528,7 @@ class MpesaAnalyzer:
             logger.warning("No transactions to load")
             return 0
         count = self.db.insert_transactions(df)
-        self._cache.clear()
+        self.clear_cache()
         self.groq.invalidate_cache()
         forecasting.invalidate_cache()
         return count

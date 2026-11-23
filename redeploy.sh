@@ -33,9 +33,14 @@ rsync -avz --progress --chmod=go-rwx \
   --exclude 'podman/' \
   --exclude 'assets' \
   --exclude '.git' \
-  --exclude 'sessions' \
-  --exclude 'data/raw' \
+  --exclude '/sessions/' \
+  --exclude '/data/' \
+  --include '.env.example' \
+  --exclude '.env' \
+  --exclude '.env.*' \
   --exclude '*.xml' \
+  --exclude '*.csv' \
+  --exclude '*.zip' \
   --exclude '.baileys_auth' \
   --exclude '*.log' \
   --exclude '__pycache__' \

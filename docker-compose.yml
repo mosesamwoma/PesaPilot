@@ -97,6 +97,16 @@ services:
         max-file: "3"
     security_opt:
       - no-new-privileges:true
+    # Immutable container filesystem: nothing an attacker (or a bug) writes survives, and the
+    # app code cannot be modified at runtime. Only /tmp, the home folder and the two mounted
+    # volumes below are writable.
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /home/pesapilot:size=64m,uid=10001,gid=10001,mode=0700
+    init: true
+    pids_limit: 512
+    mem_limit: ${CONTAINER_MEM_LIMIT:-2g}
     volumes:
       # Host folders must be owned by UID/GID 10001: run scripts/prepare_dirs.sh
       - ./data:/app/data

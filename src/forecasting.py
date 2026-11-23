@@ -1,22 +1,33 @@
+"""Spending forecast: a backtested ensemble of Prophet and a robust seasonal model.
+
+* Rare one-off large payments are capped when learning the *typical* pattern, then added back as an average
+  "tail allowance", so one big transfer does not distort every future day.
+* Models are scored by rolling-origin backtests on 7-day totals; the better model gets more weight.
+* Prediction intervals come from how wrong the model has actually been on this user's own history.
+* If Prophet is unavailable the statistical model still produces a forecast.
+"""
 import hashlib
 import logging
 import math
+import threading
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Union
 
+import numpy as np
 import pandas as pd
 
-from src.constants import SPENDING_TYPES
+from src.frames import build_frame, daily_spend
 from src.timeutil import today_nairobi
 
 logger = logging.getLogger(__name__)
 
 MIN_HISTORY_DAYS = 14
-
 TRAIN_HISTORY_DAYS = 180
-
+MAX_HORIZON_DAYS = 60
 CACHE_TTL_SECONDS = 6 * 60 * 60
+BACKTEST_FOLDS = 5
+CAP_QUANTILE = 0.97
 
 TREND_INCREASING = "Increasing"
 TREND_DECREASING = "Decreasing"
@@ -26,250 +37,294 @@ RISK_LOW = "Low"
 RISK_MODERATE = "Moderate"
 RISK_HIGH = "High"
 
-
-class _ForecastCache:
-
-    def __init__(self):
-        self._store: Dict[str, Dict] = {}
-
-    @staticmethod
-    def _key(fingerprint: str, horizon_days: int) -> str:
-        return f"{fingerprint}:{horizon_days}"
-
-    def get(self, fingerprint: str, horizon_days: int) -> Optional[Dict]:
-        key = self._key(fingerprint, horizon_days)
-        entry = self._store.get(key)
-        if entry and time.time() < entry["expires_at"]:
-            logger.debug(f"Forecast cache HIT [{key}]")
-            return entry["result"]
-        if entry:
-            logger.debug(f"Forecast cache MISS (expired) [{key}]")
-            del self._store[key]
-        return None
-
-    def set(self, fingerprint: str, horizon_days: int, result: Dict, ttl: int = CACHE_TTL_SECONDS) -> None:
-        key = self._key(fingerprint, horizon_days)
-        self._store[key] = {"result": result, "expires_at": time.time() + ttl}
-        logger.debug(f"Forecast cache SET [{key}] ttl={ttl}s")
-
-    def clear(self) -> None:
-        self._store.clear()
-        logger.info("Forecast cache cleared")
-
-    @property
-    def size(self) -> int:
-        now = time.time()
-        self._store = {k: v for k, v in self._store.items() if now < v["expires_at"]}
-        return len(self._store)
-
-
-_cache = _ForecastCache()
+_lock = threading.RLock()
+_cache: Dict[str, Dict] = {}
 
 
 def invalidate_cache() -> None:
-    _cache.clear()
+    with _lock:
+        _cache.clear()
+    logger.info("Forecast cache cleared")
 
 
 def cache_size() -> int:
-    return _cache.size
+    with _lock:
+        now = time.time()
+        for key in [k for k, v in _cache.items() if v['expires_at'] <= now]:
+            del _cache[key]
+        return len(_cache)
 
 
-def build_daily_series(transactions: List[Dict]) -> pd.DataFrame:
-    if not transactions:
+def build_daily_series(transactions: Union[List[Dict], pd.DataFrame]) -> pd.DataFrame:
+    """Zero-filled daily spending up to yesterday (today is incomplete) as a date/amount frame."""
+    frame = transactions if isinstance(transactions, pd.DataFrame) and 'is_spend' in transactions.columns \
+        else build_frame(transactions if not isinstance(transactions, pd.DataFrame) else transactions.to_dict('records'))
+    today = pd.Timestamp(today_nairobi())
+    if frame.empty:
         return pd.DataFrame(columns=["date", "amount"])
-
-    df = pd.DataFrame(transactions)
-    if "timestamp" not in df.columns or "amount" not in df.columns:
+    complete = frame[frame['date'] < today]
+    series = daily_spend(complete, end=today - pd.Timedelta(days=1)) if not complete.empty else pd.Series(dtype=float)
+    if series.empty:
         return pd.DataFrame(columns=["date", "amount"])
-
-    if "type" in df.columns:
-        df = df[df["type"].isin(SPENDING_TYPES)].copy()
-    if df.empty:
-        return pd.DataFrame(columns=["date", "amount"])
-
-    df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', errors="coerce")
-    df = df.dropna(subset=["timestamp"])
-    if df.empty:
-        return pd.DataFrame(columns=["date", "amount"])
-
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
-    df["date"] = df["timestamp"].dt.date
-    df = df[df["date"] < today_nairobi()]
-    if df.empty:
-        return pd.DataFrame(columns=["date", "amount"])
-
-    daily = df.groupby("date")["amount"].sum().reset_index()
-    daily.columns = ["date", "amount"]
-    daily = daily.sort_values("date")
-
-    if daily.empty:
-        return daily
-
-    last_day = max(daily["date"].max(), today_nairobi() - timedelta(days=1))
-    full_range = pd.date_range(daily["date"].min(), last_day, freq="D")
-    daily = daily.set_index(pd.to_datetime(daily["date"]))["amount"]
-    daily = daily.reindex(full_range, fill_value=0.0)
-    daily = daily.rename_axis("date").reset_index()
-    daily["date"] = daily["date"].dt.date
-    daily = daily[["date", "amount"]]
-    return daily.reset_index(drop=True)
+    out = series.rename_axis('date').reset_index(name='amount')
+    out['date'] = out['date'].dt.date
+    return out
 
 
-def _fingerprint(daily_df: pd.DataFrame) -> str:
-    if daily_df.empty:
-        return "empty"
-    raw = (
-        f"{len(daily_df)}|{daily_df['date'].min()}|{daily_df['date'].max()}|"
-        f"{round(float(daily_df['amount'].sum()), 2)}"
-    )
+def _fingerprint(daily: pd.Series) -> str:
+    raw = f"{len(daily)}|{daily.index.min()}|{daily.index.max()}|{round(float(daily.sum()), 2)}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def _classify_trend(predicted_values: List[float]) -> str:
-    if len(predicted_values) < 2:
-        return TREND_STABLE
+def _cap(series: pd.Series) -> float:
+    positive = series[series > 0]
+    if len(positive) < 10:
+        return float(series.max()) if len(series) else 0.0
+    return float(positive.quantile(CAP_QUANTILE))
 
-    midpoint = len(predicted_values) // 2
-    first_half = predicted_values[:midpoint] or predicted_values[:1]
-    second_half = predicted_values[midpoint:] or predicted_values[-1:]
 
-    avg_first = sum(first_half) / len(first_half)
-    avg_second = sum(second_half) / len(second_half)
+def _stat_predict(history: pd.Series, horizon: int, with_tail: bool = True) -> pd.Series:
+    """Robust level (EWMA of capped spend) x weekday profile, plus an average allowance for rare big payments."""
+    capped = history.clip(upper=_cap(history))
+    level = float(capped.ewm(halflife=21, adjust=False).mean().iloc[-1])
+    recent = capped.tail(84)
+    overall = float(recent.mean())
+    if overall > 0:
+        raw = recent.groupby(recent.index.dayofweek).mean().reindex(range(7)).fillna(overall) / overall
+        factors = 1 + 0.6 * (raw - 1)
+        factors = factors / factors.mean()
+    else:
+        factors = pd.Series(1.0, index=range(7))
+    future = pd.date_range(history.index[-1] + pd.Timedelta(days=1), periods=horizon, freq='D')
+    pred = pd.Series([level * float(factors[d.dayofweek]) for d in future], index=future)
+    if with_tail:
+        tail = float((history - _cap(history)).clip(lower=0).tail(TRAIN_HISTORY_DAYS).mean())
+        pred = pred + tail
+    return pred
 
-    if avg_first <= 0:
-        return TREND_STABLE if avg_second <= 0 else TREND_INCREASING
 
-    change_pct = (avg_second - avg_first) / avg_first * 100
-    if change_pct > 7:
+def _prophet_predict(history: pd.Series, horizon: int) -> Optional[pd.Series]:
+    try:
+        from prophet import Prophet
+    except ImportError as e:
+        logger.warning(f"Prophet is not installed, using the statistical model only: {e}")
+        return None
+    try:
+        for name in ('cmdstanpy', 'prophet'):
+            logging.getLogger(name).setLevel(logging.WARNING)
+        capped = history.clip(upper=_cap(history))
+        train = pd.DataFrame({'ds': capped.index, 'y': capped.values})
+        model = Prophet(
+            growth='linear', daily_seasonality=False, weekly_seasonality=True, yearly_seasonality=False,
+            interval_width=0.80, changepoint_prior_scale=0.05,
+        )
+        model.fit(train)
+        future = model.make_future_dataframe(periods=horizon, freq='D')
+        out = model.predict(future)
+        out = out[out['ds'] > history.index[-1]]
+        pred = pd.Series(out['yhat'].clip(lower=0.0).values, index=pd.DatetimeIndex(out['ds']))
+        tail = float((history - _cap(history)).clip(lower=0).tail(TRAIN_HISTORY_DAYS).mean())
+        return pred + tail
+    except Exception as e:
+        logger.error(f"Prophet training/prediction failed: {e}")
+        return None
+
+
+def _backtest(daily: pd.Series, use_prophet: bool) -> Dict:
+    n = len(daily)
+    stat_err, prophet_err, actuals, stat_preds, prophet_preds = 0.0, 0.0, 0.0, [], []
+    folds = 0
+    for k in range(1, BACKTEST_FOLDS + 1):
+        origin = n - 7 * k
+        if origin < MIN_HISTORY_DAYS:
+            break
+        history, actual = daily.iloc[:origin], float(daily.iloc[origin:origin + 7].sum())
+        sp = float(_stat_predict(history, 7).sum())
+        stat_err += abs(sp - actual)
+        actuals += actual
+        stat_preds.append(sp)
+        if use_prophet:
+            pp = _prophet_predict(history, 7)
+            if pp is None:
+                use_prophet = False
+            else:
+                prophet_err += abs(float(pp.sum()) - actual)
+                prophet_preds.append(float(pp.sum()))
+        folds += 1
+    if folds == 0 or actuals <= 0:
+        return {'folds': 0, 'stat_error_pct': None, 'prophet_error_pct': None, 'use_prophet': use_prophet}
+    return {
+        'folds': folds,
+        'stat_error_pct': stat_err / actuals * 100,
+        'prophet_error_pct': (prophet_err / actuals * 100) if use_prophet and len(prophet_preds) == folds else None,
+        'use_prophet': use_prophet and len(prophet_preds) == folds,
+    }
+
+
+def _blend_weights(backtest: Dict) -> Dict[str, float]:
+    stat, prophet = backtest.get('stat_error_pct'), backtest.get('prophet_error_pct')
+    if prophet is None:
+        return {'stat': 1.0, 'prophet': 0.0}
+    if stat is None:
+        return {'stat': 0.0, 'prophet': 1.0}
+    inv_s, inv_p = 1 / max(stat, 5.0) ** 2, 1 / max(prophet, 5.0) ** 2
+    w_p = min(0.8, max(0.2, inv_p / (inv_s + inv_p)))
+    return {'stat': 1 - w_p, 'prophet': w_p}
+
+
+def _error_distribution(daily: pd.Series, horizons: List[int]) -> Dict:
+    """How far actual spending has landed from the statistical forecast: ratio quantiles per horizon and daily residuals."""
+    n = len(daily)
+    ratios: Dict[int, List[float]] = {h: [] for h in horizons}
+    residuals: List[float] = []
+    longest = max(horizons)
+    for origin in range(max(MIN_HISTORY_DAYS, 28), n, 2):
+        history = daily.iloc[:origin]
+        pred = _stat_predict(history, min(longest, n - origin) or 1)
+        residuals.append(float(daily.iloc[origin]) - float(pred.iloc[0]))
+        for h in horizons:
+            if origin + h <= n:
+                total = float(_stat_predict(history, h).sum())
+                if total > 0:
+                    ratios[h].append(float(daily.iloc[origin:origin + h].sum()) / total)
+    out: Dict = {'ratios': {}, 'daily_lo': None, 'daily_hi': None}
+    for h, values in ratios.items():
+        if len(values) >= 8:
+            out['ratios'][h] = (float(np.quantile(values, 0.10)), float(np.quantile(values, 0.90)))
+    if len(residuals) >= 20:
+        out['daily_lo'], out['daily_hi'] = float(np.quantile(residuals, 0.10)), float(np.quantile(residuals, 0.90))
+    return out
+
+
+def _classify_trend(forecast_avg_daily: float, recent_avg_daily: float) -> str:
+    if recent_avg_daily <= 0:
+        return TREND_STABLE if forecast_avg_daily <= 0 else TREND_INCREASING
+    change = (forecast_avg_daily - recent_avg_daily) / recent_avg_daily * 100
+    if change > 10:
         return TREND_INCREASING
-    if change_pct < -7:
+    if change < -10:
         return TREND_DECREASING
     return TREND_STABLE
 
 
-def _classify_risk(
-    forecast_total: float,
-    historical_avg_daily: float,
-    horizon_days: int,
-    volatility_ratio: float,
-) -> str:
-    baseline_total = historical_avg_daily * horizon_days
-    if baseline_total <= 0:
+def _classify_risk(forecast_avg_daily: float, baseline_daily: float, weekly_cv: float) -> str:
+    if baseline_daily <= 0:
         return RISK_LOW
-
-    overshoot_pct = (forecast_total - baseline_total) / baseline_total * 100
-    horizon_volatility = volatility_ratio / math.sqrt(max(horizon_days, 1))
-
-    if overshoot_pct > 25 or horizon_volatility > 0.9:
+    overshoot = (forecast_avg_daily - baseline_daily) / baseline_daily * 100
+    if overshoot > 25 or weekly_cv > 1.0:
         return RISK_HIGH
-    if overshoot_pct > 10 or horizon_volatility > 0.6:
+    if overshoot > 10 or weekly_cv > 0.6:
         return RISK_MODERATE
     return RISK_LOW
 
 
-def generate_forecast(transactions: List[Dict], horizon_days: int = 7) -> Dict:
-    daily_df = build_daily_series(transactions)
+def _insufficient(history_days: int, message: str) -> Dict:
+    return {"sufficient_data": False, "history_days": history_days, "min_required_days": MIN_HISTORY_DAYS,
+            "message": message}
 
-    if daily_df.empty or len(daily_df) < MIN_HISTORY_DAYS:
-        history_days = len(daily_df)
-        return {
-            "sufficient_data": False,
-            "history_days": history_days,
-            "min_required_days": MIN_HISTORY_DAYS,
-            "message": (
-                f"Only {history_days} day(s) of spending history found — "
-                f"at least {MIN_HISTORY_DAYS} days are needed for a reliable forecast. "
-                f"Keep logging your M-Pesa transactions and check back soon."
-            ),
-        }
 
-    fingerprint = _fingerprint(daily_df)
-    cached = _cache.get(fingerprint, horizon_days)
-    if cached is not None:
-        return cached
+def generate_forecast(transactions: Union[List[Dict], pd.DataFrame], horizon_days: int = 7) -> Dict:
+    horizon_days = max(1, min(int(horizon_days), MAX_HORIZON_DAYS))
+    table = build_daily_series(transactions)
+    if table.empty or len(table) < MIN_HISTORY_DAYS:
+        n = len(table)
+        return _insufficient(n, (
+            f"Only {n} day(s) of spending history found: at least {MIN_HISTORY_DAYS} days are needed for a "
+            f"reliable forecast. Keep logging your M-Pesa transactions and check back soon."))
 
-    try:
-        from prophet import Prophet
-    except ImportError as e:
-        logger.error(f"Prophet is not installed: {e}")
-        return {
-            "sufficient_data": False,
-            "history_days": len(daily_df),
-            "min_required_days": MIN_HISTORY_DAYS,
-            "message": "The forecasting engine is temporarily unavailable. Please try again later.",
-        }
+    daily = pd.Series(table['amount'].astype(float).values, index=pd.to_datetime(table['date']))
+    daily = daily.tail(TRAIN_HISTORY_DAYS)
+    fingerprint = _fingerprint(daily)
 
-    prophet_df = daily_df.rename(columns={"date": "ds", "amount": "y"}).copy()
-    prophet_df["ds"] = pd.to_datetime(prophet_df["ds"])
-    prophet_df["y"] = prophet_df["y"].clip(lower=0.0)
+    with _lock:
+        entry = _cache.get(fingerprint)
+        if entry is not None and entry['expires_at'] <= time.time():
+            del _cache[fingerprint]
+            entry = None
+        if entry is None:
+            backtest = _backtest(daily, use_prophet=True)
+            weights = _blend_weights(backtest)
+            stat_future = _stat_predict(daily, MAX_HORIZON_DAYS)
+            prophet_future = _prophet_predict(daily, MAX_HORIZON_DAYS) if weights['prophet'] > 0 else None
+            if prophet_future is None:
+                weights = {'stat': 1.0, 'prophet': 0.0}
+            blended = stat_future * weights['stat'] + (prophet_future * weights['prophet'] if prophet_future is not None else 0.0)
+            entry = {
+                'blended': blended, 'weights': weights, 'backtest': backtest,
+                'errors': _error_distribution(daily, [7, 14, 30, horizon_days] if horizon_days not in (7, 14, 30) else [7, 14, 30]),
+                'expires_at': time.time() + CACHE_TTL_SECONDS,
+                'horizons_done': {7, 14, 30} | {horizon_days},
+            }
+            _cache[fingerprint] = entry
+        elif horizon_days not in entry['horizons_done']:
+            extra = _error_distribution(daily, [horizon_days])
+            entry['errors']['ratios'].update(extra['ratios'])
+            entry['horizons_done'].add(horizon_days)
 
-    try:
-        weekly_seasonality = len(prophet_df) >= 14
-        model = Prophet(
-            growth="linear",
-            daily_seasonality=False,
-            weekly_seasonality=weekly_seasonality,
-            yearly_seasonality=False,
-            interval_width=0.80,
-            changepoint_prior_scale=0.1,
-        )
-        model.fit(prophet_df)
+    future = entry['blended'].iloc[:horizon_days]
+    errors = entry['errors']
+    total = float(future.sum())
 
-        future = model.make_future_dataframe(periods=horizon_days, freq="D")
-        forecast = model.predict(future)
-    except Exception as e:
-        logger.error(f"Prophet training/prediction failed: {e}")
-        return {
-            "sufficient_data": False,
-            "history_days": len(daily_df),
-            "min_required_days": MIN_HISTORY_DAYS,
-            "message": "Could not generate a forecast from the current data. Please try again later.",
-        }
+    lo_hi = errors['ratios'].get(horizon_days)
+    if lo_hi is None:
+        std = float(daily.std() or 0.0) * math.sqrt(horizon_days)
+        total_lower, total_upper = max(0.0, total - 1.28 * std), total + 1.28 * std
+    else:
+        total_lower, total_upper = total * lo_hi[0], total * max(lo_hi[1], 1.0)
+    d_lo, d_hi = errors['daily_lo'], errors['daily_hi']
 
-    forecast["yhat"] = forecast["yhat"].clip(lower=0.0)
-    forecast["yhat_lower"] = forecast["yhat_lower"].clip(lower=0.0)
-    forecast["yhat_upper"] = forecast["yhat_upper"].clip(lower=0.0)
+    forecast_points = []
+    for stamp, value in future.items():
+        lower = max(0.0, value + d_lo) if d_lo is not None else 0.0
+        upper = value + d_hi if d_hi is not None else value * 2
+        forecast_points.append({
+            "date": stamp.strftime("%Y-%m-%d"),
+            "predicted": round(float(value), 2),
+            "lower": round(float(min(lower, value)), 2),
+            "upper": round(float(max(upper, value)), 2),
+        })
+    historical_points = [{"date": idx.strftime("%Y-%m-%d"), "amount": round(float(v), 2)} for idx, v in daily.items()]
 
-    last_history_date = prophet_df["ds"].max()
-    future_forecast = forecast[forecast["ds"] > last_history_date].copy()
+    forecast_avg = total / horizon_days
+    recent_avg = float(daily.tail(28).mean())
+    baseline_avg = float(daily.tail(90).mean())
+    weekly = daily.resample('W-SUN').sum().iloc[:-1] if len(daily) >= 35 else daily.resample('W-SUN').sum()
+    weekly_cv = float(weekly.std() / weekly.mean()) if len(weekly) >= 3 and weekly.mean() > 0 else 0.0
 
-    historical_points = [
-        {"date": str(row.date), "amount": round(float(row.amount), 2)}
-        for row in daily_df.itertuples(index=False)
-    ]
-    forecast_points = [
-        {
-            "date": row.ds.strftime("%Y-%m-%d"),
-            "predicted": round(float(row.yhat), 2),
-            "lower": round(float(row.yhat_lower), 2),
-            "upper": round(float(row.yhat_upper), 2),
-        }
-        for row in future_forecast.itertuples(index=False)
-    ]
+    backtest = entry['backtest']
+    weights = entry['weights']
+    scores = {'statistical': backtest.get('stat_error_pct'), 'prophet': backtest.get('prophet_error_pct')}
+    errors_known = [v for v in (scores['statistical'], scores['prophet']) if v is not None]
+    best_error = min(errors_known) if errors_known else None
+    if best_error is None or backtest.get('folds', 0) < 3 or len(daily) < 28:
+        confidence = "Low"
+    else:
+        confidence = "High" if best_error <= 25 else "Medium" if best_error <= 45 else "Low"
+    model_used = 'Prophet + seasonal model ensemble' if weights['prophet'] > 0 else 'Robust seasonal model'
 
-    predicted_values = [p["predicted"] for p in forecast_points]
-    forecast_total = float(sum(predicted_values))
-    historical_avg_daily = float(daily_df["amount"].mean())
-    historical_std_daily = float(daily_df["amount"].std() or 0.0)
-    volatility_ratio = (historical_std_daily / historical_avg_daily) if historical_avg_daily > 0 else 0.0
-
-    trend = _classify_trend(predicted_values)
-    risk_level = _classify_risk(forecast_total, historical_avg_daily, horizon_days, volatility_ratio)
-
-    result: Dict = {
+    return {
         "sufficient_data": True,
-        "history_days": len(daily_df),
+        "history_days": len(daily),
         "horizon_days": horizon_days,
         "historical": historical_points,
         "forecast": forecast_points,
-        "total_predicted": round(forecast_total, 2),
-        "avg_predicted_daily": round(forecast_total / horizon_days, 2) if horizon_days else 0.0,
-        "historical_avg_daily": round(historical_avg_daily, 2),
-        "historical_std_daily": round(historical_std_daily, 2),
-        "trend": trend,
-        "risk_level": risk_level,
+        "total_predicted": round(total, 2),
+        "total_lower": round(float(total_lower), 2),
+        "total_upper": round(float(total_upper), 2),
+        "avg_predicted_daily": round(forecast_avg, 2),
+        "historical_avg_daily": round(float(daily.mean()), 2),
+        "recent_avg_daily": round(recent_avg, 2),
+        "historical_std_daily": round(float(daily.std() or 0.0), 2),
+        "trend": _classify_trend(forecast_avg, recent_avg),
+        "risk_level": _classify_risk(forecast_avg, baseline_avg, weekly_cv),
+        "confidence": confidence,
+        "model": model_used,
+        "model_weights": {k: round(v, 2) for k, v in weights.items()},
+        "backtest": {
+            "folds": backtest.get('folds', 0),
+            "error_pct_7d": None if best_error is None else round(best_error, 1),
+            "statistical_error_pct": None if scores['statistical'] is None else round(scores['statistical'], 1),
+            "prophet_error_pct": None if scores['prophet'] is None else round(scores['prophet'], 1),
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-
-    _cache.set(fingerprint, horizon_days, result)
-    return result

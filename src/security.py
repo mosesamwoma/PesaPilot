@@ -1,4 +1,5 @@
 import hmac
+import logging
 import os
 import re
 import threading
@@ -34,7 +35,7 @@ def is_placeholder(value: Optional[str]) -> bool:
 
 def load_api_token() -> str:
     token = os.getenv('API_TOKEN', '').strip()
-    if is_placeholder(token) or len(token) < MIN_API_TOKEN_LENGTH:
+    if is_placeholder(token) or len(token) < MIN_API_TOKEN_LENGTH or len(set(token)) < 8:
         raise RuntimeError(TOKEN_HELP)
     return token
 
@@ -121,3 +122,45 @@ def env_int(name: str, default: int, minimum: int = 1, maximum: int = 100000) ->
     except ValueError:
         return default
     return max(minimum, min(maximum, value))
+
+
+_SECRET_PATTERNS = [
+    re.compile(r'gsk_[A-Za-z0-9]{8,}'),
+    re.compile(r'(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}'),
+    re.compile(r'(?i)(password|passwd|pwd|api[_-]?key|token|secret)(["\']?\s*[:=]\s*["\']?)[^\s"\',;&]{4,}'),
+    re.compile(r'(?i)(postgres(?:ql)?://[^:/\s]+:)[^@\s]+(@)'),
+]
+
+
+def redact_secrets(text: str) -> str:
+    out = str(text)
+    out = _SECRET_PATTERNS[0].sub('gsk_***', out)
+    out = _SECRET_PATTERNS[1].sub(r'\1***', out)
+    out = _SECRET_PATTERNS[2].sub(r'\1\2***', out)
+    out = _SECRET_PATTERNS[3].sub(r'\1***\2', out)
+    return out
+
+
+class SecretRedactingFilter(logging.Filter):
+    """Scrubs API keys, bearer tokens and passwords from every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        cleaned = redact_secrets(message)
+        if cleaned != message:
+            record.msg = cleaned
+            record.args = ()
+        if record.exc_info and record.exc_info[1] is not None:
+            record.exc_text = redact_secrets(logging.Formatter().formatException(record.exc_info))
+            record.exc_info = None
+        return True
+
+
+def install_log_redaction() -> None:
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if not any(isinstance(f, SecretRedactingFilter) for f in handler.filters):
+            handler.addFilter(SecretRedactingFilter())

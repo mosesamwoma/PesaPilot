@@ -13,14 +13,15 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
   ![Dashboard overview](assets/1.png)
   ![Spending heatmap](assets/2.png)
 
-- **Forecast** — Prophet-powered 7/30-day spending projection with trend, risk level, and a Groq summary
-- **Ask AI** — plain-English questions turned into SQL by Groq, answered from your real numbers
+- **Smart Insights** — a 0-100 **financial health score** (cash flow, cash buffer, fees, stability, trend, saving habit), cash **runway**, **recurring payments and habits** detected from your history, spending patterns, and plain-English alerts, all computed from your real transactions
+- **Chart Studio — 41 chart types** — describe a chart in plain English or build it with controls: bar, column, lollipop, Pareto, pie, donut, treemap, waffle, radar, stacked bar/column/area, cash flow, waterfall, line, area, rolling average, cumulative, calendar heatmap, hour×weekday heatmap, category heatmap, histogram, KDE, ECDF, box, boxen, violin, strip, swarm, ridge, scatter, bubble, regression, hexbin, joint, pair, correlation, cluster map, forecast, health scorecard, recurring payments, and a one-image overview dashboard (see [Charts](#charts))
+- **Forecast** — a backtested ensemble (Prophet + a robust seasonal model) with a likely range, honest confidence from your own history, and a Groq summary
+- **Ask AI** — plain-English questions turned into SQL by Groq (with automatic self-repair if the first query fails), answered from your real numbers
 - **Budget plans** — a KES needs/wants/savings split sized to your spending
 - **Investment guidance** — Sacco / MMF / T-Bill suggestions sized to your free cash flow
 - **Transactions** — filterable, searchable history
 - **Transaction cost tracking** — M-Pesa fees parsed and stored separately from amount; visible by category and as % of spend
-- **Natural-language charts** — describe a chart in plain English; an LLM resolves type, date range, grouping, and metric
-- **Smarter anomaly detection** — per-user ML pattern learning, not a fixed z-score
+- **Anomaly detection with reasons** — learns your normal pattern per recipient and per category, flags only genuine outliers, possible duplicate payments, large first-time payees and odd-hour payments, and tells you why each was flagged
 - **Budget goals with alerts** — proactive WhatsApp pings near/over budget
 - **WhatsApp Bot** — same questions, charts, advice, and manual SMS logging, from WhatsApp
 - **Daily summary** — 9 PM (Africa/Nairobi) end-of-day digest
@@ -28,7 +29,8 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **Two-tier AI** — fast model for chat/insights, smarter model for SQL/analysis/advice
 - **Authenticated API** — every route except `/health` requires `API_TOKEN`; loopback-only by default (see [Security](#security))
 - **SQL safety guard** — every LLM-generated query is validated `SELECT`/`WITH`-only and runs in a read-only transaction with a 10 s timeout
-- **Response caching** — in-memory TTL cache on all Groq calls, cleared on new transactions
+- **Response caching** — thread-safe in-memory TTL cache on all Groq calls, cleared on new transactions
+- **Self-healing database connection** — a Postgres restart (for example an automatic security update on your VPS) no longer leaves the app broken until you restart it
 
 > Loading SMS data has no CLI/dashboard button — see [Parse and load your data](#5-parse-and-load-your-data).
 
@@ -104,7 +106,7 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 | `API_TOKEN` | Shared secret for the API (24+ random characters). The bot and anything else calling the API send it as `Authorization: Bearer <token>` |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `WHATSAPP_MAIN_NUMBER` | e.g. `254712345678` — the number you text the bot **from** |
-| `WHATSAPP_PIN` | Random code (generated for you), used for manual SMS entry. Never printed to logs |
+| `WHATSAPP_PIN` | Random 8-digit code (generated for you), used for manual SMS entry. Never printed to logs |
 
 `POSTGRES_HOST=auto` (default) lets one `.env` work everywhere — bare metal (`127.0.0.1`), Docker (`host.docker.internal`, falling back to `172.17.0.1`), Podman (`host.containers.internal`). Set it explicitly to skip detection, e.g. for a remote Postgres server. Passwords with special characters are safe as-is — no URL-encoding needed.
 
@@ -130,6 +132,10 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 | `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. Keep `127.0.0.1`; to reach the API remotely use a TLS reverse proxy, not `0.0.0.0` |
 | `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` *inside* the container, which only the host-side `API_BIND` exposes) |
 | `DASHBOARD_PASSWORD` | empty | Optional login for the Streamlit dashboard. The dashboard itself only listens on `127.0.0.1` (`.streamlit/config.toml`) |
+| `DASHBOARD_SESSION_MINUTES` | `480` | Dashboard login expires after this many minutes |
+| `DASHBOARD_PORT` | `8501` | Port used by `scripts/run_dashboard.sh` (always bound to 127.0.0.1) |
+| `DASHBOARD_ALLOW_REMOTE_NO_PASSWORD` | `false` | Leave `false`. Without a `DASHBOARD_PASSWORD` the dashboard only answers requests addressed to localhost |
+| `CONTAINER_MEM_LIMIT` | `2g` | Docker only: memory cap for the container |
 | `POSTGRES_SSLMODE` | empty | Set to `require` / `verify-full` when Postgres is on another machine |
 | `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com,http://[2001:db8::1]:8501`. The bot and dashboard do not need it |
 | `API_AUTH_FAIL_LIMIT` | `10` | Wrong-token attempts per IP per 5 minutes before the API answers `429` |
@@ -208,9 +214,9 @@ WHERE body ILIKE '%Fuliza M-PESA amount is%'
 
 **Dashboard:**
 ```bash
-streamlit run dashboard/app.py
+scripts/run_dashboard.sh
 ```
-Open [http://localhost:8501](http://localhost:8501).
+Open [http://localhost:8501](http://localhost:8501). The script forces the dashboard onto `127.0.0.1` so it can never be exposed by accident. On a VPS use an SSH tunnel: `ssh -L 8501:127.0.0.1:8501 user@your-server`.
 
 > The API and both bots need `API_TOKEN` in `.env` (the API will not start without it). The dashboard reads the database directly and does not use the API.
 
@@ -249,24 +255,62 @@ npm run clean         # Remove dist/ and auth folders
 
 ## CLI reference
 
-There is no CLI wrapper. Start the API with `npm run api` and the dashboard with `streamlit run dashboard/app.py`. For a database connection check: `python -c "from src.database import PostgresDB; PostgresDB()"`.
+There is no CLI wrapper. Start the API with `npm run api` and the dashboard with `scripts/run_dashboard.sh`. For a database connection check: `python -c "from src.database import PostgresDB; PostgresDB()"`.
 
 ---
 
 ## The Forecast page
 
-Uses [Meta Prophet](https://facebook.github.io/prophet/) to project spending 7 or 30 days out. Needs at least 14 days of history.
+A backtested ensemble that projects spending 7, 14 or 30 days out. Needs at least 14 days of history.
 
 ![Forecast view](assets/3.png)
 
-1. Pulls up to 180 days of debit transactions
-2. Aggregates into a zero-filled daily series
-3. Prophet fits a linear-growth model with weekly seasonality
-4. Cached 6 hours, invalidated on new inserts
-5. Groq writes a plain-English summary, framed as a prediction
+1. Pulls up to 180 days of spending into a zero-filled daily series
+2. Rare one-off large payments are capped while learning your *typical* pattern, then added back as an average allowance, so one big transfer does not distort every future day
+3. Two models forecast: Prophet (weekly seasonality) and a robust seasonal model (recency-weighted level × weekday profile). If Prophet is unavailable the seasonal model still works
+4. Both are scored on rolling backtests of 7-day totals from your own history; the more accurate one gets more weight
+5. The **likely range** comes from how far real spending has landed from the forecast in the past, not from a textbook formula
+6. Cached 6 hours, invalidated on new inserts; Groq writes a plain-English summary framed as a prediction
 
-**Trend:** Increasing/Decreasing/Stable, by ±7% change between forecast halves.
-**Risk:** High (>25% above pace or volatility >0.9) / Moderate (10–25% or 0.6–0.9) / Low otherwise.
+**Trend:** forecast average per day versus your last 28 days (Increasing/Decreasing above ±10%).
+**Risk:** High (>25% above your 90-day pace, or weekly variation >100%) / Moderate (10–25% or 60–100%) / Low otherwise.
+**Confidence:** High / Medium / Low from the backtest error. Spiky spending honestly shows Low confidence and a wide range instead of false precision.
+
+---
+
+## Smart Insights
+
+Everything on this page is deterministic and computed from your own transactions (`src/insights.py`), so every number can be traced back; the LLM only explains it.
+
+- **Financial health score (0-100, grade A-F):** Cash flow 30% · Cash buffer 20% · Fee efficiency 15% · Spending stability 15% · Spending trend 10% · Saving habit 10%. Each component shows its value and how it was measured.
+- **Cash runway:** your balance divided by your recent daily spending.
+- **Recurring payments and habits:** *subscription-like* (regular rhythm, near-identical amounts) and *habits* (frequent repeat payments), with a monthly cost estimate and next expected date.
+- **Patterns:** peak hour and weekday, weekend share, small-payment drain, fee drag, and your spending in the 2 days after a big payment in.
+- **Heads-up alerts:** low buffer, spending spike versus your typical week, heavy fees, one recipient dominating.
+
+## Anomaly detection
+
+A transaction is flagged only when it is extreme against **your own** history, so a quiet spender is not forced to have a fixed share flagged:
+
+1. Robust (median/MAD, log-scale) baselines per recipient, falling back to the category
+2. An IsolationForest corroborates borderline cases; it never flags on its own
+3. Context rules: possible duplicate payment (same recipient and amount within 10 minutes), large first-time payee, large payment at an hour you rarely spend in
+4. Payments under about KES 200 are never flagged, and every flagged item carries a plain-English reason
+
+## Charts
+
+Ask in your own words; the period is resolved by deterministic rules (not LLM date arithmetic), so "last month", "in August", "Q1", "last 90 days", "2025", `2026-02-01 to 2026-02-28` and "all time" are always exact. If you do not name a chart, PesaPilot picks one and tells you why.
+
+| Family | Types |
+|---|---|
+| Rank / compare | bar, column, lollipop, pareto, cashflow, waterfall |
+| Composition | pie, donut, treemap, waffle, radar, stacked_bar, monthly_stack, stacked_area |
+| Distribution | histogram, kde, ecdf, box, boxen, violin, strip, swarm, ridge |
+| Relationships | scatter, bubble, regression, hexbin, joint, pair, correlation, cluster |
+| Time | line, area, rolling, cumulative, calendar, hour_heatmap, heatmap |
+| Smart reports | forecast, health, recurring, dashboard |
+
+Every chart comes with a caption computed from the plotted data (peak, share, spread, trend) plus an optional one-line AI insight, and suggests related charts to try next.
 
 ---
 
@@ -281,7 +325,11 @@ Uses [Meta Prophet](https://facebook.github.io/prophet/) to project spending 7 o
 | `What did I spend on food?` | Plain-English KES + % answer |
 | `Give me a budget plan` | Needs/wants/savings split, one category to trim |
 | `What should I invest in?` | Sacco / MMF / T-Bill suggestion |
-| `forecast` / `forecast 30 days` | Forecast with trend, risk, AI summary |
+| `forecast` / `forecast 30 days` | Forecast with likely range, trend, risk, confidence and chart |
+| `financial health score` | Score out of 100, what drives it, and three actions, with a scorecard chart |
+| `recurring payments` | Subscriptions and habits with monthly cost |
+| `how long will my money last?` | Cash runway |
+| `unusual spending` | Flagged transactions with the reason for each |
 | `Summary` / `Daily summary` / `Today` | Period or daily digest |
 | `Weekly summary` | Last full week (Mon–Sun) vs the week before |
 | `Monthly summary` | Last full calendar month vs the month before |
@@ -323,7 +371,7 @@ docker compose up -d --build
 docker compose logs -f pesapilot
 ```
 
-The container runs as an unprivileged user with all Linux capabilities dropped and `no-new-privileges`; the app code is read-only to it, and only `sessions/` (mode 700) and `data/` are writable. Compose refuses to start if a required secret is missing.
+The container runs as an unprivileged user with all Linux capabilities dropped and `no-new-privileges`, on a **read-only filesystem** (only `/tmp`, an in-memory home folder, `sessions/` and `data/` are writable), with a process cap and a memory limit. Node is copied from the official Node image in a multi-stage build, so nothing is piped from the internet into a root shell during the build. Compose refuses to start if a required secret is missing.
 
 Health check (run on the VPS — Compose publishes the API on `127.0.0.1:8011`): `curl http://127.0.0.1:8011/health`
 
@@ -400,6 +448,9 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
 - Abuse limits: wrong-token attempts are throttled per IP (`API_AUTH_FAIL_LIMIT`, then `429`; your valid token is never locked out), authenticated calls are capped per minute (`API_RATE_LIMIT_PER_MIN`), AI/anomaly/budget-check calls have a stricter cap (`API_AI_RATE_LIMIT_PER_MIN`), request bodies over 32 KB are rejected with `413`, and every response carries `nosniff`, `no-store` and a locked-down CSP.
 - AI-written SQL is validated (single read-only `SELECT`/`WITH`, no quoted identifiers, no system catalogs, no `pg_*`, `information_schema`, `generate_series`, `INTO`, and only an allowlist of aggregate, window, date, math and string functions plus PesaPilot's own analytics functions) and then runs in a read-only transaction with a 10 second timeout and a 500-row cap. Names copied from SMS messages are flattened before they reach the AI, and the AI is told to treat them as data, never instructions.
 - The Streamlit dashboard is pinned to `127.0.0.1` by `.streamlit/config.toml` (shipped in the repo, with XSRF protection on, usage stats off and error details hidden), and locks out for 30 seconds (doubling up to 15 minutes) after 5 wrong passwords, and warns in the sidebar when `DASHBOARD_PASSWORD` is not set.
+- Hardened for a VPS: `scripts/harden_vps.sh` audits your server (publicly listening ports, firewall, SSH, fail2ban, automatic updates, `.env` permissions) and, with `--apply`, fixes the safe items after asking. Never set Postgres `listen_addresses='*'`: bind it to `localhost` plus the Docker bridge address only.
+- Logs are scrubbed of API keys, bearer tokens and passwords before they are written, and the API token must contain at least 8 distinct characters.
+- The Streamlit login expires after `DASHBOARD_SESSION_MINUTES`; with no password the dashboard refuses any request not addressed to localhost.
 - The production image no longer ships `whatsapp-web.js` / `puppeteer` (dev-only packages with known advisories): they are dev dependencies and `npm prune --omit=dev` removes them. `npm audit --omit=dev` reports 0 vulnerabilities.
 - The bot warns at startup if `API_URL` is neither HTTPS nor localhost, because the API token would otherwise cross the network unencrypted.
 
@@ -422,16 +473,18 @@ api.example.com {
 
 Callers must still send `Authorization: Bearer <API_TOKEN>`. Add rate limiting at the proxy if the hostname is public. Never set `API_BIND=0.0.0.0` instead. The Streamlit dashboard has no HTTPS of its own: keep it on localhost (reach it over `ssh -L 8501:127.0.0.1:8501`), and set `DASHBOARD_PASSWORD` if anyone else can reach the machine.
 
+**Docker and your firewall:** ports published by Docker bypass `ufw`. That is why `docker-compose.yml` publishes the API on `127.0.0.1` only. Run `sudo scripts/harden_vps.sh` after any change to check nothing became public.
+
 ---
 
 ## How the AI advice is grounded
 
-Every Groq question is paired with live context from Postgres: summary stats, top categories, top merchants, recent daily trend, detected anomalies. A Kenya-specific system prompt (`src/groq_client.py`) enforces amounts + percentages, comparisons to averages, one actionable tip, real Kenyan options (Sacco/MMF/T-Bills), a budget split, an emergency-fund nudge — never Fuliza or a named bank.
+Every Groq question is paired with live context from Postgres: summary stats, top categories, top merchants, recent daily trend, detected anomalies, and verified analytics (health score, runway, recurring payments, period comparisons). A Kenya-specific system prompt (`src/groq_client.py`) enforces amounts + percentages, comparisons to averages, one actionable tip, real Kenyan options (Sacco/MMF/T-Bills), a budget split, an emergency-fund nudge — never Fuliza or a named bank.
 
 | Model | Used for |
 |---|---|
-| `LLM_MODEL_FAST` | `chat()`, `generate_insights()`, `generate_forecast_insights()` |
-| `LLM_MODEL_SMART` | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()` |
+| `LLM_MODEL_FAST` | `chat()`, `generate_insights()`, `generate_forecast_insights()`, chart captions |
+| `LLM_MODEL_SMART` | `generate_sql()`, `analyze_results()`, `budget_plan()`, `investment_advice()`, `health_coach()` |
 
 **SQL safety guard** (`src/sql_guard.py`): every LLM query passes `is_safe_select_sql()` — must start with `SELECT` or `WITH`, no `;`, no comments, none of `DROP/DELETE/UPDATE/INSERT/ALTER/TRUNCATE/GRANT/REVOKE/EXEC/EXECUTE/CREATE/ATTACH/MERGE/CALL/COPY`, no `pg_*`/`lo_*`/`dblink`/`set_config` functions, no row-locking clauses, and every function call must be on a fixed allowlist of safe aggregate, window, date, math and string functions plus the six analytics functions in `schema/0001_init.sql`. It then runs in a read-only transaction with a 10 s statement timeout, capped at 500 rows. User *questions* are only rejected when they contain actual destructive statements (e.g. `drop table …`), so ordinary questions like "how much did I spend on call credit?" work.
 

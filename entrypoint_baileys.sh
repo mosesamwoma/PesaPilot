@@ -186,7 +186,7 @@ fi
 
 echo -e "${BLUE}⏳ Waiting for API to initialize...${NC}"
 
-for i in {1..20}; do
+for i in {1..60}; do
     if curl -fsS "http://127.0.0.1:${WHATSAPP_API_PORT:-8000}/health" >/dev/null 2>&1; then
         echo -e "${GREEN}API is healthy${NC}\n"
         break
@@ -196,7 +196,7 @@ for i in {1..20}; do
         exit 1
     fi
     if [ "$i" -eq 20 ]; then
-        echo -e "${RED}API did not become healthy within 20s.${NC}"
+        echo -e "${RED}API did not become healthy within 60s.${NC}"
         exit 1
     else
         echo -e "${BLUE}   Attempt $i/20...${NC}"

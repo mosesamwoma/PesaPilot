@@ -16,7 +16,7 @@ class MpesaParser:
         'food': ['java', 'kfc', 'naivas', 'quickmart', 'carrefour', 'food', 'restaurant', 'cafe', 'pizza',
                  'burger', 'chicken', 'bakery', 'grocery', 'groceries', 'butchery', 'eatery'],
         'transport': ['uber', 'bolt', 'little', 'taxi', 'matatu', 'bus', 'fuel', 'petrol', 'shell', 'total',
-                      'kenol', 'rubis', 'sgr'],
+                      'kenol', 'rubis', 'sgr', 'coach', 'railway', 'railways', 'cab', 'swvl', 'tuktuk'],
         'utilities': ['kplc', 'kenya power', 'water', 'safaricom', 'airtel', 'telkom', 'internet', 'dstv',
                       'gotv', 'zuku', 'wifi', 'wireless', 'networks', 'airtime', 'bundles', 'tunukiwa'],
         'banking': ['equity', 'kcb', 'cooperative', 'absa', 'ncba', 'dtb', 'stanbic', 'bank', 'atm', 'loan',
@@ -27,7 +27,8 @@ class MpesaParser:
         'education': ['school', 'university', 'college', 'fees', 'unilink', 'smep', 'student', 'students',
                       'academy', 'helb'],
         'entertainment': ['cinema', 'netflix', 'spotify', 'showmax', 'game', 'bar', 'club', 'efootball',
-                          'playstation', 'steam'],
+                          'playstation', 'steam', 'betika', 'sportpesa', 'odibets', 'mozzart', 'betway',
+                          '1xbet', 'playstore'],
         'savings': ['sacco', 'chama', 'savings', 'investment', 'shares', 'mmf', 'ziidi'],
         'business': ['till', 'lipa na mpesa', 'paybill', 'buy goods', 'pochi la biashara', 'pochi'],
     }
@@ -35,6 +36,7 @@ class MpesaParser:
     CATEGORIES = tuple(MERCHANT_CATEGORIES) + ('personal', 'other')
 
     _SUBSTRING_KEYWORDS = frozenset({
+        'betika', 'sportpesa', 'odibets', 'mozzart', 'betway', 'playstore',
         'java', 'kfc', 'naivas', 'quickmart', 'carrefour', 'kplc', 'safaricom', 'airtel', 'telkom', 'wifi',
         'jumia', 'kilimall', 'pharmacy', 'hospital', 'netflix', 'spotify', 'showmax', 'efootball', 'sacco',
         'equity', 'mshwari', 'fuliza', 'supermarket', 'wholesale', 'butchery', 'dstv', 'gotv', 'zuku',

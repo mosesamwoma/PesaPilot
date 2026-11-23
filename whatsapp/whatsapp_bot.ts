@@ -256,6 +256,7 @@ let isConnected = false;
 let startupResolved = false;
 let shuttingDown = false;
 let reconnectAttempts = 0;
+let reconnectScheduled = false;
 const RECONNECT_BASE_MS = 5000;
 const RECONNECT_MAX_MS = 5 * 60 * 1000;
 
@@ -279,7 +280,7 @@ async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data
             method,
             url,
             data,
-            timeout: 30000,
+            timeout: 90000,
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${config.apiToken}`,
@@ -558,12 +559,14 @@ async function startBaileys(): Promise<WASocket> {
                     process.exit(1);
                 }
 
-                if (shuttingDown) return;
+                if (shuttingDown || reconnectScheduled) return;
+                reconnectScheduled = true;
 
                 const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
                 reconnectAttempts += 1;
                 console.log(`\nDisconnected (status ${statusCode ?? 'unknown'}). Reconnecting in ${Math.round(delayMs / 1000)}s...\n`);
                 setTimeout(() => {
+                    reconnectScheduled = false;
                     startBaileys().catch((err) => {
                         console.error(`Reconnect failed: ${(err as Error).message}`);
                         process.exit(1);

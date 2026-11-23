@@ -139,8 +139,12 @@ echo
 echo "If the app runs inside Docker, set POSTGRES_HOST=host.docker.internal instead of 127.0.0.1."
 echo "If the app runs inside Podman, set POSTGRES_HOST=host.containers.internal instead."
 echo
-echo "PostgreSQL must also be configured to accept connections from your"
-echo "container's network. If Docker/Podman can't reach it, check that"
-echo "postgresql.conf has listen_addresses='*' and pg_hba.conf allows"
-echo "connections from the container's subnet (typically 172.16.0.0/12"
-echo "for Docker, 10.88.0.0/16 for Podman's default network)."
+echo "SECURITY: if the app runs in Docker/Podman, Postgres must be reachable from the"
+echo "container network, but NEVER from the internet. Do NOT set listen_addresses='*'."
+echo "Instead bind it to loopback plus the Docker bridge address only:"
+echo
+echo "  postgresql.conf:  listen_addresses = 'localhost,172.17.0.1'"
+echo "  pg_hba.conf:      host  $PGSQL_DB  $PGSQL_USER  172.16.0.0/12  scram-sha-256"
+echo
+echo "(Podman's default bridge is 10.88.0.1 / 10.88.0.0/16.) Then confirm nothing is"
+echo "exposed publicly:  sudo scripts/harden_vps.sh   (audit mode, changes nothing)."

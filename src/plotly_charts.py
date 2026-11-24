@@ -1,5 +1,3 @@
-"""Interactive Plotly charts for the dashboard. Each function takes the typed frame from src.frames and returns a
-figure, or None when there is not enough data (so the page can show a friendly message instead of an error)."""
 from typing import Any, Dict, List, Optional
 
 import numpy as np

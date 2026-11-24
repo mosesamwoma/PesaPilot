@@ -1,5 +1,3 @@
-"""Chart renderers (matplotlib + seaborn). Every renderer draws from a prepared transaction frame and returns
-{'summary': str, 'facts': [str, ...]}: a plain-English description computed from the real data."""
 from __future__ import annotations
 
 import logging
@@ -34,7 +32,7 @@ _CLEAN_RE = re.compile(r'[\$\x00-\x1f\x7f]+')
 
 
 class ChartError(Exception):
-    """A user-facing reason a chart could not be drawn (not a bug)."""
+    pass
 
 
 def clean_text(value: Any, limit: int = 40) -> str:
@@ -123,7 +121,6 @@ class Ctx:
         return self.ax
 
     def adopt(self, fig, ax=None) -> None:
-        """Use a figure created by seaborn grids (JointGrid, PairGrid, ClusterGrid)."""
         if self.fig is not None and self.fig is not fig:
             plt.close(self.fig)
         self.fig, self.ax = fig, ax
@@ -204,8 +201,6 @@ def _legend_outside(ax, theme: dict, title: Optional[str] = None, **kwargs) -> N
 def _out(summary: str, *facts: str) -> Dict[str, Any]:
     return {'summary': summary, 'facts': [summary, *facts]}
 
-
-# --------------------------------------------------------------------------- ranking / comparison
 
 def render_bar(ctx: Ctx) -> Dict:
     if ctx.key in TIME_KEYS:
@@ -390,8 +385,6 @@ def render_waterfall(ctx: Ctx) -> Dict:
                 f"{fmt_value('amount', top.iloc[0])}; you ended {'with ' + fmt_value('amount', net) + ' left' if net >= 0 else fmt_value('amount', -net) + ' short'}.")
 
 
-# --------------------------------------------------------------------------- composition
-
 def _pie_series(ctx: Ctx) -> pd.Series:
     key = ctx.key if ctx.key not in ('date', 'week', 'month', 'hour') else 'merchant_category'
     metric = 'amount' if ctx.metric == 'average' else ctx.metric
@@ -432,7 +425,6 @@ def render_donut(ctx: Ctx) -> Dict:
 
 
 def _squarify(sizes: List[float], x: float, y: float, w: float, h: float) -> List[tuple]:
-    """Squarified treemap layout (Bruls, Huizing, van Wijk). sizes must be sorted descending and sum to w*h."""
     rects: List[tuple] = []
     sizes = list(sizes)
 
@@ -625,8 +617,6 @@ def render_stacked_area(ctx: Ctx) -> Dict:
     return _out(f"{clean_text(pivot.sum().idxmax())} is the largest layer ({pivot.sum().max() / pivot.values.sum() * 100:.0f}% of all spending).")
 
 
-# --------------------------------------------------------------------------- distributions
-
 def _positive(ctx: Ctx, minimum: int = 2) -> pd.Series:
     metric = 'amount' if ctx.metric in ('count', 'average') else ctx.metric
     values = ctx.df.loc[ctx.df[metric] > 0, metric]
@@ -799,8 +789,6 @@ def render_ridge(ctx: Ctx) -> Dict:
     return _out(f"{clean_text(medians.idxmax())} has the highest typical payment (median KES {medians.max():,.0f}); "
                 f"{clean_text(medians.idxmin())} the lowest (KES {medians.min():,.0f}).")
 
-
-# --------------------------------------------------------------------------- relationships
 
 def render_scatter(ctx: Ctx) -> Dict:
     key = ctx.key if ctx.key not in ('date', 'week', 'month', 'weekday', 'hour') else 'recipient'
@@ -990,8 +978,6 @@ def render_cluster(ctx: Ctx) -> Dict:
     ctx.adopt(g.figure, g.ax_heatmap)
     return _out("Categories with similar weekday habits are grouped together; brighter cells are the days each category is usually paid.")
 
-
-# --------------------------------------------------------------------------- time series
 
 def _series_for_time(ctx: Ctx):
     df = ctx.df
@@ -1228,8 +1214,6 @@ def render_heatmap(ctx: Ctx) -> Dict:
     return _out(f"Hottest cell: {clean_text(pivot.index[i])} on {cols[j]}s ({fmt_value(ctx.metric, pivot.values.max())}).")
 
 
-# --------------------------------------------------------------------------- intelligence charts
-
 def render_forecast(ctx: Ctx) -> Dict:
     forecast = ctx.extra.get('forecast')
     if not forecast or not forecast.get('sufficient_data'):
@@ -1326,7 +1310,7 @@ def render_recurring(ctx: Ctx) -> Dict:
                 f"{clean_text(items[-1]['recipient'])} (KES {items[-1]['monthly_estimate']:,.0f}/month).")
 
 
-def render_dashboard(ctx: Ctx) -> Dict:
+def render_overview(ctx: Ctx) -> Dict:
     df = ctx.df
     _need(df, 10, "Not enough transactions for an overview.")
     if ctx.fig is not None:
@@ -1350,7 +1334,7 @@ def render_dashboard(ctx: Ctx) -> Dict:
             result = RENDERERS[kind].fn(panel_ctx)
             facts.append(result['summary'])
         except Exception as e:
-            logger.warning(f"dashboard panel {kind} failed: {e}")
+            logger.warning(f"overview panel {kind} failed: {e}")
             ax.text(0.5, 0.5, 'Not enough data', ha='center', va='center', color=ctx.theme['muted'], transform=ax.transAxes)
             ax.set_title(title, color=ctx.theme['text'], fontsize=11, fontweight='bold')
             ax.axis('off')
@@ -1360,8 +1344,6 @@ def render_dashboard(ctx: Ctx) -> Dict:
     ctx.ax = axes[0, 0]
     return {'summary': facts[0] if facts else 'Overview of your M-Pesa activity.', 'facts': facts}
 
-
-# --------------------------------------------------------------------------- registry
 
 @dataclass(frozen=True)
 class Renderer:
@@ -1414,13 +1396,12 @@ RENDERERS: Dict[str, Renderer] = {
     'forecast': Renderer(render_forecast, 'Forecast chart', all_types=True, needs='forecast'),
     'health': Renderer(render_health, 'Financial health scorecard', all_types=True, needs='health', multi_fig=True),
     'recurring': Renderer(render_recurring, 'Recurring payments chart', all_types=True, needs='recurring'),
-    'dashboard': Renderer(render_dashboard, 'Overview dashboard', all_types=True, multi_fig=True),
+    'overview': Renderer(render_overview, 'Overview', all_types=True, multi_fig=True),
 }
 CHART_TYPES = tuple(RENDERERS)
 
 
 def draw_anomaly_figure(anomalies: List[Dict[str, Any]], theme: dict, title: str):
-    """Horizontal severity chart of flagged transactions (own figure; not a natural-language chart type)."""
     rows = [a for a in anomalies if a.get('amount')][:12]
     if not rows:
         raise ChartError("No unusual transactions to chart.")

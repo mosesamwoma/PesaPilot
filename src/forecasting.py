@@ -1,11 +1,3 @@
-"""Spending forecast: a backtested ensemble of Prophet and a robust seasonal model.
-
-* Rare one-off large payments are capped when learning the *typical* pattern, then added back as an average
-  "tail allowance", so one big transfer does not distort every future day.
-* Models are scored by rolling-origin backtests on 7-day totals; the better model gets more weight.
-* Prediction intervals come from how wrong the model has actually been on this user's own history.
-* If Prophet is unavailable the statistical model still produces a forecast.
-"""
 import hashlib
 import logging
 import math
@@ -56,7 +48,6 @@ def cache_size() -> int:
 
 
 def build_daily_series(transactions: Union[List[Dict], pd.DataFrame]) -> pd.DataFrame:
-    """Zero-filled daily spending up to yesterday (today is incomplete) as a date/amount frame."""
     frame = transactions if isinstance(transactions, pd.DataFrame) and 'is_spend' in transactions.columns \
         else build_frame(transactions if not isinstance(transactions, pd.DataFrame) else transactions.to_dict('records'))
     today = pd.Timestamp(today_nairobi())
@@ -84,7 +75,6 @@ def _cap(series: pd.Series) -> float:
 
 
 def _stat_predict(history: pd.Series, horizon: int, with_tail: bool = True) -> pd.Series:
-    """Robust level (EWMA of capped spend) x weekday profile, plus an average allowance for rare big payments."""
     capped = history.clip(upper=_cap(history))
     level = float(capped.ewm(halflife=21, adjust=False).mean().iloc[-1])
     recent = capped.tail(84)
@@ -173,7 +163,6 @@ def _blend_weights(backtest: Dict) -> Dict[str, float]:
 
 
 def _error_distribution(daily: pd.Series, horizons: List[int]) -> Dict:
-    """How far actual spending has landed from the statistical forecast: ratio quantiles per horizon and daily residuals."""
     n = len(daily)
     ratios: Dict[int, List[float]] = {h: [] for h in horizons}
     residuals: List[float] = []

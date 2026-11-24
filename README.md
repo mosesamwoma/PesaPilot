@@ -1,6 +1,6 @@
 # PesaPilot
 
-AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction backup into a self-hosted PostgreSQL database, then lets you explore spending and get Kenyan financial advice via a Streamlit dashboard or WhatsApp.
+AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction backup into a self-hosted PostgreSQL database, then lets you explore spending and get Kenyan financial advice through WhatsApp.
 
 ![PesaPilot WhatsApp Bot Demo](assets/whatsapp.gif)
 
@@ -8,18 +8,17 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 
 ## Features
 
-- **Dashboard** — spending overview, daily trend, category breakdown, top merchants, heatmap, histogram, AI insights; the analysis period can be a preset (7 to 365 days, all time) or any number of days from 1 to 1095 with the "Custom (choose days)" slider
+> **The Streamlit dashboard is for your own computer only.** It is never installed in Docker, never uploaded by `redeploy.sh`, and refuses to start inside a container or over SSH on a server. Everything it shows is also available through the WhatsApp bot. See [Dashboard (local only)](#dashboard-local-only).
 
-  ![Dashboard overview](assets/1.png)
-  ![Spending heatmap](assets/2.png)
-
+- **Dashboard (local only)** — spending overview, calendar heatmap, treemap, sunburst, money-flow Sankey, cash flow, rolling averages, payment-size distributions and category correlations, all interactive
 - **Smart Insights** — a 0-100 **financial health score** (cash flow, cash buffer, fees, stability, trend, saving habit), cash **runway**, **recurring payments and habits** detected from your history, spending patterns, and plain-English alerts, all computed from your real transactions
-- **Chart Studio — 41 chart types** — describe a chart in plain English or build it with controls: bar, column, lollipop, Pareto, pie, donut, treemap, waffle, radar, stacked bar/column/area, cash flow, waterfall, line, area, rolling average, cumulative, calendar heatmap, hour×weekday heatmap, category heatmap, histogram, KDE, ECDF, box, boxen, violin, strip, swarm, ridge, scatter, bubble, regression, hexbin, joint, pair, correlation, cluster map, forecast, health scorecard, recurring payments, and a one-image overview dashboard (see [Charts](#charts))
+- **Charts — 41 chart types** — describe a chart in plain English and get it as an image: bar, column, lollipop, Pareto, pie, donut, treemap, waffle, radar, stacked bar/column/area, cash flow, waterfall, line, area, rolling average, cumulative, calendar heatmap, hour×weekday heatmap, category heatmap, histogram, KDE, ECDF, box, boxen, violin, strip, swarm, ridge, scatter, bubble, regression, hexbin, joint, pair, correlation, cluster map, forecast, health scorecard, recurring payments, and a one-image overview (see [Charts](#charts))
 - **Forecast** — a backtested ensemble (Prophet + a robust seasonal model) with a likely range, honest confidence from your own history, and a Groq summary
 - **Ask AI** — plain-English questions turned into SQL by Groq (with automatic self-repair if the first query fails), answered from your real numbers
+- **Chart Studio (dashboard)** — describe a chart or build it from dropdowns, then download the PNG
+- **Transactions** — filterable, searchable history (dashboard)
 - **Budget plans** — a KES needs/wants/savings split sized to your spending
 - **Investment guidance** — Sacco / MMF / T-Bill suggestions sized to your free cash flow
-- **Transactions** — filterable, searchable history
 - **Transaction cost tracking** — M-Pesa fees parsed and stored separately from amount; visible by category and as % of spend
 - **Anomaly detection with reasons** — learns your normal pattern per recipient and per category, flags only genuine outliers, possible duplicate payments, large first-time payees and odd-hour payments, and tells you why each was flagged
 - **Budget goals with alerts** — proactive WhatsApp pings near/over budget
@@ -32,9 +31,13 @@ AI-powered M-Pesa financial assistant for Kenya. Parses your SMS transaction bac
 - **Response caching** — thread-safe in-memory TTL cache on all Groq calls, cleared on new transactions
 - **Self-healing database connection** — a Postgres restart (for example an automatic security update on your VPS) no longer leaves the app broken until you restart it
 
-> Loading SMS data has no CLI/dashboard button — see [Parse and load your data](#5-parse-and-load-your-data).
+> Loading SMS data has no CLI button — see [Parse and load your data](#5-parse-and-load-your-data).
 
 ---
+
+![Dashboard view](assets/1.png)
+
+![Heatmap view](assets/2.png)
 
 ## WhatsApp Bot — Two Modes
 
@@ -78,6 +81,8 @@ pip install -r requirements.txt
 npm install
 ```
 
+`requirements.txt` is everything the API, the bot and Docker need. The local dashboard adds Streamlit and Plotly through a separate file that Docker never reads (`pip install -r requirements-dashboard.txt`).
+
 Puppeteer browser downloads are disabled by the repository configuration so
 installs do not fail or download hundreds of megabytes unexpectedly. Production
 uses the Baileys bot and does not need a browser. If you run the optional
@@ -117,7 +122,7 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 | `API_URL` | `http://127.0.0.1:8000` | Where the bot finds the FastAPI service |
 | `WHATSAPP_API_PORT` | `8000` | FastAPI port |
 | `WHATSAPP_LID` | empty | WhatsApp's internal ID for your number. Both bots resolve it automatically, so leave it empty. Set it only if the bot ignores your messages: the log prints the sender next to `From:` — copy that number here and restart |
-| `LLM_MODEL_FAST` | `openai/gpt-oss-20b` | Chat / dashboard insights |
+| `LLM_MODEL_FAST` | `openai/gpt-oss-20b` | Chat / insights |
 | `LLM_MODEL_SMART` | `openai/gpt-oss-120b` | SQL generation, analysis, advice |
 | `LLM_TEMPERATURE` | `0.6` | Groq sampling temperature |
 | `LLM_MAX_TOKENS` | `1536` | Max tokens per response |
@@ -131,13 +136,11 @@ Then open `.env` and add your `GROQ_API_KEY` and `WHATSAPP_MAIN_NUMBER`. Never c
 | `API_TIMEOUT` | `20` | Seconds before a Groq call is aborted |
 | `API_BIND` | `127.0.0.1` | Docker only: host interface the API port is published on. Keep `127.0.0.1`; to reach the API remotely use a TLS reverse proxy, not `0.0.0.0` |
 | `API_BIND_HOST` | `127.0.0.1` | Interface the API process binds to outside a container (the compose files set `0.0.0.0` *inside* the container, which only the host-side `API_BIND` exposes) |
-| `DASHBOARD_PASSWORD` | empty | Optional login for the Streamlit dashboard. The dashboard itself only listens on `127.0.0.1` (`.streamlit/config.toml`) |
+| `DASHBOARD_PASSWORD` | empty | Local dashboard login. Set it even on your own computer |
 | `DASHBOARD_SESSION_MINUTES` | `480` | Dashboard login expires after this many minutes |
 | `DASHBOARD_PORT` | `8501` | Port used by `scripts/run_dashboard.sh` (always bound to 127.0.0.1) |
-| `DASHBOARD_ALLOW_REMOTE_NO_PASSWORD` | `false` | Leave `false`. Without a `DASHBOARD_PASSWORD` the dashboard only answers requests addressed to localhost |
-| `CONTAINER_MEM_LIMIT` | `2g` | Docker only: memory cap for the container |
-| `POSTGRES_SSLMODE` | empty | Set to `require` / `verify-full` when Postgres is on another machine |
-| `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com,http://[2001:db8::1]:8501`. The bot and dashboard do not need it |
+| `DASHBOARD_ALLOW_REMOTE_NO_PASSWORD` | `false` | Leave `false`. Without a password the dashboard only answers requests addressed to localhost |
+| `CORS_ORIGINS` | empty (CORS off) | Comma-separated full origins allowed to call the API from a browser, e.g. `https://app.example.com`. The bot does not need it |
 | `API_AUTH_FAIL_LIMIT` | `10` | Wrong-token attempts per IP per 5 minutes before the API answers `429` |
 | `API_RATE_LIMIT_PER_MIN` | `120` | Authenticated API requests allowed per minute |
 | `API_AI_RATE_LIMIT_PER_MIN` | `30` | Per-minute cap for `/ask`, `/anomalies` and `/budget-check` (protects your Groq quota) |
@@ -212,13 +215,20 @@ WHERE body ILIKE '%Fuliza M-PESA amount is%'
 
 ## 6. Run locally
 
-**Dashboard:**
-```bash
-scripts/run_dashboard.sh
-```
-Open [http://localhost:8501](http://localhost:8501). The script forces the dashboard onto `127.0.0.1` so it can never be exposed by accident. On a VPS use an SSH tunnel: `ssh -L 8501:127.0.0.1:8501 user@your-server`.
+> The API and both bots need `API_TOKEN` in `.env` (the API will not start without it).
 
-> The API and both bots need `API_TOKEN` in `.env` (the API will not start without it). The dashboard reads the database directly and does not use the API.
+## Dashboard (local only)
+
+The dashboard lets you browse everything in a web page. Run it **only on your own computer**:
+
+```bash
+pip install -r requirements-dashboard.txt
+scripts/run_dashboard.sh          # then open http://localhost:8501
+```
+
+- It binds to `127.0.0.1` only. `scripts/run_dashboard.sh` and the app itself refuse to start inside a container or in an SSH session on a server.
+- If your database lives on the VPS, keep Postgres closed to the internet and reach it from your laptop through a tunnel: `ssh -L 5432:127.0.0.1:5432 user@your-server`, then set `POSTGRES_HOST=localhost` in your local `.env`.
+- It is excluded from the Docker/Podman image (`.dockerignore`, `.containerignore`, and the `Dockerfile` only copies `src/` and `whatsapp/`), skipped by `redeploy.sh`, and `redeploy.sh` deletes any copy left on the server by older deployments. `sudo scripts/harden_vps.sh` reports it as a risk if it finds one.
 
 **API + WhatsApp bot (whatsapp-web.js, local dev):**
 ```bash
@@ -233,8 +243,6 @@ npm run api   # Terminal 1
 npm run dev   # Terminal 2
 ```
 Session persists in `.baileys_auth/`.
-
-> The Streamlit dashboard is local-only (bound to `127.0.0.1`) and not included in the Docker image.
 
 ---
 
@@ -255,15 +263,15 @@ npm run clean         # Remove dist/ and auth folders
 
 ## CLI reference
 
-There is no CLI wrapper. Start the API with `npm run api` and the dashboard with `scripts/run_dashboard.sh`. For a database connection check: `python -c "from src.database import PostgresDB; PostgresDB()"`.
+There is no CLI wrapper. Start the API with `npm run api`. For a database connection check: `python -c "from src.database import PostgresDB; PostgresDB()"`.
 
 ---
 
-## The Forecast page
-
-A backtested ensemble that projects spending 7, 14 or 30 days out. Needs at least 14 days of history.
+## Forecasting
 
 ![Forecast view](assets/3.png)
+
+A backtested ensemble that projects spending 7, 14 or 30 days out. Needs at least 14 days of history.
 
 1. Pulls up to 180 days of spending into a zero-filled daily series
 2. Rare one-off large payments are capped while learning your *typical* pattern, then added back as an average allowance, so one big transfer does not distort every future day
@@ -280,7 +288,7 @@ A backtested ensemble that projects spending 7, 14 or 30 days out. Needs at leas
 
 ## Smart Insights
 
-Everything on this page is deterministic and computed from your own transactions (`src/insights.py`), so every number can be traced back; the LLM only explains it.
+Everything here is deterministic and computed from your own transactions (`src/insights.py`), so every number can be traced back; the LLM only explains it.
 
 - **Financial health score (0-100, grade A-F):** Cash flow 30% · Cash buffer 20% · Fee efficiency 15% · Spending stability 15% · Spending trend 10% · Saving habit 10%. Each component shows its value and how it was measured.
 - **Cash runway:** your balance divided by your recent daily spending.
@@ -308,7 +316,7 @@ Ask in your own words; the period is resolved by deterministic rules (not LLM da
 | Distribution | histogram, kde, ecdf, box, boxen, violin, strip, swarm, ridge |
 | Relationships | scatter, bubble, regression, hexbin, joint, pair, correlation, cluster |
 | Time | line, area, rolling, cumulative, calendar, hour_heatmap, heatmap |
-| Smart reports | forecast, health, recurring, dashboard |
+| Smart reports | forecast, health, recurring, overview |
 
 Every chart comes with a caption computed from the plotted data (peak, share, spread, trend) plus an optional one-line AI insight, and suggests related charts to try next.
 
@@ -447,10 +455,9 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
 - Budget alerts are delivered at least once: `GET /budget-check` only lists alerts that are due, the bot sends each one and then confirms it with `POST /budget-alerts/ack`. An alert whose WhatsApp send fails stays pending and is retried at the next 2-hour check; if only the confirmation fails you may get that alert twice, never zero times.
 - Abuse limits: wrong-token attempts are throttled per IP (`API_AUTH_FAIL_LIMIT`, then `429`; your valid token is never locked out), authenticated calls are capped per minute (`API_RATE_LIMIT_PER_MIN`), AI/anomaly/budget-check calls have a stricter cap (`API_AI_RATE_LIMIT_PER_MIN`), request bodies over 32 KB are rejected with `413`, and every response carries `nosniff`, `no-store` and a locked-down CSP.
 - AI-written SQL is validated (single read-only `SELECT`/`WITH`, no quoted identifiers, no system catalogs, no `pg_*`, `information_schema`, `generate_series`, `INTO`, and only an allowlist of aggregate, window, date, math and string functions plus PesaPilot's own analytics functions) and then runs in a read-only transaction with a 10 second timeout and a 500-row cap. Names copied from SMS messages are flattened before they reach the AI, and the AI is told to treat them as data, never instructions.
-- The Streamlit dashboard is pinned to `127.0.0.1` by `.streamlit/config.toml` (shipped in the repo, with XSRF protection on, usage stats off and error details hidden), and locks out for 30 seconds (doubling up to 15 minutes) after 5 wrong passwords, and warns in the sidebar when `DASHBOARD_PASSWORD` is not set.
+- The only network listener on the server is the API, bound to `127.0.0.1` by default. The Streamlit dashboard is local-only (see above): it is not in the Docker image, is never uploaded by `redeploy.sh`, and is removed from the server on every deploy. Its login locks out for 30 seconds (doubling up to 15 minutes) after 5 wrong passwords and expires after `DASHBOARD_SESSION_MINUTES`.
 - Hardened for a VPS: `scripts/harden_vps.sh` audits your server (publicly listening ports, firewall, SSH, fail2ban, automatic updates, `.env` permissions) and, with `--apply`, fixes the safe items after asking. Never set Postgres `listen_addresses='*'`: bind it to `localhost` plus the Docker bridge address only.
 - Logs are scrubbed of API keys, bearer tokens and passwords before they are written, and the API token must contain at least 8 distinct characters.
-- The Streamlit login expires after `DASHBOARD_SESSION_MINUTES`; with no password the dashboard refuses any request not addressed to localhost.
 - The production image no longer ships `whatsapp-web.js` / `puppeteer` (dev-only packages with known advisories): they are dev dependencies and `npm prune --omit=dev` removes them. `npm audit --omit=dev` reports 0 vulnerabilities.
 - The bot warns at startup if `API_URL` is neither HTTPS nor localhost, because the API token would otherwise cross the network unencrypted.
 
@@ -471,7 +478,7 @@ api.example.com {
 }
 ```
 
-Callers must still send `Authorization: Bearer <API_TOKEN>`. Add rate limiting at the proxy if the hostname is public. Never set `API_BIND=0.0.0.0` instead. The Streamlit dashboard has no HTTPS of its own: keep it on localhost (reach it over `ssh -L 8501:127.0.0.1:8501`), and set `DASHBOARD_PASSWORD` if anyone else can reach the machine.
+Callers must still send `Authorization: Bearer <API_TOKEN>`. Add rate limiting at the proxy if the hostname is public. Never set `API_BIND=0.0.0.0` instead.
 
 **Docker and your firewall:** ports published by Docker bypass `ufw`. That is why `docker-compose.yml` publishes the API on `127.0.0.1` only. Run `sudo scripts/harden_vps.sh` after any change to check nothing became public.
 
@@ -515,11 +522,12 @@ Every Groq question is paired with live context from Postgres: summary stats, to
 | wwebjs `profile already in use` | Delete `.wwebjs_auth/`, restart, rescan |
 | Podman permission denied on volumes | Confirm `:Z` suffix in `podman/compose.yml` |
 | Session keeps logging out | Confirm auth path isn't wiped by your deploy process |
-| Charts not sending | `pip install matplotlib seaborn` |
+| Charts not sending | `pip install -r requirements.txt` (matplotlib, seaborn, scipy) |
+| `streamlit: command not found` / dashboard will not start | `pip install -r requirements-dashboard.txt`, then `scripts/run_dashboard.sh` |
+| Dashboard says it must not run on a server | By design. Run it on your own computer (see Dashboard (local only)) |
 | Forecast "not enough data" | Needs 14+ distinct days of debits |
 | Forecast "engine unavailable" | `pip install prophet cmdstanpy` |
 | Groq rate limit / empty responses | Wait ~60s; lower `LLM_MAX_TOKENS` |
-| `streamlit: command not found` | `source venv/bin/activate` |
 | Dates look 3 hours off after upgrading | Re-run the import (step 5) — old rows were stored in UTC |
 | `balance` empty for some rows | Not every SMS includes it; the parser now imports only M-Pesa transaction messages, which all do |
 | Bot ignores your messages | The `From:` line in the bot log shows the ID WhatsApp used. If it is not your phone number, copy it into `WHATSAPP_LID` and restart |

@@ -34,6 +34,10 @@ rsync -avz --progress --chmod=go-rwx \
   --exclude 'assets' \
   --exclude '.git' \
   --exclude '/sessions/' \
+  --exclude '/dashboard/' \
+  --exclude '/.streamlit/' \
+  --exclude '/requirements-dashboard.txt' \
+  --exclude '/scripts/run_dashboard.sh' \
   --exclude '/data/' \
   --include '.env.example' \
   --exclude '.env' \
@@ -49,7 +53,7 @@ rsync -avz --progress --chmod=go-rwx \
   --exclude '.pytest_cache' \
   "$LOCAL_PATH"/ "$VPS_USER@$VPS_HOST:$VPS_PATH/"
 
-ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yml $VPS_PATH/.containerignore"
+ssh "$VPS_USER@$VPS_HOST" "rm -rf $VPS_PATH/podman $VPS_PATH/dashboard $VPS_PATH/.streamlit && rm -f $VPS_PATH/Containerfile $VPS_PATH/compose.yml $VPS_PATH/.containerignore $VPS_PATH/requirements-dashboard.txt $VPS_PATH/scripts/run_dashboard.sh && (pkill -f '[s]treamlit run' || true)"
 
 if [ "$DO_BUILD" = true ]; then
   echo "==> Rebuilding and restarting container on VPS..."

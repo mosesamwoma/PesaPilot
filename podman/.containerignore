@@ -51,4 +51,9 @@ sessions-local/
 *.xml
 sms-*
 scripts/
+
+# The Streamlit dashboard is local-only: it must never be baked into an image.
+dashboard/
 .streamlit/
+requirements-dashboard.txt
+scripts/run_dashboard.sh

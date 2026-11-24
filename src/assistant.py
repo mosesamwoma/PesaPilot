@@ -1,4 +1,3 @@
-"""One conversational brain shared by the WhatsApp API and the dashboard chat, so both always route and answer alike."""
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# PesaPilot VPS security check and (optional) hardening for Ubuntu/Debian.
-#
-#   sudo scripts/harden_vps.sh                 Audit only: reads settings, changes NOTHING.
-#   sudo scripts/harden_vps.sh --apply         Apply safe hardening (asks before each step):
-#                                              firewall, fail2ban, automatic security updates, .env permissions.
-#   sudo scripts/harden_vps.sh --apply --ssh   Also disable SSH password login (only if your key login works!).
-#
-# Safe by design: it never closes the SSH port you are connected on, never disables password login
-# unless you explicitly pass --ssh and an authorized key exists, and validates sshd config before reloading.
 set -uo pipefail
+
+usage() {
+  cat <<'USAGE'
+PesaPilot VPS security check and (optional) hardening for Ubuntu/Debian.
+
+  sudo scripts/harden_vps.sh                 Audit only: reads settings, changes nothing.
+  sudo scripts/harden_vps.sh --apply         Apply safe hardening (asks before each step):
+                                             firewall, fail2ban, automatic security updates, .env permissions.
+  sudo scripts/harden_vps.sh --apply --ssh   Also disable SSH password login (only if your key login works).
+USAGE
+}
 
 APPLY=false
 SSH_HARDEN=false
@@ -16,7 +18,7 @@ for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=true ;;
     --ssh)   SSH_HARDEN=true ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) echo "Unknown flag: $arg" >&2; exit 1 ;;
   esac
 done
@@ -73,6 +75,18 @@ if command -v docker >/dev/null 2>&1; then
   fi
 fi
 
+echo "== 1b. Dashboard must never be on a server =="
+for leftover in dashboard .streamlit requirements-dashboard.txt scripts/run_dashboard.sh; do
+  if [ -e "$PROJECT_ROOT/$leftover" ]; then
+    bad "$leftover exists on this server. The Streamlit dashboard is for your own computer only: delete it (rm -rf $PROJECT_ROOT/$leftover)."
+  fi
+done
+if command -v pgrep >/dev/null 2>&1 && pgrep -f "streamlit" >/dev/null 2>&1; then
+  bad "A Streamlit process is running on this server. Stop it (pkill -f streamlit)."
+else
+  ok "No Streamlit process is running."
+fi
+
 echo "== 2. Firewall =="
 if command -v ufw >/dev/null 2>&1; then
   if ufw status 2>/dev/null | grep -q "Status: active"; then
@@ -107,7 +121,6 @@ if [ -f "$ENV_FILE" ]; then
   mode="$(stat -c '%a' "$ENV_FILE")"
   [ "$mode" = "600" ] && ok ".env permissions are 600." || warn ".env permissions are $mode (should be 600)."
   grep -qE '^API_TOKEN=.{32,}' "$ENV_FILE" && ok "API_TOKEN looks strong." || bad "API_TOKEN is missing or shorter than 32 characters (run scripts/generate_secrets.sh)."
-  grep -qE '^DASHBOARD_PASSWORD=.{12,}' "$ENV_FILE" && ok "DASHBOARD_PASSWORD is set." || warn "DASHBOARD_PASSWORD is not set or is short (12+ characters recommended)."
 else
   warn "No .env file found at $ENV_FILE."
 fi

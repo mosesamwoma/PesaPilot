@@ -56,7 +56,7 @@ CHART_TRIGGER_WORDS = [
     'treemap', 'tree map', 'waffle', 'radar', 'pareto', 'waterfall', 'calendar', 'ecdf', 'kde', 'ridge plot',
     'ridgeline', 'swarm', 'strip plot', 'lollipop', 'hexbin', 'joint plot', 'pair plot', 'correlation',
     'cluster map', 'clustermap', 'moving average', 'rolling average', 'cumulative', 'cash flow', 'cashflow',
-    'money in vs', 'income vs', 'overview dashboard', 'regression', 'bubble',
+    'money in vs', 'income vs', 'overview', 'regression', 'bubble',
 ]
 
 EXPLICIT_CHART_RE = re.compile(
@@ -130,7 +130,7 @@ HELP_SECTIONS = """🤖 **PesaPilot v1.4 - Your AI Financial Assistant**
   • "Calendar heatmap of my spending" · "Heatmap by hour and weekday"
   • "Violin / box / strip / swarm / ridge / ECDF / KDE / histogram of my payment sizes"
   • "Scatter / bubble / regression / hexbin / joint / pair plot", "Correlation between categories"
-  • "Overview dashboard" · "Forecast my spending next 14 days"
+  • "Overview" (one image with six charts) · "Forecast my spending next 14 days"
   • Any period: "last month", "in August", "Q1", "last 90 days", "2025", exact dates, "all time"
 
 **SMART INSIGHTS**:
@@ -161,8 +161,7 @@ HELP_SECTIONS = """🤖 **PesaPilot v1.4 - Your AI Financial Assistant**
 **ANOMALY DETECTION**:
   • "Anomalies" / "Unusual spending" → flagged transactions with the reason for each
   • Learns YOUR normal pattern per recipient and category, and spots possible duplicate payments
-{anomaly_page}
-**BUDGET GOALS**:
+{anomaly_page}**BUDGET GOALS**:
   • "Set budget food 5000" → Monthly food budget of KES 5,000
   • "Set budget transport 3000 weekly" → Weekly transport budget
   • "My budgets" / "Budget status" → Current spend vs each limit
@@ -282,8 +281,13 @@ def parse_days_from_question(question_lower: str, default: Optional[int] = 30) -
 
 
 def parse_forecast_horizon(question_lower: str, default: int = 7) -> int:
+    match = re.search(r'\b(\d{1,2})\s*-?\s*days?\b', question_lower)
+    if match:
+        return max(1, min(60, int(match.group(1))))
     if 'month' in question_lower or re.search(r'\b30\b', question_lower):
         return 30
+    if 'fortnight' in question_lower or 'two weeks' in question_lower:
+        return 14
     if 'week' in question_lower or re.search(r'\b7\b', question_lower):
         return 7
     return default
@@ -405,11 +409,6 @@ def period_report_kind(question_lower: str) -> Optional[str]:
 
 
 def detect_intent(question: str) -> Tuple[str, Optional[str]]:
-    """Single source of truth for routing a chat message (WhatsApp API and dashboard share it).
-
-    An explicit chart request always wins over advice keywords, so "bar chart of my investment spending"
-    draws a chart instead of giving investment advice.
-    """
     q = (question or '').lower().strip()
     if is_set_budget_command(q):
         return 'set_budget', None

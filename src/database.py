@@ -198,11 +198,6 @@ class PostgresDB:
             logger.error(f"Error closing connection pool: {e}")
 
     def _run(self, work, readonly: bool = False):
-        """Run work(conn) in one transaction, transparently replacing dead pooled connections.
-
-        A Postgres restart (package upgrade, reboot, failover) leaves dead sockets in the pool; those are
-        discarded and the call is retried on a fresh connection instead of failing until the app restarts.
-        """
         last_error: Optional[Exception] = None
         for attempt in range(1, _MAX_CONNECT_ATTEMPTS + 1):
             conn = self._pool.getconn()
@@ -409,7 +404,6 @@ class PostgresDB:
 
     def get_frame(self, days: Optional[int] = None, date_from: Optional[str] = None,
                   date_to: Optional[str] = None, limit: int = 100000) -> pd.DataFrame:
-        """Typed analytics DataFrame (no SMS bodies). Window is by days back or an inclusive date range."""
         conditions: list = []
         params: list = []
         since = since_nairobi(days) if days is not None else None
@@ -441,7 +435,6 @@ class PostgresDB:
             return build_frame([])
 
     def prune_anomalies(self, model: str, since: Optional[datetime], keep_ids: List[str]) -> int:
-        """Delete stored anomalies of this model, inside the scanned window, that are no longer flagged."""
         try:
             return self._execute(
                 """

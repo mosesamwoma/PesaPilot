@@ -142,7 +142,6 @@ def redact_secrets(text: str) -> str:
 
 
 class SecretRedactingFilter(logging.Filter):
-    """Scrubs API keys, bearer tokens and passwords from every log record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:

@@ -15,7 +15,8 @@ import plotly.graph_objects as go
 import pandas as pd
 import logging
 from typing import Optional, Any
-from src import assistant, chart_generator, insights as insight_engine, plotly_charts as pc
+from dashboard import plotly_charts as pc
+from src import assistant, chart_generator, insights as insight_engine
 from src.analyzer import MpesaAnalyzer
 from src.chart_types import RENDERERS
 from src.chat_common import clean_response
@@ -104,6 +105,20 @@ MAX_CHAT_HISTORY = 30
 PAGES = ["Dashboard", "Smart Insights", "Chart Studio", "Forecast", "Budgets", "Ask AI", "Transactions", "Anomalies"]
 
 
+def refuse_to_run_on_a_server() -> None:
+    in_container = os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv')
+    over_ssh = bool(os.getenv('SSH_CONNECTION')) and os.getenv('PESAPILOT_ALLOW_DASHBOARD_OVER_SSH') != '1'
+    if not (in_container or over_ssh):
+        return
+    st.title("PesaPilot")
+    st.error(
+        "The dashboard is for your own computer only. It must never run on a server or inside Docker. "
+        "Run it on your laptop and point POSTGRES_HOST at your database through an SSH tunnel "
+        "(ssh -L 5432:127.0.0.1:5432 user@your-server)."
+    )
+    st.stop()
+
+
 def period_label(days: Optional[int]) -> str:
     if days is None:
         return "All time"
@@ -171,14 +186,13 @@ def _request_host() -> str:
 
 
 def _guard_unprotected_access() -> None:
-    """With no password, only loopback access (direct or through an SSH tunnel) is allowed."""
     host = _request_host()
     if host in _LOOPBACK_HOSTS or os.getenv('DASHBOARD_ALLOW_REMOTE_NO_PASSWORD', '').lower() == 'true':
         return
     st.title("PesaPilot")
     st.error(
         "This dashboard has no DASHBOARD_PASSWORD, so it only answers on localhost. "
-        "Set DASHBOARD_PASSWORD in .env (or use an SSH tunnel: ssh -L 8501:127.0.0.1:8501 user@server)."
+        "Set DASHBOARD_PASSWORD in .env."
     )
     st.stop()
 
@@ -194,7 +208,6 @@ def _login_guard() -> dict[str, Any]:
 
 
 def require_dashboard_password() -> None:
-    """Login gate. Set DASHBOARD_PASSWORD in .env to turn it on (strongly recommended on a server)."""
     expected = os.getenv('DASHBOARD_PASSWORD', '')
     if not expected:
         _guard_unprotected_access()
@@ -241,7 +254,6 @@ def require_dashboard_password() -> None:
 
 
 def run_chart_request(analyzer: MpesaAnalyzer, description: str, dark: bool = True) -> dict[str, Any]:
-    """Run a natural-language chart request and return text + PNG bytes (figures are always closed)."""
     result = analyzer.generate_dynamic_chart(description, dark=dark)
     png = chart_generator.figure_to_png_bytes(result['fig'])
     text = chart_generator.compose_chart_text(result) if png else (result['error'] or 'No data for that chart.')
@@ -765,6 +777,7 @@ def page_anomalies(analyzer: MpesaAnalyzer) -> None:
 
 
 def main() -> None:
+    refuse_to_run_on_a_server()
     require_dashboard_password()
     analyzer: MpesaAnalyzer = get_analyzer()
 

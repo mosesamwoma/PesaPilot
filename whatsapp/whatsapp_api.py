@@ -314,7 +314,7 @@ def ask_question(request: QuestionRequest):
     if not question or len(question) > 500 or len(question) < 2:
         raise HTTPException(status_code=400, detail="Question too short (2-500 chars)")
     try:
-        reply = assistant.answer(get_analyzer(), question, dark=False, dashboard=False)
+        reply = assistant.answer(get_analyzer(), question, dark=False)
     except Exception as e:
         logger.exception("Server error in /ask")
         raise HTTPException(status_code=500, detail="Internal server error") from e

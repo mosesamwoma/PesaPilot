@@ -34,7 +34,6 @@ def _as_frame(data: Union[pd.DataFrame, List[Dict], None]) -> pd.DataFrame:
 
 
 def _robust_z(log_amount: pd.Series, group: pd.Series, min_size: int, floor: float):
-    """Modified z-score of each log-amount against its group's median/MAD (NaN where the group is too small)."""
     sizes = group.map(group.value_counts())
     median = log_amount.groupby(group).transform('median')
     mad = (log_amount - median).abs().groupby(group).transform('median')
@@ -66,7 +65,6 @@ def compute_baselines(data: Union[pd.DataFrame, List[Dict]]) -> List[Dict]:
 
 
 def _ml_percentiles(spend: pd.DataFrame, z: pd.Series) -> pd.Series:
-    """Percentile (0-100) of each transaction's IsolationForest anomaly score; NaN if there is too little data."""
     if len(spend) < MIN_SAMPLES_FOR_ML:
         return pd.Series(np.nan, index=spend.index)
     try:
@@ -94,14 +92,6 @@ def _ml_percentiles(spend: pd.DataFrame, z: pd.Series) -> pd.Series:
 
 
 def detect_anomalies(data: Union[pd.DataFrame, List[Dict]], since: Optional[pd.Timestamp] = None) -> List[Dict]:
-    """Return unusual spending transactions with a 0-10 severity and plain-English reasons.
-
-    Baselines are learned from the whole history passed in; only transactions at or after `since` are reported.
-    A transaction is flagged only when it is statistically extreme against the user's own pattern for that
-    recipient (or category), or when a context rule fires (possible duplicate payment, large first-time payee,
-    large payment at an odd hour). The machine-learning model only corroborates borderline cases, so a quiet
-    spender is not forced to have a fixed share of transactions flagged.
-    """
     df = _as_frame(data)
     if df.empty or 'id' not in df.columns:
         return []

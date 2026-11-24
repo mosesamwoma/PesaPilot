@@ -333,7 +333,6 @@ You are explaining transactions an ML model flagged as unusual FOR THIS SPECIFIC
         return self._cached_chat(system, user, ttl=TTL_INSIGHTS, model=self.model_fast)
 
     def chart_commentary(self, description: str, facts: str) -> str:
-        """One or two grounded sentences about a chart the user just asked for."""
         system = KENYA_SYSTEM_PROMPT + """
 
 You are adding a short caption under a chart. Use ONLY the verified facts provided; never invent numbers. Write 2 sentences, maximum 55 words: the most useful insight first, then one practical suggestion. No headers, no bullets, no emojis."""

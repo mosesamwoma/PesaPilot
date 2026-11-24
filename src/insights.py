@@ -1,8 +1,3 @@
-"""Deterministic financial intelligence computed from the user's own transactions.
-
-Everything here is plain pandas/numpy: it is reproducible, works with no network or LLM, and its output is
-used both to draw charts and to ground LLM answers in verified numbers.
-"""
 import logging
 from datetime import date, timedelta
 from typing import Dict, List, Optional
@@ -163,7 +158,7 @@ def financial_health(df: pd.DataFrame, today: Optional[date] = None) -> Dict:
         'buffer': "Build a buffer: keep at least 7 days of spending (about {daily}) untouched in your wallet or an MMF.",
         'fees': "Cut fees: batch small sends into one larger transfer and use Lipa na M-Pesa where it is free of charge.",
         'stability': "Smooth your spending: set a weekly limit with 'set budget <category> <amount> weekly'.",
-        'trend': "Your spending is climbing: review the top categories on the dashboard and set a budget for the biggest one.",
+        'trend': "Your spending is climbing: ask me for a pie chart of your categories and set a budget for the biggest one.",
         'savings': "Start a small automatic saving (even KES 50/day) into a Sacco or Money Market Fund.",
     }
     tips = [tip_text[c['key']].format(daily=_kes(daily30 * 7)) for c in weakest if c['score'] < 75]
@@ -203,7 +198,6 @@ def _cadence(median_gap: float) -> str:
 
 def detect_recurring(df: pd.DataFrame, today: Optional[date] = None, include_lapsed: bool = False,
                      limit: int = 25) -> List[Dict]:
-    """Find subscriptions (regular, similar amounts) and habits (frequent, repeated payments)."""
     if df.empty:
         return []
     spend = df[df['is_spend']]
@@ -433,7 +427,6 @@ def smart_alerts(df: pd.DataFrame, today: Optional[date] = None) -> List[Dict]:
 
 
 def facts_text(df: pd.DataFrame, today: Optional[date] = None) -> str:
-    """Verified, compact facts for grounding LLM answers."""
     today = today or today_nairobi()
     if df.empty:
         return ''

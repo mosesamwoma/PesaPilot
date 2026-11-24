@@ -116,7 +116,6 @@ class MpesaAnalyzer:
             self._cache.clear()
 
     def get_frame(self, days: Optional[int] = None) -> pd.DataFrame:
-        """Typed analytics frame, cached briefly (every smart feature reads the same history)."""
         key = f'frame_{days}'
         cached = self._cache_get(key)
         if cached is not None:

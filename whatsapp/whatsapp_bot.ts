@@ -15,7 +15,6 @@ import cron from 'node-cron';
 import fs from 'fs';
 import dotenv from 'dotenv';
 
-
 interface Config {
     mainNumber: string;
     whatsappLid: string;
@@ -64,9 +63,7 @@ interface ParseSMSResponse {
     error?: string;
 }
 
-
 dotenv.config();
-
 
 const config: Config = {
     mainNumber: process.env.WHATSAPP_MAIN_NUMBER || '',
@@ -79,7 +76,6 @@ const config: Config = {
     showQrLink: (process.env.WHATSAPP_QR_LINK || 'false').toLowerCase() === 'true',
     logLevel: process.env.BAILEYS_LOG_LEVEL || 'info',
 };
-
 
 function validateConfig(config: Config): void {
     if (!config.mainNumber) {
@@ -116,7 +112,6 @@ function checkApiUrl(rawUrl: string): void {
 
 checkApiUrl(config.apiUrl);
 
-
 function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
     console.log('PesaPilot WhatsApp Bot v1.3 (Baileys TypeScript)');
@@ -133,7 +128,6 @@ function printBanner(config: Config): void {
 
 printBanner(config);
 
-
 function ensureAuthDirectory(authPath: string): void {
     try {
         fs.mkdirSync(authPath, { recursive: true });
@@ -147,11 +141,9 @@ function ensureAuthDirectory(authPath: string): void {
 
 ensureAuthDirectory(config.authPath);
 
-
 const logger = pino({
     level: config.logLevel,
 });
-
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -250,7 +242,6 @@ async function resolveSenderIds(sock: WASocket, key: WAMessageKey): Promise<stri
     return [...ids];
 }
 
-
 let currentSock: WASocket | null = null;
 let isConnected = false;
 let startupResolved = false;
@@ -271,7 +262,6 @@ const startupWatchdog = setTimeout(() => {
 }, STARTUP_TIMEOUT_MS);
 
 startupWatchdog.unref();
-
 
 async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data?: any): Promise<T> {
     const url = `${config.apiUrl}${endpoint}`;
@@ -385,7 +375,6 @@ async function handleQuestion(userMessage: string, sock: WASocket, jid: string, 
     }
 }
 
-
 async function handleMessage(
     msg: proto.IWebMessageInfo,
     sock: WASocket
@@ -444,7 +433,6 @@ async function handleMessage(
         }
     }
 }
-
 
 async function startBaileys(): Promise<WASocket> {
     console.log('Initializing WhatsApp client...\n');
@@ -594,7 +582,6 @@ async function startBaileys(): Promise<WASocket> {
     }
 }
 
-
 function setupDailySummary(): void {
     const mainNumericGlobal = stripSuffix(config.mainNumber);
     const DAILY_SUMMARY_JID = `${mainNumericGlobal}@s.whatsapp.net`;
@@ -620,7 +607,6 @@ function setupDailySummary(): void {
 }
 
 setupDailySummary();
-
 
 function setupBudgetCheck(): void {
     const mainNumericGlobal = stripSuffix(config.mainNumber);
@@ -676,7 +662,6 @@ function setupBudgetCheck(): void {
 }
 
 setupBudgetCheck();
-
 
 const DEFAULT_WEEKLY_SUMMARY_CRON = '0 8 * * 1';
 const DEFAULT_MONTHLY_SUMMARY_CRON = '30 8 1 * *';
@@ -743,7 +728,6 @@ function setupPeriodSummaries(): void {
 
 setupPeriodSummaries();
 
-
 async function shutdown(signal: string, exitCode = 0): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -769,7 +753,6 @@ process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
     shutdown('uncaughtException', 1);
 });
-
 
 console.log('Starting WhatsApp client...\n');
 

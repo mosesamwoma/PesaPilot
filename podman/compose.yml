@@ -75,7 +75,7 @@ services:
       - PYTHONIOENCODING=utf-8
       - PYTHONUTF8=1
 
-      # Locale (ensures emojis render correctly in logs / WhatsApp / dashboard)
+      # Locale (ensures emojis render correctly in logs / WhatsApp)
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
 

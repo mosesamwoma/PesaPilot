@@ -1,9 +1,3 @@
-"""Natural-language chart studio.
-
-Understands a plain-English request ("violin plot of food spending last month"), resolves the period
-deterministically, lets the LLM fill in what rules cannot, picks a sensible chart when none is named, draws it
-with seaborn/matplotlib, and explains it with facts computed from the real data.
-"""
 import base64
 import io
 import json
@@ -43,12 +37,11 @@ _GROUP_WORDS = {
     'month': 'Month', 'weekday': 'Weekday', 'hour': 'Hour',
 }
 
-# Default look-back (days) when the request names no period.
 _DEFAULT_DAYS = {
     'line': 60, 'area': 60, 'rolling': 180, 'calendar': 365, 'cumulative': 180, 'cashflow': 180, 'stacked_area': 180,
     'monthly_stack': 180, 'waterfall': 30, 'histogram': 90, 'kde': 90, 'ecdf': 90, 'box': 90, 'boxen': 90,
     'violin': 90, 'strip': 60, 'swarm': 60, 'ridge': 90, 'hexbin': 90, 'joint': 90, 'pair': 90, 'regression': 90,
-    'correlation': 90, 'cluster': 90, 'hour_heatmap': 90, 'heatmap': 60, 'dashboard': 90, 'pareto': 60,
+    'correlation': 90, 'cluster': 90, 'hour_heatmap': 90, 'heatmap': 60, 'overview': 90, 'pareto': 60,
 }
 _DEFAULT_TOP_N = {'pie': 7, 'donut': 7, 'waffle': 7, 'radar': 8, 'treemap': 12}
 _GROUPED_TYPES = {
@@ -95,7 +88,7 @@ _TYPE_RULES: List[Tuple[str, str]] = [
     (r'forecast|predict|projection|project my|next (?:week|month|\d+ days)|will i spend|going to spend', 'forecast'),
     (r'financial health|health score|money health|financial fitness|money score|score my', 'health'),
     (r'recurring|subscription|habit|regular payments|repeat payments', 'recurring'),
-    (r'dashboard|overview|big picture|everything|all in one|full picture|summary chart', 'dashboard'),
+    (r'overview|dashboard|big picture|everything|all in one|full picture|summary chart', 'overview'),
     (r'\barea\b', 'area'),
     (r'\bcolumn\b|vertical bar', 'column'),
     (r'\bline\b|trend|over time|daily|per day|each day|over days', 'line'),
@@ -148,7 +141,7 @@ _RELATED = {
     'stacked_bar': ['heatmap', 'monthly_stack', 'cluster'], 'monthly_stack': ['stacked_area', 'cashflow', 'donut'],
     'stacked_area': ['monthly_stack', 'area', 'cashflow'], 'forecast': ['rolling', 'cashflow', 'health'],
     'health': ['recurring', 'forecast', 'cashflow'], 'recurring': ['health', 'calendar', 'donut'],
-    'dashboard': ['health', 'forecast', 'calendar'],
+    'overview': ['health', 'forecast', 'calendar'],
 }
 
 CHART_EXAMPLES = [
@@ -157,17 +150,15 @@ CHART_EXAMPLES = [
     "calendar heatmap of my spending", "heatmap of spending by hour and weekday", "money in vs money out by month",
     "where did my income go (waterfall)", "7-day moving average of spending", "forecast my spending next month",
     "financial health score chart", "recurring payments and habits", "correlation between categories",
-    "overview dashboard of my M-Pesa",
+    "overview of my M-Pesa",
 ]
 
-
-# ----------------------------------------------------------------------------------------- parsing
 
 def _spec_system_prompt() -> str:
     today = today_nairobi().isoformat()
     return f"""You convert a user's chart request about their M-Pesa transactions into JSON. Today is {today}.
 Return ONLY a JSON object, no prose, with these keys:
-- "chart_type": one of {list(CHART_TYPES)} or "auto" when the user did not name a chart. Meanings: bar/column/lollipop/pareto rank groups; pie/donut/treemap/waffle/radar show shares; line/area/rolling/cumulative/calendar show time; cashflow = money in vs out; waterfall = how income was spent; heatmap = category x weekday; hour_heatmap = weekday x hour; histogram/kde/ecdf/box/boxen/violin/strip/swarm/ridge show distribution of payment sizes; scatter/bubble/regression/hexbin/joint/pair/correlation/cluster show relationships; forecast/health/recurring/dashboard are smart reports.
+- "chart_type": one of {list(CHART_TYPES)} or "auto" when the user did not name a chart. Meanings: bar/column/lollipop/pareto rank groups; pie/donut/treemap/waffle/radar show shares; line/area/rolling/cumulative/calendar show time; cashflow = money in vs out; waterfall = how income was spent; heatmap = category x weekday; hour_heatmap = weekday x hour; histogram/kde/ecdf/box/boxen/violin/strip/swarm/ridge show distribution of payment sizes; scatter/bubble/regression/hexbin/joint/pair/correlation/cluster show relationships; forecast/health/recurring/overview are smart reports.
 - "metric": "amount" | "count" | "transaction_cost" | "average"
 - "group_by": "merchant_category" | "recipient" | "type" | "date" | "week" | "month" | "weekday" | "hour" | null
 - "transaction_type": "spending" | "income" | "all"
@@ -290,7 +281,7 @@ def _default_title(spec: Dict[str, Any]) -> str:
     chart = spec['chart_type']
     fixed = {
         'forecast': 'Spending forecast', 'health': 'Financial health scorecard', 'recurring': 'Recurring payments and habits',
-        'dashboard': 'Your M-Pesa overview', 'cashflow': 'Money in vs money out', 'waterfall': 'Where your income went',
+        'overview': 'Your M-Pesa overview', 'cashflow': 'Money in vs money out', 'waterfall': 'Where your income went',
         'histogram': 'How big are your payments?', 'calendar': 'Spending calendar', 'hour_heatmap': 'When you spend: weekday and hour',
         'correlation': 'Which categories move together', 'cluster': 'Category habits by weekday',
         'cumulative': 'Cumulative money in vs out', 'regression': 'Daily spending vs number of payments',
@@ -343,7 +334,6 @@ def _normalise(spec: Dict[str, Any], today: date) -> Dict[str, Any]:
 
 
 def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
-    """Heuristics own the period and anything explicitly worded; the LLM fills the gaps."""
     today = today_nairobi()
     description = (description or '').strip()[:500]
     spec, explicit = _heuristic_spec(description, today)
@@ -377,8 +367,6 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
     spec['_explicit_type'] = 'chart_type' in explicit
     return spec
 
-
-# ----------------------------------------------------------------------------------------- data
 
 def _apply_default_window(spec: Dict[str, Any]) -> Dict[str, Any]:
     spec = dict(spec)
@@ -441,8 +429,6 @@ def recommend_chart(df: pd.DataFrame, spec: Dict[str, Any]) -> Tuple[str, str]:
     return 'bar', f"{groups or 'several'} groups are easiest to compare as ranked bars"
 
 
-# ----------------------------------------------------------------------------------------- rendering
-
 def _finish(fig, theme: dict, multi_fig: bool) -> None:
     fig.set_facecolor(theme['bg'])
     if not multi_fig:
@@ -454,7 +440,6 @@ def _finish(fig, theme: dict, multi_fig: bool) -> None:
 
 
 def render(df: pd.DataFrame, spec: Dict[str, Any], dark: bool = True, extra: Optional[dict] = None):
-    """Draw the chart. Returns (figure, {'summary','facts'}) or (None, user-facing message)."""
     chart = spec['chart_type']
     renderer = RENDERERS[chart]
     theme = DARK if dark else LIGHT
@@ -507,8 +492,6 @@ def figure_to_base64(fig) -> Optional[str]:
     return base64.b64encode(data).decode('utf-8') if data else None
 
 
-# ----------------------------------------------------------------------------------------- orchestration
-
 def _suggestions(chart: str) -> List[str]:
     return [RENDERERS[t].label for t in _RELATED.get(chart, ['bar', 'donut'])[:3] if t in RENDERERS]
 
@@ -519,7 +502,6 @@ def generate_dynamic_chart(analyzer, description: str, dark: bool = True, commen
 
 
 def make_spec(**overrides: Any) -> Dict[str, Any]:
-    """Build a validated spec from explicit choices (used by the dashboard's manual chart builder)."""
     spec: Dict[str, Any] = {
         'chart_type': 'auto', 'metric': 'amount', 'group_by': None, 'transaction_type': 'spending',
         'category_filter': None, 'recipient_filter': None, 'top_n': None, 'title': None,
@@ -611,10 +593,7 @@ def compose_chart_text(result: Dict[str, Any]) -> str:
     return '\n'.join(lines).strip()
 
 
-# ----------------------------------------------------------------------------------------- smart-report helpers
-
 def render_report(chart_type: str, extra: Dict[str, Any], dark: bool = True, title: Optional[str] = None):
-    """Draw forecast / health / recurring from already-computed data. Returns (figure or None, summary or message)."""
     from src.frames import build_frame
     spec = {'chart_type': chart_type, 'metric': 'amount', 'group_by': None, 'transaction_type': 'all',
             'top_n': None, 'category_filter': None, 'recipient_filter': None, 'period_label': None}

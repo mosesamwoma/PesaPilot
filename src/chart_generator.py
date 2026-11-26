@@ -341,7 +341,7 @@ def parse_chart_request(groq_client, description: str) -> Dict[str, Any]:
     llm: Optional[dict] = None
     if groq_client is not None and getattr(groq_client, 'available', True):
         try:
-            raw = groq_client.generate_chart_spec(_spec_system_prompt(), sanitize_for_prompt(description, 500))
+            raw = groq_client.generate_chart_spec(sanitize_for_prompt(description, 500), _spec_system_prompt())
             llm = _extract_json(raw)
         except Exception as e:
             logger.warning(f"Chart spec LLM unavailable, using rules only: {type(e).__name__}")

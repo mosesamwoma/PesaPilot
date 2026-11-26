@@ -114,7 +114,7 @@ checkApiUrl(config.apiUrl);
 
 function printBanner(config: Config): void {
     console.log('\n═══════════════════════════════════════════════════════');
-    console.log('PesaPilot WhatsApp Bot v1.3 (Baileys TypeScript)');
+    console.log('PesaPilot WhatsApp Bot v1.4 (Baileys TypeScript)');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`Phone Number : configured`);
     console.log(`LID          : ${config.whatsappLid ? 'configured' : 'not set (resolved automatically)'}`);

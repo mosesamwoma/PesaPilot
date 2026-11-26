@@ -78,7 +78,7 @@ fi
 echo "== 1b. Dashboard must never be on a server =="
 for leftover in dashboard .streamlit requirements-dashboard.txt scripts/run_dashboard.sh; do
   if [ -e "$PROJECT_ROOT/$leftover" ]; then
-    bad "$leftover exists on this server. The Streamlit dashboard is for your own computer only: delete it (rm -rf $PROJECT_ROOT/$leftover)."
+    warn "$leftover exists on this server. It is not part of the Docker image and is harmless unless started, but the dashboard is for your own computer only: delete it (rm -rf $PROJECT_ROOT/$leftover)."
   fi
 done
 if command -v pgrep >/dev/null 2>&1 && pgrep -f "streamlit" >/dev/null 2>&1; then

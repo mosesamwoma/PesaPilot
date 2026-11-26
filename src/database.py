@@ -1,5 +1,7 @@
+import ipaddress
 import os
 import logging
+import threading
 import time
 import uuid
 from decimal import Decimal
@@ -34,6 +36,22 @@ _QUERY_ROW_LIMIT = 500
 _QUERY_TIMEOUT_MS = 10000
 _MAX_CONNECT_ATTEMPTS = 5
 _TRANSIENT_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
+_POOL_MAX = 10
+_POOL_WAIT_SECONDS = 30
+_LOCAL_HOSTS = frozenset({
+    'localhost', '127.0.0.1', '::1', 'host.docker.internal', 'host.containers.internal',
+})
+
+
+def _is_local_host(host: str) -> bool:
+    name = (host or '').strip().strip('[]').lower()
+    if name in _LOCAL_HOSTS:
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
 
 
 def _serialize_value(v):
@@ -135,6 +153,9 @@ def _pg_connection_kwargs() -> Dict[str, Any]:
         'options': '-c statement_timeout=60000 -c idle_in_transaction_session_timeout=60000',
     }
     sslmode = (os.getenv('POSTGRES_SSLMODE') or '').strip()
+    if not sslmode and not _is_local_host(host):
+        sslmode = 'require'
+        logger.warning("POSTGRES_HOST is not a local or private address; requiring TLS (set POSTGRES_SSLMODE to override)")
     if sslmode:
         kwargs['sslmode'] = sslmode
     return kwargs
@@ -185,9 +206,10 @@ class PostgresDB:
     def __init__(self):
         conn_kwargs = _pg_connection_kwargs()
         try:
-            self._pool = pg_pool.ThreadedConnectionPool(1, 10, **conn_kwargs)
+            self._pool = pg_pool.ThreadedConnectionPool(1, _POOL_MAX, **conn_kwargs)
         except Exception as e:
             raise ValueError(f"Could not connect to Postgres: {e}") from e
+        self._slots = threading.BoundedSemaphore(_POOL_MAX)
         logger.info("Postgres connection pool initialized")
 
     def close(self) -> None:
@@ -198,6 +220,14 @@ class PostgresDB:
             logger.error(f"Error closing connection pool: {e}")
 
     def _run(self, work, readonly: bool = False):
+        if not self._slots.acquire(timeout=_POOL_WAIT_SECONDS):
+            raise psycopg2.OperationalError('timed out waiting for a free database connection')
+        try:
+            return self._run_with_slot(work, readonly)
+        finally:
+            self._slots.release()
+
+    def _run_with_slot(self, work, readonly: bool = False):
         last_error: Optional[Exception] = None
         for attempt in range(1, _MAX_CONNECT_ATTEMPTS + 1):
             conn = self._pool.getconn()

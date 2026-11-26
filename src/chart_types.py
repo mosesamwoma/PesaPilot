@@ -614,7 +614,9 @@ def render_stacked_area(ctx: Ctx) -> Dict:
     _legend_outside(ctx.ax, ctx.theme)
     ctx.fig.autofmt_xdate(rotation=45) if ctx.standalone else None
     ctx.style()
-    return _out(f"{clean_text(pivot.sum().idxmax())} is the largest layer ({pivot.sum().max() / pivot.values.sum() * 100:.0f}% of all spending).")
+    grand_total = float(pivot.values.sum())
+    share = pivot.sum().max() / grand_total * 100 if grand_total > 0 else 0.0
+    return _out(f"{clean_text(pivot.sum().idxmax())} is the largest layer ({share:.0f}% of all spending).")
 
 
 def _positive(ctx: Ctx, minimum: int = 2) -> pd.Series:

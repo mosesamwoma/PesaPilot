@@ -195,11 +195,11 @@ for i in {1..60}; do
         echo -e "${RED}The API process exited during startup. Check the messages above.${NC}"
         exit 1
     fi
-    if [ "$i" -eq 20 ]; then
+    if [ "$i" -eq 60 ]; then
         echo -e "${RED}API did not become healthy within 60s.${NC}"
         exit 1
     else
-        echo -e "${BLUE}   Attempt $i/20...${NC}"
+        echo -e "${BLUE}   Attempt $i/60...${NC}"
         sleep 1
     fi
 done

@@ -252,7 +252,7 @@ function toWhatsAppFormat(text) {
 }
 
 console.log('\n═══════════════════════════════════════════════════════');
-console.log('PesaPilot WhatsApp Bot v1.3');
+console.log('PesaPilot WhatsApp Bot v1.4');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`Phone Number : configured`);
 console.log(`LID          : ${WHATSAPP_LID ? 'configured' : 'not set (resolved automatically)'}`);

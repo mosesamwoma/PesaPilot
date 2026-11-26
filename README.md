@@ -228,7 +228,7 @@ scripts/run_dashboard.sh          # then open http://localhost:8501
 
 - It binds to `127.0.0.1` only. `scripts/run_dashboard.sh` and the app itself refuse to start inside a container or in an SSH session on a server.
 - If your database lives on the VPS, keep Postgres closed to the internet and reach it from your laptop through a tunnel: `ssh -L 5432:127.0.0.1:5432 user@your-server`, then set `POSTGRES_HOST=localhost` in your local `.env`.
-- It is excluded from the Docker/Podman image (`.dockerignore`, `.containerignore`, and the `Dockerfile` only copies `src/` and `whatsapp/`), skipped by `redeploy.sh`, and `redeploy.sh` deletes any copy left on the server by older deployments. `sudo scripts/harden_vps.sh` reports it as a risk if it finds one.
+- It is excluded from the Docker/Podman image (`.dockerignore`, `.containerignore`, and the `Dockerfile` only copies `src/` and `whatsapp/`), skipped by `redeploy.sh`, and `redeploy.sh` deletes any copy left on the server by older deployments. `sudo scripts/harden_vps.sh` warns if it finds one and reports a running Streamlit process as a risk.
 
 **API + WhatsApp bot (whatsapp-web.js, local dev):**
 ```bash
@@ -468,7 +468,7 @@ You'll be asked for VPS username, host/IP, and the project path relative to the 
 3. WhatsApp: on your phone open Settings → Linked Devices, log out every device you don't recognise, delete `sessions/` (or `.wwebjs_auth/`) and pair again.
 4. Restart: `docker compose up -d --force-recreate`.
 
-Keep `.env`, `sessions/` (`.baileys_auth/`) and your SMS `.xml` exports private — all are git-ignored and excluded from the image. `redeploy.sh` never uploads `sessions/` or SMS exports; it does upload your `.env` over SSH with owner-only permissions, so keep the local one in sync with the server.
+Keep `.env`, `sessions/` (`.baileys_auth/`) and your SMS `.xml` exports private — all are git-ignored and excluded from the image. `redeploy.sh` never uploads `sessions/` or SMS exports; it never uploads `.env` either: create it on the server with `scripts/generate_secrets.sh` or copy it over yourself (`scp` then `chmod 600 .env`).
 
 **Before exposing anything publicly:** put the API behind a TLS reverse proxy (the token is then protected in transit). Minimal Caddy example — Caddy gets the certificate automatically:
 
